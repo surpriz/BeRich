@@ -1,0 +1,37 @@
+# BeRich configuration — v1 scope: US equities, daily bars, swing horizon.
+
+# Where the Parquet OHLCV cache and DuckDB catalog live (relative to project root).
+data_dir: "data"
+
+# Market data fetch settings.
+data:
+  interval: "1d"          # daily bars (swing, no intraday)
+  start_date: "2010-01-01"
+  auto_adjust: true       # split/dividend-adjusted prices — avoids fake gaps
+
+# Tickers to track. Keep small for v1; expand once the pipeline is validated.
+watchlist:
+  - AAPL
+  - MSFT
+  - NVDA
+  - AMZN
+  - GOOGL
+  - META
+  - JPM
+  - XOM
+  - JNJ
+  - SPY   # benchmark / market proxy
+
+# Triple-barrier labeling defaults (used in Phase 1). ATR-relative barriers.
+labeling:
+  horizon_days: 10        # vertical (time) barrier
+  atr_window: 14
+  take_profit_atr: 2.0    # upper barrier = entry + tp * ATR
+  stop_loss_atr: 1.0      # lower barrier = entry - sl * ATR
+
+# Daily signal generation & position sizing (Phase 4).
+signals:
+  buy_threshold: 0.55     # P(win) >= this -> BUY
+  sell_threshold: 0.30    # P(win) <= this -> SELL / exit bias
+  capital: 10000.0        # account size for sizing
+  risk_pct: 0.01          # fraction of capital risked per trade (to the stop)

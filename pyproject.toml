@@ -1,0 +1,60 @@
+[project]
+name = "berich"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Jerome LAVAL", email = "jerome.laval-ext@aroma-zone.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "apscheduler>=3.11.2",
+    "duckdb>=1.5.3",
+    "fastapi>=0.136.3",
+    "httpx>=0.28.1",
+    "lightgbm>=4.6.0",
+    "pandas>=3.0.3",
+    "pyarrow>=24.0.0",
+    "pydantic>=2.13.4",
+    "pyyaml>=6.0.3",
+    "scikit-learn>=1.8.0",
+    "uvicorn>=0.48.0",
+    "yfinance>=1.4.0",
+]
+
+[project.scripts]
+berich = "berich.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9.24,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["D", "COM812", "ISC001", "ANN401", "PLR0913", "TD", "FIX"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "PLR2004", "ANN", "INP001", "PT018", "SLF001"]
+# CLI uses lazy imports inside subcommands to keep `berich data` startup fast.
+"src/berich/cli.py" = ["PLC0415"]
+# Lazy ML imports for fast startup; FastAPI Query/Header defaults are idiomatic.
+"src/berich/api/app.py" = ["PLC0415", "FAST002"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.14",
+    "ty>=0.0.40",
+]

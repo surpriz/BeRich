@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+/* ── BeRich design tokens — dark trading-terminal aesthetic ───────────────── */
+@theme {
+  --color-void: #07090c;
+  --color-surface: #0f141a;
+  --color-surface-2: #161d25;
+  --color-line: #232c37;
+  --color-ink: #e8ecf2;
+  --color-muted: #8a94a4;
+  --color-faint: #5a6472;
+
+  --color-bull: #b6f24e; /* electric lime — BUY */
+  --color-bear: #ff5d63; /* warm red — SELL */
+  --color-neutral: #f4b740; /* amber — NEUTRAL */
+
+  --font-display: var(--font-bricolage), ui-sans-serif, sans-serif;
+  --font-body: var(--font-hanken), ui-sans-serif, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--color-void);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+}
+
+/* Atmospheric background: layered radial glows + faint grid + grain. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(900px 600px at 12% -5%, rgba(182, 242, 78, 0.07), transparent 60%),
+    radial-gradient(800px 500px at 95% 8%, rgba(95, 130, 255, 0.06), transparent 55%),
+    linear-gradient(180deg, #090c10 0%, #07090c 100%);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(var(--color-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-line) 1px, transparent 1px);
+  background-size: 64px 64px;
+  opacity: 0.18;
+  mask-image: radial-gradient(circle at 50% 0%, black, transparent 80%);
+}
+
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.card {
+  background: linear-gradient(180deg, var(--color-surface-2), var(--color-surface));
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rise {
+  animation: rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
