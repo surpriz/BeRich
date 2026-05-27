@@ -28,6 +28,8 @@ uv run berich data            # refresh the OHLCV cache from yfinance
 uv run berich backtest        # walk-forward backtest of the LightGBM baseline
 uv run berich signals         # generate & persist today's signals + position sizing
 uv run berich drift           # feature-drift check (PSI + KS) vs the training era
+uv run berich train           # train baseline, backtest, save to registry, promote if it wins
+uv run berich models          # list registry artifacts + which one is active
 uv run berich serve           # FastAPI backend on http://127.0.0.1:8000
 uv run berich schedule        # local scheduler: daily signals + weekly drift
 uv run pytest                 # run the test suite
@@ -66,6 +68,25 @@ src/berich/
   cli.py         # data / backtest / signals / drift / serve / schedule
 frontend/        # Next.js dashboard (signals, backtest, drift)
 ```
+
+## GPU handoff (Phase 3)
+
+Deep models train on a GPU box; serving stays local. The seam is the **model
+registry** (`src/berich/models/registry.py`) and the `Model` protocol:
+
+```
+GPU box   git clone + uv sync + uv add torch pytorch-forecasting optuna mlflow
+          add models/lstm.py + models/tft.py behind the Model protocol
+          train -> save_model(model, metadata) -> promote (guarded: must beat buy & hold)
+sync      scp -r data/models/<name>  ->  local data/models/
+local     load_active() picks it up automatically; `berich signals` / `serve` use it,
+          no code change. Falls back to the inline LightGBM baseline if nothing promoted.
+```
+
+`promote()` refuses any model whose metadata says it does not beat buy & hold (the
+guard rule), so a worse model can never silently take over serving. Reuse
+`oof_predict` + `run_backtest` to fill the metrics on the GPU side exactly as
+`berich train` does for the baseline.
 
 ## Current baseline result
 

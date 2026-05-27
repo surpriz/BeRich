@@ -61,6 +61,11 @@ class Config(BaseModel):
         """DuckDB catalog for generated signals and run history."""
         return self.data_dir / "berich.duckdb"
 
+    @property
+    def models_dir(self) -> Path:
+        """Registry directory holding trained model artifacts + metadata."""
+        return self.data_dir / "models"
+
     @classmethod
     def load(cls, path: Path | str = DEFAULT_CONFIG_PATH) -> Config:
         """Load and validate configuration from a YAML file."""

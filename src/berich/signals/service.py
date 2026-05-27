@@ -9,6 +9,7 @@ enter, where the stop goes, and how big the position should be.
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
@@ -20,12 +21,14 @@ from berich.datasets.assemble import build_dataset
 from berich.features.build import FEATURE_COLUMNS, build_features
 from berich.features.indicators import atr
 from berich.labeling.triple_barrier import LabelConfig
-from berich.models import LGBMModel
+from berich.models import LGBMModel, load_active
 
 if TYPE_CHECKING:
     from berich.config import Config
     from berich.data.store import OhlcvStore
     from berich.models.base import Model
+
+logger = logging.getLogger(__name__)
 
 BUY = "BUY"
 SELL = "SELL"
@@ -75,10 +78,31 @@ def _train_model(store: OhlcvStore, config: Config, label_cfg: LabelConfig) -> M
     return LGBMModel().fit(dataset.x, dataset.y, sample_weight=dataset.weight)
 
 
+def _resolve_model(store: OhlcvStore, config: Config, label_cfg: LabelConfig) -> Model:
+    """Use the promoted registry model if one exists; otherwise train the baseline.
+
+    This is the GPU handoff point: once an LSTM/TFT artifact is trained, saved, and
+    promoted on the GPU box and synced here, serving picks it up automatically with no
+    code change. Until then we fall back to training the LightGBM baseline inline.
+    """
+    active = load_active(config.models_dir)
+    if active is not None:
+        model, meta = active
+        if meta.feature_columns != FEATURE_COLUMNS:
+            logger.warning(
+                "active model '%s' feature columns differ from current; retraining baseline",
+                meta.name,
+            )
+        else:
+            logger.info("serving promoted model '%s' (%s)", meta.name, meta.framework)
+            return model
+    return _train_model(store, config, label_cfg)
+
+
 def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
-    """Train on history and emit one :class:`Signal` per available ticker."""
+    """Serve the promoted (or freshly trained) model and emit one signal per ticker."""
     label_cfg = LabelConfig(**config.labeling.model_dump())
-    model = _train_model(store, config, label_cfg)
+    model = _resolve_model(store, config, label_cfg)
 
     signals: list[Signal] = []
     for ticker in config.watchlist:

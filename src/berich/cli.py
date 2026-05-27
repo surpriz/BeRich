@@ -117,6 +117,73 @@ def _cmd_schedule(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_train(args: argparse.Namespace) -> int:
+    from berich.backtest import BacktestConfig, run_backtest
+    from berich.data.store import OhlcvStore
+    from berich.datasets import build_dataset
+    from berich.features.build import FEATURE_COLUMNS
+    from berich.labeling.triple_barrier import LabelConfig
+    from berich.models import LGBMModel, ModelMetadata, promote, save_model
+    from berich.training import oof_predict
+
+    config = Config.load(args.config)
+    store = OhlcvStore(config.ohlcv_dir)
+    label_cfg = LabelConfig(**config.labeling.model_dump())
+
+    dataset = build_dataset(store, config.watchlist, label_cfg)
+    oof = oof_predict(dataset, LGBMModel, embargo=label_cfg.horizon_days)
+    prices = {t: df for t in config.watchlist if (df := store.load(t)) is not None}
+    result = run_backtest(prices, oof, BacktestConfig(entry_threshold=0.5))
+
+    # Final model trained on all labeled history for serving.
+    model = LGBMModel().fit(dataset.x, dataset.y, sample_weight=dataset.weight)
+    meta = ModelMetadata(
+        name=args.name,
+        framework="lightgbm",
+        feature_columns=FEATURE_COLUMNS,
+        metrics={
+            "auc": oof.auc,
+            "sharpe": result.strategy.sharpe,
+            "benchmark_sharpe": result.benchmark.sharpe,
+        },
+        beats_buy_hold=result.beats_buy_hold,
+    )
+    save_model(model, meta, registry_dir=config.models_dir)
+    print(  # noqa: T201
+        f"Saved '{args.name}': AUC={oof.auc:.4f}, "
+        f"Sharpe={result.strategy.sharpe:.3f} vs {result.benchmark.sharpe:.3f}, "
+        f"beats_buy_hold={result.beats_buy_hold}"
+    )
+    try:
+        promote(args.name, registry_dir=config.models_dir, force=args.force)
+        print(f"Promoted '{args.name}' as the active serving model.")  # noqa: T201
+    except ValueError as exc:
+        print(f"Not promoted: {exc}")  # noqa: T201
+    return 0
+
+
+def _cmd_models(args: argparse.Namespace) -> int:
+    import json
+
+    from berich.models import list_models
+
+    config = Config.load(args.config)
+    metas = list_models(config.models_dir)
+    pointer = config.models_dir / "active.json"
+    active = json.loads(pointer.read_text())["name"] if pointer.exists() else None
+    if not metas:
+        print("No models in the registry. Run `berich train`.")  # noqa: T201
+        return 0
+    print(f"{'NAME':<20}{'FRAMEWORK':<12}{'AUC':>8}{'BEATS B&H':>11}{'ACTIVE':>8}")  # noqa: T201
+    for m in metas:
+        star = "  <--" if m.name == active else ""
+        print(  # noqa: T201
+            f"{m.name:<20}{m.framework:<12}{m.metrics.get('auc', float('nan')):>8.4f}"
+            f"{m.beats_buy_hold!s:>11}{star:>8}"
+        )
+    return 0
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -161,6 +228,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8000)
     p_serve.set_defaults(func=_cmd_serve)
+
+    p_train = sub.add_parser("train", help="Train the baseline, save to the registry, promote")
+    p_train.add_argument("--name", default="lgbm-baseline", help="Artifact name")
+    p_train.add_argument(
+        "--force",
+        action="store_true",
+        help="Promote even if it does not beat buy & hold",
+    )
+    p_train.set_defaults(func=_cmd_train)
+
+    p_models = sub.add_parser("models", help="List models in the registry")
+    p_models.set_defaults(func=_cmd_models)
 
     return parser
 
