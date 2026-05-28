@@ -62,3 +62,10 @@ dev = [
     "ruff>=0.15.14",
     "ty>=0.0.40",
 ]
+gpu = [
+    "lightning>=2.6.5",
+    "mlflow>=1.27.0",
+    "optuna>=4.8.0",
+    "pytorch-forecasting>=1.7.0",
+    "torch>=2.12.0",
+]
