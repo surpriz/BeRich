@@ -52,28 +52,41 @@ def client(tmp_path, monkeypatch):
 
 
 def test_health(client):
-    assert client.get("/health").json() == {"status": "ok"}
+    # /api/health is exempt from auth so the reverse proxy can probe liveness
+    # without owning the API key.
+    assert client.get("/api/health").json() == {"status": "ok"}
 
 
 def test_watchlist(client):
-    assert client.get("/watchlist").json() == ["AAPL"]
+    assert client.get("/api/watchlist").json() == ["AAPL"]
 
 
 def test_signals(client):
-    rows = client.get("/signals").json()
+    rows = client.get("/api/signals").json()
     assert len(rows) == 1
     assert rows[0]["ticker"] == "AAPL"
     assert rows[0]["signal"] == "BUY"
 
 
 def test_prices(client):
-    rows = client.get("/prices/AAPL?days=30").json()
+    rows = client.get("/api/prices/AAPL?days=30").json()
     assert len(rows) == 30
     assert {"date", "open", "high", "low", "close", "volume"} <= set(rows[0])
 
 
 def test_prices_unknown_ticker_404(client):
-    assert client.get("/prices/ZZZZ").status_code == 404
+    assert client.get("/api/prices/ZZZZ").status_code == 404
+
+
+def test_health_open_under_api_key(tmp_path, monkeypatch):
+    """Health probe must stay 200 even when an API key is configured."""
+    monkeypatch.setenv("BERICH_API_KEY", "secret")
+    data_dir = tmp_path / "data"
+    OhlcvStore(data_dir / "ohlcv")
+    cfg_path = tmp_path / "berich.yaml"
+    cfg_path.write_text(yaml.safe_dump({"data_dir": str(data_dir), "watchlist": []}))
+    client = TestClient(create_app(str(cfg_path)))
+    assert client.get("/api/health").status_code == 200
 
 
 def test_api_key_enforced(tmp_path, monkeypatch):
@@ -84,5 +97,5 @@ def test_api_key_enforced(tmp_path, monkeypatch):
     cfg_path.write_text(yaml.safe_dump({"data_dir": str(data_dir), "watchlist": []}))
     client = TestClient(create_app(str(cfg_path)))
 
-    assert client.get("/watchlist").status_code == 401
-    assert client.get("/watchlist", headers={"X-API-Key": "secret"}).status_code == 200
+    assert client.get("/api/watchlist").status_code == 401
+    assert client.get("/api/watchlist", headers={"X-API-Key": "secret"}).status_code == 200

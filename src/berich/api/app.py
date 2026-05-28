@@ -5,6 +5,12 @@ endpoint requires a matching ``X-API-Key`` header; otherwise auth is disabled. T
 app reads persisted signals and the OHLCV cache directly and runs the (cached)
 backtest on demand. Heavy ML imports stay inside the backtest path so app startup is
 fast.
+
+All endpoints live under the ``/api`` prefix so the reverse-proxy can route
+``/api/*`` to the API and everything else to the Next.js frontend without
+collisions (see ``docs/DEPLOY.md``). ``/api/health`` is intentionally exempt
+from the API-key check so the proxy can probe liveness without owning the
+secret.
 """
 
 from __future__ import annotations
@@ -13,7 +19,7 @@ import os
 from functools import lru_cache
 
 import pandas as pd
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from berich.config import DEFAULT_CONFIG_PATH, Config
@@ -38,7 +44,7 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
 
     Each endpoint is a tiny inner function; the routes are kept inline (rather than
     split across many APIRouters) because the surface is small enough that the
-    one-file layout is easier to read than a four-file router tree. The C901
+    one-file layout is easier to read than a many-file router tree. The C901
     complexity warning is the cost of that choice and is explicitly suppressed.
     """
     config = Config.load(config_path)
@@ -52,25 +58,26 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
         allow_methods=["GET"],
         allow_headers=["*"],
     )
+    router = APIRouter(prefix="/api")
     guard = [Depends(_require_api_key)]
 
-    @app.get("/health")
+    @router.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/watchlist", dependencies=guard)
+    @router.get("/watchlist", dependencies=guard)
     def watchlist() -> list[str]:
         return config.watchlist
 
-    @app.get("/signals", dependencies=guard)
+    @router.get("/signals", dependencies=guard)
     def signals() -> list[dict]:
         return signal_store.latest().to_dict(orient="records")
 
-    @app.get("/signals/{ticker}/history", dependencies=guard)
+    @router.get("/signals/{ticker}/history", dependencies=guard)
     def signal_history(ticker: str) -> list[dict]:
         return signal_store.history(ticker.upper()).to_dict(orient="records")
 
-    @app.get("/prices/{ticker}", dependencies=guard)
+    @router.get("/prices/{ticker}", dependencies=guard)
     def prices(ticker: str, days: int = Query(default=365, ge=1, le=5000)) -> list[dict]:
         df = store.load(ticker.upper())
         if df is None or df.empty:
@@ -79,7 +86,7 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
         tail["date"] = tail["date"].dt.strftime("%Y-%m-%d")
         return tail.to_dict(orient="records")
 
-    @app.get("/drift", dependencies=guard)
+    @router.get("/drift", dependencies=guard)
     def drift() -> dict:
         from berich.scheduler.jobs import check_drift_job
 
@@ -91,11 +98,11 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
             "features": report.to_frame().to_dict(orient="records"),
         }
 
-    @app.get("/backtest", dependencies=guard)
+    @router.get("/backtest", dependencies=guard)
     def backtest(threshold: float = Query(default=0.5, ge=0.0, le=1.0)) -> dict:
         return _run_cached_backtest(config_path, round(threshold, 3))
 
-    @app.get("/paper/positions", dependencies=guard)
+    @router.get("/paper/positions", dependencies=guard)
     def paper_positions() -> dict:
         positions = get_open_positions(config, store)
         return {
@@ -103,7 +110,7 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
             "positions": [p.as_row() for p in positions],
         }
 
-    @app.get("/paper/equity", dependencies=guard)
+    @router.get("/paper/equity", dependencies=guard)
     def paper_equity() -> dict:
         curve = get_equity_curve(config, store)
         metrics = get_paper_metrics(config, store)
@@ -116,7 +123,7 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
             "metrics": metrics,
         }
 
-    @app.get("/paper/closed-trades", dependencies=guard)
+    @router.get("/paper/closed-trades", dependencies=guard)
     def paper_closed(limit: int = Query(default=50, ge=1, le=500)) -> list[dict]:
         df = PaperStore(config.db_path).closed_trades(limit=limit)
         if df.empty:
@@ -129,6 +136,7 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
                 df[col] = pd.to_datetime(df[col]).dt.strftime("%Y-%m-%dT%H:%M:%S")
         return df.to_dict(orient="records")
 
+    app.include_router(router)
     return app
 
 

@@ -1,7 +1,9 @@
 // Typed client for the BeRich FastAPI backend.
-// Base URL is configurable; defaults to the local serve address.
+// Base URL is configurable; defaults to the local serve address. The API now
+// lives under the /api prefix everywhere (see src/berich/api/app.py and
+// docs/DEPLOY.md), so both prod and dev defaults must point at /api.
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000/api";
 
 export type Signal = {
   date: string;

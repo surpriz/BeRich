@@ -15,3 +15,7 @@ mlruns/
 mlartifacts/
 mlflow.db
 *.parquet.tmp
+
+# Deployment secrets — these live outside the repo (see docs/DEPLOY.md), but
+# block them here as a tripwire in case someone ever copies /etc/berich/ in.
+/etc/berich/

@@ -20,6 +20,7 @@ rigorous walk-forward backtest before it is ever trusted.
 | 5 | FastAPI API + Next.js dashboard | ✅ done |
 | 3 | Feature engineering + LSTM/MLflow + label sweep + cross-asset experiment | ✅ **closed — no edge found, see [docs/RESULTS.md](docs/RESULTS.md)** |
 | 4a | Paper-trading tracker (DuckDB-backed, daily roundtrip vs SPY) | ✅ done |
+| 4b | Production deployment: systemd + Caddy HTTPS + 24/7 dashboard | ✅ done — see [docs/DEPLOY.md](docs/DEPLOY.md) |
 
 v0.1.0 ships the data → features → label → walk-forward backtest → signal →
 sizing → drift → dashboard pipeline. The model produced does **not** beat
