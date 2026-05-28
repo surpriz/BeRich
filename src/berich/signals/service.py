@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from berich.data.earnings import EarningsStore
+from berich.data.news import NewsStore
 from berich.datasets.assemble import build_dataset
 from berich.features.build import (
     MARKET_TICKER,
@@ -26,6 +27,7 @@ from berich.features.build import (
 )
 from berich.features.earnings_features import EARNINGS_FEATURE_COLUMNS
 from berich.features.indicators import atr
+from berich.features.news_features import NEWS_FEATURE_COLUMNS
 from berich.labeling.triple_barrier import LabelConfig
 from berich.models import LGBMModel, load_active
 
@@ -82,13 +84,14 @@ def _size_position(entry: float, stop: float, config: Config) -> tuple[int, floa
 
 
 def _earnings_store_if_available(config: Config) -> EarningsStore | None:
-    """Return an EarningsStore iff the cache directory has at least one non-empty file.
-
-    Backward-compat with v0.1.0: if the user hasn't run ``berich data`` since
-    Phase 5a landed, the directory is missing or empty and we silently fall
-    back to the 22-feature mode used by every previously-trained model.
-    """
+    """Return an EarningsStore iff the cache directory has at least one non-empty file."""
     store = EarningsStore(config.earnings_dir)
+    return store if store.has_any_data() else None
+
+
+def _news_store_if_available(config: Config) -> NewsStore | None:
+    """Return a NewsStore iff the cache directory has at least one non-empty file."""
+    store = NewsStore(config.news_dir)
     return store if store.has_any_data() else None
 
 
@@ -98,8 +101,15 @@ def _train_model(
     label_cfg: LabelConfig,
     *,
     earnings_store: EarningsStore | None,
+    news_store: NewsStore | None,
 ) -> Model:
-    dataset = build_dataset(store, config.watchlist, label_cfg, earnings_store=earnings_store)
+    dataset = build_dataset(
+        store,
+        config.watchlist,
+        label_cfg,
+        earnings_store=earnings_store,
+        news_store=news_store,
+    )
     return LGBMModel().fit(dataset.x, dataset.y, sample_weight=dataset.weight)
 
 
@@ -107,47 +117,69 @@ def _resolve_model(
     store: OhlcvStore,
     config: Config,
     label_cfg: LabelConfig,
-) -> tuple[Model, bool]:
-    """Return ``(model, with_earnings)`` — what to serve + whether it needs earnings.
+) -> tuple[Model, bool, bool]:
+    """Return ``(model, with_earnings, with_news)`` — model + which modes it needs.
 
     Decision tree:
       - promoted model in the registry → trust its ``feature_columns`` to know
-        whether it was trained with earnings, use it as-is.
-      - no promoted model → train a fresh LightGBM inline. Use earnings only
-        if the local cache actually contains data (v0.1.0 boxes that never
-        ran the new ``berich data`` get the 22-feature fallback for free).
+        which feature families it was trained with. If a model expects news
+        but the cache is stale (empty), log a warning and re-train inline
+        without news so we serve something usable rather than crash.
+      - no promoted model → train a fresh LightGBM inline using whichever
+        feature families have data on disk (v0.1.0 boxes that never ran
+        the new ``berich data`` keep the 22-feature fallback for free).
     """
     active = load_active(config.models_dir)
     if active is not None:
         model, meta = active
         meta_has_earnings = all(c in meta.feature_columns for c in EARNINGS_FEATURE_COLUMNS)
-        expected = feature_columns(earnings=meta_has_earnings)
+        meta_has_news = all(c in meta.feature_columns for c in NEWS_FEATURE_COLUMNS)
+        expected = feature_columns(earnings=meta_has_earnings, news=meta_has_news)
         if meta.feature_columns != expected:
             logger.warning(
                 "active model '%s' feature columns differ from current; retraining baseline",
                 meta.name,
             )
+        elif meta_has_news and _news_store_if_available(config) is None:
+            # Promoted model expects news features but the cache is empty;
+            # rather than feed it all-zero columns and silently degrade the
+            # signal, drop back to a freshly-trained earnings-or-base model.
+            logger.warning(
+                "active model '%s' expects news features but data/news/ is empty; "
+                "falling back to a non-news baseline",
+                meta.name,
+            )
         else:
             logger.info(
-                "serving promoted model '%s' (%s, earnings=%s)",
+                "serving promoted model '%s' (%s, earnings=%s, news=%s)",
                 meta.name,
                 meta.framework,
                 meta_has_earnings,
+                meta_has_news,
             )
-            return model, meta_has_earnings
+            return model, meta_has_earnings, meta_has_news
 
     earnings_store = _earnings_store_if_available(config)
+    news_store = _news_store_if_available(config)
     with_earnings = earnings_store is not None
-    model = _train_model(store, config, label_cfg, earnings_store=earnings_store)
-    return model, with_earnings
+    with_news = news_store is not None
+    model = _train_model(
+        store,
+        config,
+        label_cfg,
+        earnings_store=earnings_store,
+        news_store=news_store,
+    )
+    return model, with_earnings, with_news
 
 
 def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
     """Serve the promoted (or freshly trained) model and emit one signal per ticker."""
     label_cfg = LabelConfig(**config.labeling.model_dump())
-    model, with_earnings = _resolve_model(store, config, label_cfg)
+    model, with_earnings, with_news = _resolve_model(store, config, label_cfg)
     market = store.load(MARKET_TICKER)
     earnings_store = _earnings_store_if_available(config) if with_earnings else None
+    news_store = _news_store_if_available(config) if with_news else None
 
     signals: list[Signal] = []
     for ticker in config.watchlist:
@@ -155,6 +187,7 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
         if df is None or df.empty:
             continue
         earnings_df = earnings_store.load(ticker) if earnings_store is not None else None
+        news_df = news_store.load(ticker) if news_store is not None else None
         signal = _signal_for_ticker(
             ticker,
             df,
@@ -163,7 +196,9 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
             label_cfg,
             market=market,
             earnings=earnings_df,
+            news=news_df,
             with_earnings=with_earnings,
+            with_news=with_news,
         )
         if signal is not None:
             signals.append(signal)
@@ -179,19 +214,24 @@ def _signal_for_ticker(
     *,
     market: pd.DataFrame | None = None,
     earnings: pd.DataFrame | None = None,
+    news: pd.DataFrame | None = None,
     with_earnings: bool = False,
+    with_news: bool = False,
 ) -> Signal | None:
-    # When ``with_earnings`` is True we always pass an earnings frame (an empty
-    # one falls back to neutral defaults inside build_earnings_features), so the
-    # column shape stays consistent across all tickers in the same call.
+    # When a feature family is on we always pass an (optionally empty) frame so the
+    # column shape stays consistent across tickers — empty frames get the neutral
+    # defaults from the feature builder.
     earnings_arg = earnings if with_earnings else None
     if with_earnings and earnings_arg is None:
         earnings_arg = pd.DataFrame()
-    feats = build_features(df, market=market, earnings=earnings_arg).dropna()
+    news_arg = news if with_news else None
+    if with_news and news_arg is None:
+        news_arg = pd.DataFrame()
+    feats = build_features(df, market=market, earnings=earnings_arg, news=news_arg).dropna()
     if feats.empty:
         return None
     last_date = feats.index[-1]
-    cols = feature_columns(earnings=with_earnings)
+    cols = feature_columns(earnings=with_earnings, news=with_news)
     x = feats.loc[[last_date], cols]
     proba = float(model.predict_proba(x)[0])
 

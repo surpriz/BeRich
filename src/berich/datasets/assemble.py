@@ -24,6 +24,7 @@ from berich.labeling.triple_barrier import LabelConfig, triple_barrier_labels
 
 if TYPE_CHECKING:
     from berich.data.earnings import EarningsStore
+    from berich.data.news import NewsStore
     from berich.data.store import OhlcvStore
 
 
@@ -48,14 +49,15 @@ def build_ticker_dataset(
     ticker: str,
     market: pd.DataFrame | None = None,
     earnings: pd.DataFrame | None = None,
+    news: pd.DataFrame | None = None,
 ) -> SupervisedDataset:
     """Build a supervised dataset for a single OHLCV frame."""
-    feats = build_features(df, market=market, earnings=earnings)
+    feats = build_features(df, market=market, earnings=earnings, news=news)
     labels = triple_barrier_labels(df, label_config)
 
     joined = feats.join(labels[["label", "sample_weight"]]).dropna()
     y = (joined["label"] == 1).astype(int)
-    cols = feature_columns(earnings=earnings is not None)
+    cols = feature_columns(earnings=earnings is not None, news=news is not None)
     return SupervisedDataset(
         x=joined[cols],
         y=y,
@@ -71,30 +73,35 @@ def build_dataset(
     label_config: LabelConfig,
     *,
     earnings_store: EarningsStore | None = None,
+    news_store: NewsStore | None = None,
 ) -> SupervisedDataset:
     """Build a combined dataset across tickers, sorted by date then ticker.
 
-    Tickers that are absent from the cache are skipped. The result is globally
-    date-sorted so walk-forward splits stay chronological across the panel.
-    The market-regime ticker (SPY) is loaded once and broadcast to every
-    ticker — with a one-bar lag enforced inside :func:`build_features` so
-    cross-asset features can never use information from the same calendar day.
+    Tickers absent from the cache are skipped. The result is date-sorted so
+    walk-forward splits stay chronological across the panel. SPY is loaded
+    once and broadcast as the market regime; ``earnings_store`` and
+    ``news_store`` add their respective feature columns when supplied.
+    Neutral defaults inside the feature builders keep tickers without an
+    earnings track (SPY) or with no news cached (or empty) in the panel
+    rather than silently dropping them at ``dropna``.
 
-    When ``earnings_store`` is supplied, the six earnings features are
-    appended for every ticker (neutral defaults for tickers without an
-    earnings track such as SPY). The model registry's metadata captures
-    which mode was used so serving stays in sync at load time.
+    The model registry's metadata records which mode each artifact was
+    trained with so serving stays in sync at load time.
     """
     market = store.load(MARKET_TICKER)
     use_earnings = earnings_store is not None
+    use_news = news_store is not None
 
     def _earnings_for(ticker: str) -> pd.DataFrame | None:
-        # Always pass a frame when earnings mode is on (even an empty one) so the
-        # column shape stays uniform across tickers — neutral defaults handle the
-        # missing-cache case inside build_earnings_features.
         if earnings_store is None:
             return None
         loaded = earnings_store.load(ticker)
+        return loaded if loaded is not None else pd.DataFrame()
+
+    def _news_for(ticker: str) -> pd.DataFrame | None:
+        if news_store is None:
+            return None
+        loaded = news_store.load(ticker)
         return loaded if loaded is not None else pd.DataFrame()
 
     parts = [
@@ -104,6 +111,7 @@ def build_dataset(
             ticker=t,
             market=market,
             earnings=_earnings_for(t) if use_earnings else None,
+            news=_news_for(t) if use_news else None,
         )
         for t in tickers
         if (df := store.load(t)) is not None and not df.empty
@@ -111,7 +119,7 @@ def build_dataset(
     if not parts:
         empty_idx = pd.DatetimeIndex([])
         return SupervisedDataset(
-            x=pd.DataFrame(columns=pd.Index(feature_columns(earnings=use_earnings))),
+            x=pd.DataFrame(columns=pd.Index(feature_columns(earnings=use_earnings, news=use_news))),
             y=pd.Series(dtype=int),
             weight=pd.Series(dtype=float),
             dates=empty_idx,

@@ -11,7 +11,7 @@ import logging
 import sys
 
 from berich.config import DEFAULT_CONFIG_PATH, Config
-from berich.data import update_earnings, update_watchlist
+from berich.data import update_earnings, update_news_watchlist, update_watchlist
 
 
 def _cmd_data(args: argparse.Namespace) -> int:
@@ -19,20 +19,32 @@ def _cmd_data(args: argparse.Namespace) -> int:
     reports = update_watchlist(config)
     failed = [r for r in reports if not r.ok]
     print(f"\n{len(reports)} tickers refreshed, {len(failed)} with warnings.")  # noqa: T201
-    if args.skip_earnings:
-        return 1 if failed else 0
-    earnings_reports = update_earnings(config)
-    earn_failed = [r for r in earnings_reports if not r.ok]
-    print(  # noqa: T201
-        f"{len(earnings_reports)} earnings calendars refreshed, {len(earn_failed)} with warnings."
-    )
-    return 1 if (failed or earn_failed) else 0
+
+    earn_failed: list = []
+    if not args.skip_earnings:
+        earnings_reports = update_earnings(config)
+        earn_failed = [r for r in earnings_reports if not r.ok]
+        print(  # noqa: T201
+            f"{len(earnings_reports)} earnings calendars refreshed, "
+            f"{len(earn_failed)} with warnings."
+        )
+
+    news_failed: list = []
+    if args.with_news:
+        news_reports = update_news_watchlist(config)
+        news_failed = [r for r in news_reports if not r.ok]
+        print(  # noqa: T201
+            f"{len(news_reports)} news feeds refreshed, {len(news_failed)} with warnings"
+            " (FinBERT scoring queued; run `berich news score`)."
+        )
+
+    return 1 if (failed or earn_failed or news_failed) else 0
 
 
 def _cmd_backtest(args: argparse.Namespace) -> int:
     # Imported lazily so `berich data` doesn't pay for lightgbm/sklearn import time.
     from berich.backtest import BacktestConfig, run_backtest
-    from berich.data import EarningsStore
+    from berich.data import EarningsStore, NewsStore
     from berich.data.store import OhlcvStore
     from berich.datasets import build_dataset
     from berich.labeling.triple_barrier import LabelConfig
@@ -44,8 +56,20 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     label_cfg = LabelConfig(**config.labeling.model_dump())
 
     earnings_store = EarningsStore(config.earnings_dir) if args.with_earnings else None
-    dataset = build_dataset(store, config.watchlist, label_cfg, earnings_store=earnings_store)
-    feat_mode = "22 + earnings" if args.with_earnings else "22"
+    news_store = NewsStore(config.news_dir) if args.with_news else None
+    dataset = build_dataset(
+        store,
+        config.watchlist,
+        label_cfg,
+        earnings_store=earnings_store,
+        news_store=news_store,
+    )
+    bits = ["22"]
+    if args.with_earnings:
+        bits.append("earnings")
+    if args.with_news:
+        bits.append("news")
+    feat_mode = " + ".join(bits)
     print(  # noqa: T201
         f"Dataset: {len(dataset)} samples, P(win)={dataset.y.mean():.3f}, features={feat_mode}"
     )
@@ -97,6 +121,58 @@ def _cmd_signals(args: argparse.Namespace) -> int:
             f"{s.ticker:<8}{s.signal:<9}{s.proba:>7.3f}{s.entry:>10.2f}"
             f"{s.stop_loss:>10.2f}{s.take_profit:>10.2f}{s.size_shares:>8d}"
         )
+    return 0
+
+
+def _cmd_news(args: argparse.Namespace) -> int:
+    import pandas as pd
+
+    from berich.data import NewsStore
+
+    config = Config.load(args.config)
+    store = NewsStore(config.news_dir)
+
+    if args.action in {"fetch", "all"}:
+        reports = update_news_watchlist(config)
+        ok = sum(r.rows_added for r in reports)
+        warn = sum(1 for r in reports if not r.ok)
+        print(f"news fetch: +{ok} rows total, {warn} tickers warned.")  # noqa: T201
+
+    if args.action in {"score", "all"}:
+        from berich.models.finbert_scorer import FinBertScorer
+
+        scorer = FinBertScorer()
+        total_scored = 0
+        for ticker in config.watchlist:
+            df = store.load(ticker)
+            if df is None or df.empty:
+                continue
+            unscored = df[df["finbert_score"].isna()].copy()
+            if unscored.empty:
+                continue
+            # Concatenate title + summary so FinBERT sees more than the headline.
+            texts = [
+                f"{title} {summary}".strip()
+                for title, summary in zip(
+                    unscored["title"].fillna("").to_list(),
+                    unscored["summary"].fillna("").to_list(),
+                    strict=False,
+                )
+            ]
+            probs = scorer.score_texts(texts)
+            scores = pd.DataFrame(
+                {
+                    "url": unscored["url"].to_numpy(),
+                    "finbert_neg": probs[:, 0],
+                    "finbert_neu": probs[:, 1],
+                    "finbert_pos": probs[:, 2],
+                    "finbert_score": probs[:, 2] - probs[:, 0],
+                }
+            )
+            updated = store.update_finbert(ticker, scores)
+            total_scored += updated
+            print(f"  {ticker}: scored {updated} rows")  # noqa: T201
+        print(f"FinBERT total: {total_scored} rows scored.")  # noqa: T201
     return 0
 
 
@@ -199,7 +275,7 @@ def _cmd_schedule(args: argparse.Namespace) -> int:
 
 def _cmd_train(args: argparse.Namespace) -> int:
     from berich.backtest import BacktestConfig, run_backtest
-    from berich.data import EarningsStore
+    from berich.data import EarningsStore, NewsStore
     from berich.data.store import OhlcvStore
     from berich.datasets import build_dataset
     from berich.features.build import feature_columns
@@ -212,7 +288,14 @@ def _cmd_train(args: argparse.Namespace) -> int:
     label_cfg = LabelConfig(**config.labeling.model_dump())
 
     earnings_store = EarningsStore(config.earnings_dir) if args.with_earnings else None
-    dataset = build_dataset(store, config.watchlist, label_cfg, earnings_store=earnings_store)
+    news_store = NewsStore(config.news_dir) if args.with_news else None
+    dataset = build_dataset(
+        store,
+        config.watchlist,
+        label_cfg,
+        earnings_store=earnings_store,
+        news_store=news_store,
+    )
     oof = oof_predict(dataset, LGBMModel, embargo=label_cfg.horizon_days)
     prices = {t: df for t in config.watchlist if (df := store.load(t)) is not None}
     result = run_backtest(prices, oof, BacktestConfig(entry_threshold=0.5))
@@ -222,7 +305,7 @@ def _cmd_train(args: argparse.Namespace) -> int:
     meta = ModelMetadata(
         name=args.name,
         framework="lightgbm",
-        feature_columns=feature_columns(earnings=args.with_earnings),
+        feature_columns=feature_columns(earnings=args.with_earnings, news=args.with_news),
         metrics={
             "auc": oof.auc,
             "sharpe": result.strategy.sharpe,
@@ -285,13 +368,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_data = sub.add_parser("data", help="Refresh OHLCV + earnings caches from yfinance")
+    p_data = sub.add_parser("data", help="Refresh OHLCV + earnings (+ optional news) caches")
     p_data.add_argument(
         "--skip-earnings",
         action="store_true",
         help="Skip the earnings-calendar refresh (Phase 5a). OHLCV only.",
     )
+    p_data.add_argument(
+        "--with-news",
+        action="store_true",
+        help="Also fetch news via Alpha Vantage (Phase 5b). Costs API budget"
+        " (25 req/day free tier). Run `berich news score` afterwards to FinBERT.",
+    )
     p_data.set_defaults(func=_cmd_data)
+
+    p_news = sub.add_parser("news", help="News pipeline (Alpha Vantage fetch + FinBERT GPU score)")
+    p_news.add_argument(
+        "action",
+        choices=["fetch", "score", "all"],
+        help="fetch = AV refresh only; score = FinBERT on unscored rows;"
+        " all = both (use after `berich data`)",
+    )
+    p_news.set_defaults(func=_cmd_news)
 
     p_bt = sub.add_parser("backtest", help="Walk-forward backtest of the LightGBM baseline")
     p_bt.add_argument(
@@ -305,6 +403,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Include the 6 earnings features (Phase 5a). Default off for parity"
         " with the v0.1.0 baseline.",
+    )
+    p_bt.add_argument(
+        "--with-news",
+        action="store_true",
+        help="Include the 7 news/sentiment features (Phase 5b). Requires the"
+        " news cache to be populated and FinBERT-scored.",
     )
     p_bt.set_defaults(func=_cmd_backtest)
 
@@ -344,6 +448,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include the 6 earnings features. The artifact metadata records"
         " the choice so serving stays in sync.",
     )
+    p_train.add_argument(
+        "--with-news",
+        action="store_true",
+        help="Include the 7 news/sentiment features (Phase 5b).",
+    )
     p_train.set_defaults(func=_cmd_train)
 
     p_models = sub.add_parser("models", help="List models in the registry")
@@ -354,6 +463,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    # httpx logs full request URLs at INFO, which would leak the Alpha Vantage
+    # API key into journalctl. Silence the noisy third-party loggers — our own
+    # modules log the meaningful "news AAPL: +N rows" lines themselves.
+    for noisy in ("httpx", "httpcore", "transformers", "huggingface_hub"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     args = build_parser().parse_args(argv)
     return args.func(args)
 

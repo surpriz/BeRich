@@ -197,15 +197,89 @@ to Phase 5b (news/sentiment via FinBERT) is the next plausible probe; the
 earnings feature plumbing stays in the repo for any future model that wants
 to use it without re-implementing it.
 
+## Phase 5b — news sentiment via Alpha Vantage + FinBERT (GPU)
+
+The hypothesis: text-based news sentiment is qualitatively different from
+price/macro/earnings (which all decompose to numbers from a single OHLCV
+feed). Seven features were added behind a `--with-news` flag:
+`news_count_5d`, `news_count_20d`, `sentiment_mean_5d`, `sentiment_std_5d`,
+`sentiment_extreme_5d`, `sentiment_av_5d`, `sentiment_price_div`.
+
+**Data pipeline:**
+- Source: Alpha Vantage `NEWS_SENTIMENT` (free tier, 25 req/day, 1000
+  articles/req). Cached under `data/news/<TICKER>.parquet`. Pagination
+  walks forward from the cache tip; dedupe by URL.
+- Scorer: `ProsusAI/finbert` (HuggingFace), loaded on `cuda:0` in half
+  precision, batch 64, max 256 tokens (title + first paragraph of summary).
+  Score: `pos - neg` from the (neg, neu, pos) softmax — symmetric in [-1, 1].
+- ~22,400 articles scored end-to-end on the 10-ticker watchlist between
+  2022-04-01 and the most recent fetch.
+
+**Honest caveat on the window.** The news coverage starts only in April
+2022 (AV's index goes back that far for most tickers and no further),
+giving ~3.7 years of overlap with the OHLCV history. Walk-forward folds
+on this window are short and statistically less reliable than the
+~15-year backtest. The comparative table below filters the **baseline
+to the same window** so it's apples-to-apples.
+
+| variant                          | samples | AUC    | Sharpe | B&H Sharpe | beats |
+|----------------------------------|---------|--------|--------|------------|-------|
+| 22 + earnings (window-only)      | 10320   | 0.5087 | 0.276  | 1.149      | False |
+| 22 + earnings + 7 news           | 10320   | 0.5003 | 0.241  | 1.149      | False |
+
+News features regress both AUC and Sharpe modestly. Promote gate
+(`AUC > 0.55 AND Sharpe > B&H`) is not met by a wide margin → **no model
+promoted**.
+
+Top-10 importance ranking (35-feature model, news on):
+
+```
+spy_rvol_20             7.48 %
+last_surprise_pct       5.40 %  ← earnings
+spy_ret_20              5.23 %
+rvol_20                 4.96 %
+surprise_4q_mean        4.88 %  ← earnings
+atr_pct                 4.30 %
+mom_120                 4.24 %
+news_count_20d          3.82 %  ← news
+month_sin               3.78 %
+month_cos               3.69 %
+```
+
+`news_count_20d` slips into the top 10 — the model does use the *volume*
+of coverage as a signal. The actual FinBERT sentiment columns
+(`sentiment_mean_5d`, `sentiment_std_5d`, …) sit lower in the ranking and
+don't help on this window. Same shape as every earlier exogenous-feature
+experiment in Phase 3 and 5a: the model picks up the new signal, but it
+doesn't translate to a tradable single-name probability at the 10-day
+horizon.
+
+**Why the news count works while the sentiment doesn't (best guess):**
+the volume of news on a ticker correlates with already-elevated activity
+(earnings windows, big macro days, idiosyncratic events), so the model
+uses count as a regime proxy similar to realized volatility. The actual
+FinBERT polarity adds nothing on top of that volume signal at the
+10-day horizon — by the time we'd act, the news has been priced in.
+
+The Phase 5b code is merged behind the `--with-news` flag; the news /
+FinBERT pipeline + GPU scoring + scheduler integration are in place so a
+future attempt with a different label (intraday? per-event reaction
+window?) can reuse all of it.
+
 ## Open project (not started)
 
-The next plausible source of lift is **qualitatively different** exogenous
-information — text rather than tabular:
+After Phase 3 (OHLCV + macro), 5a (earnings surprises) and 5b (news
+sentiment), the daily / single-name / 10-day-triple-barrier target has
+absorbed every reasonable exogenous tabular signal without lifting AUC
+past 0.51. The remaining candidate directions involve **changing the
+target**, not adding more features:
 
-- News sentiment via FinBERT on per-ticker headlines.
-- Earnings *transcripts* (not just surprises) — language signal around the
-  call vs the dry beat/miss number.
-- Sector flows / 13F changes / insider filings.
+- Per-event labels (post-earnings drift, news-burst reaction window)
+  instead of the calendar-bar triple-barrier.
+- Intraday horizons (1-hour, 4-hour) where sentiment may matter more.
+- Meta-labeling (Lopez de Prado): a tiny primary detector + an ML
+  secondary that predicts the primary's reliability for sizing.
 
-These are larger projects than the OHLCV/macro/earnings tabular features
-explored so far. They live in Phase 5b+ and are not started.
+None are started. The current v0.1.0+ infrastructure (data, features,
+backtest, registry, paper book, production deployment) is the platform
+on which any of these would sit.

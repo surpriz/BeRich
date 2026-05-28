@@ -21,6 +21,10 @@ from berich.features.earnings_features import (
     EARNINGS_FEATURE_COLUMNS,
     build_earnings_features,
 )
+from berich.features.news_features import (
+    NEWS_FEATURE_COLUMNS,
+    build_news_features,
+)
 
 # Ticker used as the broad-market regime proxy in the SPY features.
 MARKET_TICKER = "SPY"
@@ -74,18 +78,22 @@ FEATURE_COLUMNS: list[str] = [
 ]
 
 
-def feature_columns(*, earnings: bool = False) -> list[str]:
+def feature_columns(*, earnings: bool = False, news: bool = False) -> list[str]:
     """Canonical ordered feature list.
 
-    Returns the 22-column base set; when ``earnings`` is True, appends the six
-    earnings-derived columns from :mod:`berich.features.earnings_features` in
-    the order they appear there. Callers (training, scaling, serving) must use
-    the same value of ``earnings`` end-to-end — the model registry remembers
-    which one was active for each artifact in its metadata.
+    Returns the 22-column base set; ``earnings`` appends the six
+    :mod:`~berich.features.earnings_features` columns, ``news`` appends the
+    seven :mod:`~berich.features.news_features` columns (in that order).
+    Callers (training, scaling, serving) must use the same flags end-to-end —
+    the model registry's metadata records which mode each artifact was trained
+    with so serving stays in sync.
     """
+    out = list(FEATURE_COLUMNS)
     if earnings:
-        return [*FEATURE_COLUMNS, *EARNINGS_FEATURE_COLUMNS]
-    return list(FEATURE_COLUMNS)
+        out.extend(EARNINGS_FEATURE_COLUMNS)
+    if news:
+        out.extend(NEWS_FEATURE_COLUMNS)
+    return out
 
 
 def _calendar_features(index: pd.DatetimeIndex) -> pd.DataFrame:
@@ -138,16 +146,16 @@ def build_features(
     *,
     market: pd.DataFrame | None = None,
     earnings: pd.DataFrame | None = None,
+    news: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Compute the canonical feature matrix from an OHLCV frame.
 
-    Returns a frame indexed like ``df``. When ``earnings`` is omitted the
-    column set is the 22-column base (``FEATURE_COLUMNS``); when an earnings
-    frame is supplied the six earnings columns are appended in
-    ``EARNINGS_FEATURE_COLUMNS`` order. Passing an empty earnings frame is
-    explicitly supported and yields neutral defaults for those six columns
-    (so ETFs / indices with no announcements stay in the panel rather than
-    being silently dropped by ``dropna``).
+    The returned column set depends on which optional inputs are supplied:
+    base 22 columns always, plus the 6 earnings columns when ``earnings`` is
+    a (possibly empty) frame, plus the 7 news columns when ``news`` is a
+    (possibly empty) frame. Passing an empty frame is explicitly supported
+    and yields neutral defaults — that's what lets ETFs / indices without
+    announcements (or tickers without news yet) survive ``dropna``.
 
     Rows where any base feature is still warming up are left as NaN for the
     caller to drop. When ``market`` is omitted the SPY regime columns are NaN
@@ -196,7 +204,11 @@ def build_features(
         feats["spy_rvol_20"] = np.nan
 
     base = feats[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan)
-    if earnings is None:
+    extras: list[pd.DataFrame] = []
+    if earnings is not None:
+        extras.append(build_earnings_features(pd.DatetimeIndex(df.index), earnings))
+    if news is not None:
+        extras.append(build_news_features(pd.DatetimeIndex(df.index), news, close=close))
+    if not extras:
         return base
-    earnings_feats = build_earnings_features(pd.DatetimeIndex(df.index), earnings)
-    return pd.concat([base, earnings_feats], axis=1)
+    return pd.concat([base, *extras], axis=1)

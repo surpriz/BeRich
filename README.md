@@ -22,6 +22,7 @@ rigorous walk-forward backtest before it is ever trusted.
 | 4a | Paper-trading tracker (DuckDB-backed, daily roundtrip vs SPY) | ✅ done |
 | 4b | Production deployment: systemd + Caddy HTTPS + 24/7 dashboard | ✅ done — see [docs/DEPLOY.md](docs/DEPLOY.md) |
 | 5a | Earnings features (6 columns, yfinance) — code merged, no edge | ✅ done — AUC 0.5117 vs 0.5169 baseline, not promoted ([RESULTS](docs/RESULTS.md#phase-5a--earnings-features-free-data-no-gpu)) |
+| 5b | News sentiment via Alpha Vantage + FinBERT (GPU) — code merged, no edge | ✅ done — AUC 0.5003 vs 0.5087 baseline on 2022-04+ window ([RESULTS](docs/RESULTS.md#phase-5b--news-sentiment-via-alpha-vantage--finbert-gpu)) |
 
 v0.1.0 ships the data → features → label → walk-forward backtest → signal →
 sizing → drift → dashboard pipeline. The model produced does **not** beat
@@ -33,7 +34,11 @@ buy & hold; the registry refuses to promote it and the dashboard surfaces an
 ```bash
 uv sync --all-groups          # install deps
 uv run berich data            # refresh OHLCV + earnings caches from yfinance
-                              # (use --skip-earnings to refresh OHLCV only)
+                              # (--skip-earnings: OHLCV only;
+                              #  --with-news: also Alpha Vantage news +
+                              #  FinBERT GPU scoring — costs AV quota)
+uv run berich news fetch      # standalone news refresh (25 req/day free tier)
+uv run berich news score      # FinBERT scoring on unscored cached rows
 uv run berich backtest        # walk-forward backtest of the LightGBM baseline
 uv run berich signals         # generate & persist today's signals + position sizing
 uv run berich drift           # feature-drift check (PSI + KS) vs the training era
@@ -142,3 +147,18 @@ the dashed SPY line, that's the model losing to buy & hold, in plain sight.
 This is **paper only**: not a recommendation, not a backtest, not a claim of
 edge. Use it to learn how the signals behave day-to-day in the real cache
 rather than under walk-forward retrospection.
+
+## News + FinBERT (Phase 5b)
+
+`berich news fetch` pulls Alpha Vantage news + FinBERT scores per ticker on
+the local GPU. The cache lives in `data/news/<TICKER>.parquet` (with a
+`finbert_score` column populated lazily by `berich news score`). When the
+cache has data, every subsequent training run picks up the 7 sentiment
+features automatically — the model registry's metadata records which mode
+each artifact was trained with, so serving stays in sync.
+
+Set `ALPHAVANTAGE_KEY` in the environment (already in `/etc/berich/env` on
+the production server). The free tier is 25 requests/day; the daily
+scheduled job uses at most one page per ticker per run and degrades
+gracefully when the quota is exhausted. Comparative backtest results and
+the honest "no edge" verdict live in [docs/RESULTS.md](docs/RESULTS.md#phase-5b--news-sentiment-via-alpha-vantage--finbert-gpu).
