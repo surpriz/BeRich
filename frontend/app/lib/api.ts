@@ -47,6 +47,56 @@ export type Backtest = {
   equity: { dates: string[]; strategy: number[]; benchmark: number[] };
 };
 
+export type PaperPosition = {
+  date_open: string;
+  ticker: string;
+  entry: number;
+  stop: number;
+  target: number;
+  size_shares: number;
+  current_price: number;
+  days_held: number;
+  mtm_pct: number;
+  mtm_eur: number;
+};
+
+export type PaperPositions = {
+  n: number;
+  positions: PaperPosition[];
+};
+
+export type PaperMetrics = {
+  n_open: number;
+  n_closed: number;
+  win_rate: number;
+  total_return_paper: number;
+  total_return_spy: number;
+  max_drawdown_paper: number;
+  capital: number;
+};
+
+export type PaperEquity = {
+  dates: string[];
+  equity_paper: number[];
+  equity_spy: Array<number | null>;
+  metrics: PaperMetrics;
+};
+
+export type PaperClosedTrade = {
+  date_open: string;
+  date_close: string;
+  ticker: string;
+  signal: string;
+  entry: number;
+  stop: number;
+  target: number;
+  size_shares: number;
+  status: string;
+  exit_price: number;
+  pnl_pct: number;
+  pnl_eur: number;
+};
+
 async function get<T>(path: string): Promise<T> {
   const key = process.env.NEXT_PUBLIC_API_KEY;
   const res = await fetch(`${API_BASE}${path}`, {
@@ -61,4 +111,7 @@ export const api = {
   signals: () => get<Signal[]>("/signals"),
   drift: () => get<DriftReport>("/drift"),
   backtest: (threshold = 0.5) => get<Backtest>(`/backtest?threshold=${threshold}`),
+  paperPositions: () => get<PaperPositions>("/paper/positions"),
+  paperEquity: () => get<PaperEquity>("/paper/equity"),
+  paperClosed: (limit = 25) => get<PaperClosedTrade[]>(`/paper/closed-trades?limit=${limit}`),
 };

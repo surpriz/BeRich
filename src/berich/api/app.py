@@ -18,7 +18,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from berich.config import DEFAULT_CONFIG_PATH, Config
 from berich.data.store import OhlcvStore
-from berich.signals import SignalStore
+from berich.signals import (
+    SignalStore,
+    get_equity_curve,
+    get_open_positions,
+    get_paper_metrics,
+)
+from berich.signals.paper import PaperStore
 
 
 def _require_api_key(x_api_key: str | None = Header(default=None)) -> None:
@@ -27,8 +33,14 @@ def _require_api_key(x_api_key: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="invalid or missing X-API-Key")
 
 
-def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:
-    """Build the FastAPI app bound to a config file."""
+def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa: C901
+    """Build the FastAPI app bound to a config file.
+
+    Each endpoint is a tiny inner function; the routes are kept inline (rather than
+    split across many APIRouters) because the surface is small enough that the
+    one-file layout is easier to read than a four-file router tree. The C901
+    complexity warning is the cost of that choice and is explicitly suppressed.
+    """
     config = Config.load(config_path)
     store = OhlcvStore(config.ohlcv_dir)
     signal_store = SignalStore(config.db_path)
@@ -82,6 +94,40 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:
     @app.get("/backtest", dependencies=guard)
     def backtest(threshold: float = Query(default=0.5, ge=0.0, le=1.0)) -> dict:
         return _run_cached_backtest(config_path, round(threshold, 3))
+
+    @app.get("/paper/positions", dependencies=guard)
+    def paper_positions() -> dict:
+        positions = get_open_positions(config, store)
+        return {
+            "n": len(positions),
+            "positions": [p.as_row() for p in positions],
+        }
+
+    @app.get("/paper/equity", dependencies=guard)
+    def paper_equity() -> dict:
+        curve = get_equity_curve(config, store)
+        metrics = get_paper_metrics(config, store)
+        if curve.empty:
+            return {"dates": [], "equity_paper": [], "equity_spy": [], "metrics": metrics}
+        return {
+            "dates": curve["date"].tolist(),
+            "equity_paper": curve["equity_paper"].tolist(),
+            "equity_spy": [None if pd.isna(v) else float(v) for v in curve["equity_spy"]],
+            "metrics": metrics,
+        }
+
+    @app.get("/paper/closed-trades", dependencies=guard)
+    def paper_closed(limit: int = Query(default=50, ge=1, le=500)) -> list[dict]:
+        df = PaperStore(config.db_path).closed_trades(limit=limit)
+        if df.empty:
+            return []
+        df = df.copy()
+        for col in ("date_open", "date_close"):
+            df[col] = pd.to_datetime(df[col]).dt.strftime("%Y-%m-%d")
+        for col in ("created_at", "updated_at"):
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col]).dt.strftime("%Y-%m-%dT%H:%M:%S")
+        return df.to_dict(orient="records")
 
     return app
 

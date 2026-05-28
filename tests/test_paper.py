@@ -1,0 +1,206 @@
+"""Paper-trading roundtrip tests.
+
+Covers the contract that matters at the day-to-day level:
+- a steady uptrend closes a trade at the target,
+- a steady downtrend closes a trade at the stop,
+- a flat-then-time-barrier sequence closes a trade with reason "closed_time",
+- update is idempotent: running it again after the world stops moving doesn't
+  change any trade's status, and re-opening on the same signal date is a no-op.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from berich.config import Config, LabelingConfig, SignalConfig
+from berich.data.store import OhlcvStore
+from berich.signals import (
+    PaperStore,
+    open_new_trades,
+    update_open_trades,
+)
+from berich.signals.paper import (
+    CLOSED_STOP,
+    CLOSED_TARGET,
+    CLOSED_TIME,
+    OPEN,
+)
+from berich.signals.service import BUY, Signal
+from berich.signals.store import SignalStore
+
+
+@pytest.fixture
+def config(tmp_path) -> Config:
+    """Project config rooted in a tmp directory so each test gets a clean DB + cache."""
+    return Config(
+        data_dir=tmp_path,
+        watchlist=["AAA"],
+        labeling=LabelingConfig(horizon_days=10, atr_window=14),
+        signals=SignalConfig(
+            buy_threshold=0.55, sell_threshold=0.30, capital=10_000.0, risk_pct=0.01
+        ),
+    )
+
+
+@pytest.fixture
+def ohlcv_store(config) -> OhlcvStore:
+    return OhlcvStore(config.ohlcv_dir)
+
+
+def _save_ohlcv(store: OhlcvStore, ticker: str, df: pd.DataFrame) -> None:
+    """Round-trip a frame through OhlcvStore (which expects the canonical schema)."""
+    full = df.copy()
+    if "volume" not in full.columns:
+        full["volume"] = 1_000.0
+    full.index.name = "date"
+    store.save(ticker, full)
+
+
+def _ramp(*, start: float, end: float, n: int, start_date: str) -> pd.DataFrame:
+    """Smooth-ramp OHLCV from ``start`` to ``end`` over ``n`` business days."""
+    idx = pd.bdate_range(start_date, periods=n)
+    close = np.linspace(start, end, n)
+    return pd.DataFrame(
+        {"open": close, "high": close + 0.1, "low": close - 0.1, "close": close},
+        index=idx,
+    )
+
+
+def _flat(*, level: float, n: int, start_date: str) -> pd.DataFrame:
+    idx = pd.bdate_range(start_date, periods=n)
+    close = np.full(n, level)
+    return pd.DataFrame(
+        {"open": close, "high": close + 0.05, "low": close - 0.05, "close": close},
+        index=idx,
+    )
+
+
+def _signal(date: pd.Timestamp, ticker: str, entry: float, stop: float, target: float) -> Signal:
+    return Signal(
+        date=date,
+        ticker=ticker,
+        signal=BUY,
+        proba=0.65,
+        entry=entry,
+        stop_loss=stop,
+        take_profit=target,
+        size_shares=10,
+        notional=entry * 10,
+    )
+
+
+def _seed_signal_table(
+    config: Config,
+    date: pd.Timestamp,
+    *,
+    entry: float,
+    stop: float,
+    target: float,
+) -> SignalStore:
+    """Persist a BUY signal so ``open_new_trades`` has something to read."""
+    store = SignalStore(config.db_path)
+    store.save([_signal(date, "AAA", entry=entry, stop=stop, target=target)])
+    return store
+
+
+def test_uptrend_closes_at_target(config, ohlcv_store):
+    # Entry at 100, target 110, stop 95. 20-day climb to 120 -> target must hit first.
+    df = _ramp(start=100.0, end=120.0, n=20, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    entry_date = df.index[0]
+    sigstore = _seed_signal_table(config, entry_date, entry=100.0, stop=95.0, target=110.0)
+
+    opened = open_new_trades(config, ohlcv_store, sigstore)
+    closed = update_open_trades(config, ohlcv_store)
+
+    assert opened == 1
+    assert closed == 1
+    rows = PaperStore(config.db_path).all_trades()
+    assert len(rows) == 1
+    trade = rows.iloc[0]
+    assert trade["status"] == CLOSED_TARGET
+    assert trade["exit_price"] == pytest.approx(110.0)
+    assert trade["pnl_pct"] > 0
+
+
+def test_downtrend_closes_at_stop(config, ohlcv_store):
+    # Entry at 100, stop 95, target 110. 20-day slide to 80 -> stop must hit first.
+    df = _ramp(start=100.0, end=80.0, n=20, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    entry_date = df.index[0]
+    sigstore = _seed_signal_table(config, entry_date, entry=100.0, stop=95.0, target=110.0)
+
+    open_new_trades(config, ohlcv_store, sigstore)
+    closed = update_open_trades(config, ohlcv_store)
+
+    assert closed == 1
+    trade = PaperStore(config.db_path).all_trades().iloc[0]
+    assert trade["status"] == CLOSED_STOP
+    assert trade["exit_price"] == pytest.approx(95.0)
+    assert trade["pnl_pct"] < 0
+
+
+def test_flat_market_closes_at_time_barrier(config, ohlcv_store):
+    # 15 flat bars at 100 — neither stop (95) nor target (110) is touched, so the
+    # trade must close at the horizon (10) with reason CLOSED_TIME.
+    df = _flat(level=100.0, n=15, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    entry_date = df.index[0]
+    sigstore = _seed_signal_table(config, entry_date, entry=100.0, stop=95.0, target=110.0)
+
+    open_new_trades(config, ohlcv_store, sigstore)
+    closed = update_open_trades(config, ohlcv_store)
+
+    assert closed == 1
+    trade = PaperStore(config.db_path).all_trades().iloc[0]
+    assert trade["status"] == CLOSED_TIME
+    # Time barrier is at entry_idx + horizon_days = 0 + 10 = index 10.
+    expected_date = df.index[10]
+    assert pd.Timestamp(trade["date_close"]) == pd.Timestamp(expected_date.date())
+
+
+def test_update_is_idempotent_for_open_and_closed(config, ohlcv_store):
+    df = _ramp(start=100.0, end=120.0, n=20, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    entry_date = df.index[0]
+    sigstore = _seed_signal_table(config, entry_date, entry=100.0, stop=95.0, target=110.0)
+
+    open_new_trades(config, ohlcv_store, sigstore)
+    first = update_open_trades(config, ohlcv_store)
+    # Re-running update once the trade is closed must be a no-op (closed trades
+    # are immutable; nothing in 'open' state remains).
+    second = update_open_trades(config, ohlcv_store)
+    third = update_open_trades(config, ohlcv_store)
+    assert first == 1
+    assert second == 0
+    assert third == 0
+
+
+def test_open_new_trades_is_idempotent(config, ohlcv_store):
+    df = _flat(level=100.0, n=5, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    entry_date = df.index[0]
+    sigstore = _seed_signal_table(config, entry_date, entry=100.0, stop=95.0, target=110.0)
+
+    first = open_new_trades(config, ohlcv_store, sigstore)
+    second = open_new_trades(config, ohlcv_store, sigstore)
+    assert first == 1
+    assert second == 0
+    assert len(PaperStore(config.db_path).all_trades()) == 1
+
+
+def test_open_trade_stays_open_when_history_too_short(config, ohlcv_store):
+    # Only 3 bars of history after entry — not enough to hit the time barrier (10)
+    # and price stays flat — so the trade should remain in OPEN state.
+    df = _flat(level=100.0, n=4, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    entry_date = df.index[0]
+    sigstore = _seed_signal_table(config, entry_date, entry=100.0, stop=95.0, target=110.0)
+
+    open_new_trades(config, ohlcv_store, sigstore)
+    closed = update_open_trades(config, ohlcv_store)
+    assert closed == 0
+    trade = PaperStore(config.db_path).all_trades().iloc[0]
+    assert trade["status"] == OPEN

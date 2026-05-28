@@ -19,6 +19,7 @@ rigorous walk-forward backtest before it is ever trusted.
 | 6 | Drift monitoring (PSI + KS) + APScheduler automation | ✅ done |
 | 5 | FastAPI API + Next.js dashboard | ✅ done |
 | 3 | Feature engineering + LSTM/MLflow + label sweep + cross-asset experiment | ✅ **closed — no edge found, see [docs/RESULTS.md](docs/RESULTS.md)** |
+| 4a | Paper-trading tracker (DuckDB-backed, daily roundtrip vs SPY) | ✅ done |
 
 v0.1.0 ships the data → features → label → walk-forward backtest → signal →
 sizing → drift → dashboard pipeline. The model produced does **not** beat
@@ -35,8 +36,11 @@ uv run berich signals         # generate & persist today's signals + position si
 uv run berich drift           # feature-drift check (PSI + KS) vs the training era
 uv run berich train           # train baseline, backtest, save to registry, promote if it wins
 uv run berich models          # list registry artifacts + which one is active
+uv run berich paper update    # open new BUY signals + walk open paper trades
+uv run berich paper status    # open positions (MTM) + recent closed trades
+uv run berich paper equity    # paper P&L vs SPY benchmark summary
 uv run berich serve           # FastAPI backend on http://127.0.0.1:8000
-uv run berich schedule        # local scheduler: daily signals + weekly drift
+uv run berich schedule        # daily refresh+signals+paper + weekly drift
 uv run pytest                 # run the test suite
 ```
 
@@ -103,3 +107,35 @@ clears the bar. The macro features dominate LightGBM's importance ranking
 yet do not lift AUC — the signal exists at macro scale but does not convert
 to a tradeable single-name probability at the 10-day horizon. Full numbers
 and verdicts: [docs/RESULTS.md](docs/RESULTS.md).
+
+## Paper trading (Phase 4a)
+
+A simulator that follows the daily signals with fictive capital so the user can
+build the discipline of running a swing book *without* claiming an edge. There
+is no broker, no real money: every fill is taken from the cached OHLCV at the
+signal's entry/stop/target and exits are decided by the same ATR-stop /
+ATR-target / horizon rule as the backtest.
+
+Daily workflow:
+
+```bash
+uv run berich data            # refresh the OHLCV cache
+uv run berich signals         # generate today's signals
+uv run berich paper update    # open any new BUY signals + walk open trades
+uv run berich paper status    # what's open right now + last 10 closes
+uv run berich paper equity    # paper return vs same-capital SPY buy & hold
+```
+
+Or just `uv run berich schedule` and the chain runs after the US close every
+weekday. All three sub-steps are **idempotent** — re-running the same day is a
+no-op once everything that can fire has fired.
+
+Trades and metrics land in DuckDB (`data/berich.duckdb`, table `paper_trades`)
+and are exposed by the API at `/paper/positions`, `/paper/equity`, and
+`/paper/closed-trades`. The dashboard's "Paper trading" section plots paper
+equity against an equal-capital SPY benchmark; if the paper line sits below
+the dashed SPY line, that's the model losing to buy & hold, in plain sight.
+
+This is **paper only**: not a recommendation, not a backtest, not a claim of
+edge. Use it to learn how the signals behave day-to-day in the real cache
+rather than under walk-forward retrospection.

@@ -15,7 +15,12 @@ from berich.data.store import OhlcvStore
 from berich.datasets import build_dataset
 from berich.labeling.triple_barrier import LabelConfig
 from berich.monitoring import feature_drift
-from berich.signals import SignalStore, generate_signals
+from berich.signals import (
+    SignalStore,
+    generate_signals,
+    open_new_trades,
+    update_open_trades,
+)
 
 if TYPE_CHECKING:
     from berich.config import Config
@@ -27,14 +32,29 @@ logger = logging.getLogger(__name__)
 DRIFT_CURRENT_SAMPLES = 2000
 
 
-def refresh_and_signal_job(config: Config) -> int:
-    """Refresh the cache, regenerate signals, and persist them. Returns signals saved."""
+def daily_paper_job(config: Config) -> dict[str, int]:
+    """Daily chain: refresh OHLCV → regenerate signals → roll the paper-trade book.
+
+    Returns a dict with ``signals_saved``, ``trades_opened``, ``trades_closed``. Each
+    sub-step is idempotent (signals upsert on ``(date, ticker)``; paper opens skip
+    rows already present; paper updates only touch ``status='open'``), so the
+    scheduler can re-run it safely and the user can run it manually via
+    ``berich paper update`` without colliding.
+    """
     update_watchlist(config)
     store = OhlcvStore(config.ohlcv_dir)
     signals = generate_signals(config, store)
-    saved = SignalStore(config.db_path).save(signals)
-    logger.info("refresh_and_signal: %d signals saved", saved)
-    return saved
+    signal_store = SignalStore(config.db_path)
+    saved = signal_store.save(signals)
+    opened = open_new_trades(config, store, signal_store)
+    closed = update_open_trades(config, store)
+    logger.info(
+        "daily_paper: %d signals saved, %d paper opened, %d paper closed",
+        saved,
+        opened,
+        closed,
+    )
+    return {"signals_saved": saved, "trades_opened": opened, "trades_closed": closed}
 
 
 def check_drift_job(config: Config) -> DriftReport:

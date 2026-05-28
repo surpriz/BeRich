@@ -90,6 +90,76 @@ def _cmd_signals(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_paper(args: argparse.Namespace) -> int:
+    from berich.data.store import OhlcvStore
+    from berich.signals import (
+        SignalStore,
+        get_open_positions,
+        get_paper_metrics,
+        open_new_trades,
+        update_open_trades,
+    )
+    from berich.signals.paper import PaperStore
+
+    config = Config.load(args.config)
+    store = OhlcvStore(config.ohlcv_dir)
+
+    if args.action == "update":
+        signal_store = SignalStore(config.db_path)
+        opened = open_new_trades(config, store, signal_store)
+        closed = update_open_trades(config, store)
+        print(f"paper: {opened} opened, {closed} closed.")  # noqa: T201
+        return 0
+
+    if args.action == "status":
+        positions = get_open_positions(config, store)
+        print(f"\nOpen positions ({len(positions)}):\n")  # noqa: T201
+        if positions:
+            header = (
+                f"{'OPENED':<12}{'TICKER':<8}{'ENTRY':>9}{'CURRENT':>10}"
+                f"{'MTM%':>8}{'MTM€':>10}{'DAYS':>6}"
+            )
+            print(header)  # noqa: T201
+            for p in positions:
+                print(  # noqa: T201
+                    f"{p.date_open.date().isoformat():<12}{p.ticker:<8}"
+                    f"{p.entry:>9.2f}{p.current_price:>10.2f}"
+                    f"{p.mtm_pct * 100:>7.2f}%{p.mtm_eur:>10.2f}{p.days_held:>6d}"
+                )
+
+        closed = PaperStore(config.db_path).closed_trades(limit=10)
+        print(f"\nRecent closed trades ({len(closed)}):\n")  # noqa: T201
+        if not closed.empty:
+            header = (
+                f"{'CLOSED':<12}{'TICKER':<8}{'STATUS':<16}"
+                f"{'ENTRY':>9}{'EXIT':>9}{'PNL%':>8}{'PNL€':>10}"
+            )
+            print(header)  # noqa: T201
+            for _, r in closed.iterrows():
+                print(  # noqa: T201
+                    f"{r['date_close']!s:<12}{r['ticker']:<8}{r['status']:<16}"
+                    f"{r['entry']:>9.2f}{r['exit_price']:>9.2f}"
+                    f"{r['pnl_pct'] * 100:>7.2f}%{r['pnl_eur']:>10.2f}"
+                )
+        return 0
+
+    # "equity" branch
+    metrics = get_paper_metrics(config, store)
+    print("\nPaper trading equity summary:\n")  # noqa: T201
+    print(f"  capital starting    {metrics['capital']:>12.2f}")  # noqa: T201
+    print(f"  open trades         {metrics['n_open']:>12d}")  # noqa: T201
+    print(f"  closed trades       {metrics['n_closed']:>12d}")  # noqa: T201
+    print(f"  win rate            {metrics['win_rate'] * 100:>11.2f}%")  # noqa: T201
+    print(f"  total return paper  {metrics['total_return_paper'] * 100:>11.2f}%")  # noqa: T201
+    import math
+
+    spy = float(metrics["total_return_spy"])
+    spy_str = f"{'n/a':>12}" if math.isnan(spy) else f"{spy * 100:>11.2f}%"
+    print(f"  total return SPY    {spy_str}")  # noqa: T201
+    print(f"  max drawdown paper  {metrics['max_drawdown_paper'] * 100:>11.2f}%")  # noqa: T201
+    return 0
+
+
 def _cmd_drift(args: argparse.Namespace) -> int:
     from berich.scheduler.jobs import check_drift_job
 
@@ -220,6 +290,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_drift = sub.add_parser("drift", help="Check feature drift vs the training era")
     p_drift.set_defaults(func=_cmd_drift)
+
+    p_paper = sub.add_parser("paper", help="Paper-trading tracker (no real money)")
+    p_paper.add_argument(
+        "action",
+        choices=["update", "status", "equity"],
+        help="update = open new BUY signals + walk open trades; status = list "
+        "positions + recent closes; equity = summary metrics vs SPY benchmark",
+    )
+    p_paper.set_defaults(func=_cmd_paper)
 
     p_sched = sub.add_parser("schedule", help="Run the local scheduler (blocking)")
     p_sched.set_defaults(func=_cmd_schedule)
