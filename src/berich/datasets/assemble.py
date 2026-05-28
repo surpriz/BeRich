@@ -15,11 +15,46 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from berich.features.build import FEATURE_COLUMNS, MARKET_TICKER, build_features
+from berich.features.build import (
+    FEATURE_COLUMNS,
+    HYG_TICKER,
+    LQD_TICKER,
+    MARKET_TICKER,
+    SECTOR_MAP,
+    TLT_TICKER,
+    VIX9D_TICKER,
+    VIX_TICKER,
+    build_features,
+)
 from berich.labeling.triple_barrier import LabelConfig, triple_barrier_labels
 
 if TYPE_CHECKING:
     from berich.data.store import OhlcvStore
+
+
+CONTEXT_TICKERS: tuple[str, ...] = (
+    VIX_TICKER,
+    VIX9D_TICKER,
+    TLT_TICKER,
+    HYG_TICKER,
+    LQD_TICKER,
+    *sorted(set(SECTOR_MAP.values())),
+)
+
+
+def _load_context(store: OhlcvStore) -> dict[str, pd.DataFrame]:
+    """Load every cross-asset series the feature builder might reference, if cached.
+
+    Missing tickers are simply absent from the dict; the feature builder treats
+    each cross-asset family as optional and emits NaN when the source isn't
+    available, so a partial cache degrades gracefully instead of crashing.
+    """
+    out: dict[str, pd.DataFrame] = {}
+    for ticker in CONTEXT_TICKERS:
+        loaded = store.load(ticker)
+        if loaded is not None and not loaded.empty:
+            out[ticker] = loaded
+    return out
 
 
 @dataclass
@@ -42,9 +77,10 @@ def build_ticker_dataset(
     *,
     ticker: str,
     market: pd.DataFrame | None = None,
+    context: dict[str, pd.DataFrame] | None = None,
 ) -> SupervisedDataset:
     """Build a supervised dataset for a single OHLCV frame."""
-    feats = build_features(df, market=market)
+    feats = build_features(df, market=market, context=context, ticker=ticker)
     labels = triple_barrier_labels(df, label_config)
 
     joined = feats.join(labels[["label", "sample_weight"]]).dropna()
@@ -67,13 +103,15 @@ def build_dataset(
 
     Tickers that are absent from the cache are skipped. The result is globally
     date-sorted so walk-forward splits stay chronological across the panel. The
-    market-regime ticker (SPY) is loaded once and broadcast to every ticker — with a
-    one-bar lag enforced inside :func:`build_features` so cross-asset features can
-    never use information from the same calendar day.
+    market-regime ticker (SPY) and cross-asset context series (VIX, rates, credit,
+    sector ETFs) are loaded once and broadcast to every ticker — with a one-bar
+    lag enforced inside :func:`build_features` so cross-asset features can never
+    use information from the same calendar day.
     """
     market = store.load(MARKET_TICKER)
+    context = _load_context(store)
     parts = [
-        build_ticker_dataset(df, label_config, ticker=t, market=market)
+        build_ticker_dataset(df, label_config, ticker=t, market=market, context=context)
         for t in tickers
         if (df := store.load(t)) is not None and not df.empty
     ]

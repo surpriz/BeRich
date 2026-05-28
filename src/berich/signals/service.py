@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from berich.datasets.assemble import build_dataset
+from berich.datasets.assemble import _load_context, build_dataset
 from berich.features.build import FEATURE_COLUMNS, MARKET_TICKER, build_features
 from berich.features.indicators import atr
 from berich.labeling.triple_barrier import LabelConfig
@@ -106,13 +106,16 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
     label_cfg = LabelConfig(**config.labeling.model_dump())
     model = _resolve_model(store, config, label_cfg)
     market = store.load(MARKET_TICKER)
+    context = _load_context(store)
 
     signals: list[Signal] = []
     for ticker in config.watchlist:
         df = store.load(ticker)
         if df is None or df.empty:
             continue
-        signal = _signal_for_ticker(ticker, df, model, config, label_cfg, market=market)
+        signal = _signal_for_ticker(
+            ticker, df, model, config, label_cfg, market=market, context=context
+        )
         if signal is not None:
             signals.append(signal)
     return signals
@@ -126,8 +129,9 @@ def _signal_for_ticker(
     label_cfg: LabelConfig,
     *,
     market: pd.DataFrame | None = None,
+    context: dict[str, pd.DataFrame] | None = None,
 ) -> Signal | None:
-    feats = build_features(df, market=market).dropna()
+    feats = build_features(df, market=market, context=context, ticker=ticker).dropna()
     if feats.empty:
         return None
     last_date = feats.index[-1]

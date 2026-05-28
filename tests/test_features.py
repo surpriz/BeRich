@@ -6,7 +6,16 @@ import numpy as np
 import pandas as pd
 
 from berich.features import indicators as ind
-from berich.features.build import FEATURE_COLUMNS, build_features
+from berich.features.build import (
+    FEATURE_COLUMNS,
+    HYG_TICKER,
+    LQD_TICKER,
+    SECTOR_MAP,
+    TLT_TICKER,
+    VIX9D_TICKER,
+    VIX_TICKER,
+    build_features,
+)
 
 
 def _ohlcv(n: int = 300, seed: int = 0) -> pd.DataFrame:
@@ -111,3 +120,99 @@ def test_calendar_features_match_index_dates():
     np.testing.assert_allclose(feats["month_sin"].to_numpy(), expected_month_sin)
     # Business days remaining in the month is always >= 0.
     assert (feats["days_to_month_end"].dropna() >= 0).all()
+
+
+def _context(seed_offset: int = 100) -> dict[str, pd.DataFrame]:
+    """Build a synthetic cross-asset context dict covering every cross-asset family."""
+    sector_etfs = sorted(set(SECTOR_MAP.values()))
+    tickers = [
+        VIX_TICKER,
+        VIX9D_TICKER,
+        TLT_TICKER,
+        HYG_TICKER,
+        LQD_TICKER,
+        *sector_etfs,
+    ]
+    return {t: _ohlcv(seed=seed_offset + i) for i, t in enumerate(tickers)}
+
+
+# Cross-asset columns that derive from `context` (not from the ticker's own OHLCV).
+_CONTEXT_FEATURES = [
+    "vix_level",
+    "vix_ret_5",
+    "vix_term",
+    "tlt_ret_20",
+    "tlt_dist_high_60",
+    "credit_spread",
+    "sector_rel_ret_20",
+]
+
+
+def test_cross_asset_features_have_one_bar_lag():
+    """Perturbing any single context series at bar t must NOT change the ticker's
+    cross-asset features at bars ``<= t``. This is the one-bar-lag guarantee that
+    protects against same-day leakage from VIX / TLT / credit / sector ETFs.
+    """
+    df = _ohlcv()
+    market = _ohlcv(seed=1)
+    context = _context()
+    base = build_features(df, market=market, context=context, ticker="AAPL")
+
+    cut = 200
+    for source in (VIX_TICKER, VIX9D_TICKER, TLT_TICKER, HYG_TICKER, LQD_TICKER, "XLK"):
+        perturbed = {k: v.copy() for k, v in context.items()}
+        perturbed[source] = perturbed[source].astype(float).copy()
+        perturbed[source].iloc[cut:] *= 1.5
+        after = build_features(df, market=market, context=perturbed, ticker="AAPL")
+        pd.testing.assert_frame_equal(
+            base.iloc[: cut + 1],
+            after.iloc[: cut + 1],
+            check_exact=False,
+            rtol=1e-9,
+        )
+
+
+def test_cross_asset_features_propagate_after_lag():
+    """Sanity counter-test: a VIX perturbation does change later rows; the lag test
+    isn't passing by accident.
+    """
+    df = _ohlcv()
+    market = _ohlcv(seed=1)
+    context = _context()
+    base = build_features(df, market=market, context=context, ticker="AAPL")
+
+    cut = 200
+    perturbed = {k: v.copy() for k, v in context.items()}
+    perturbed[VIX_TICKER] = perturbed[VIX_TICKER].astype(float).copy()
+    perturbed[VIX_TICKER].iloc[cut:] *= 1.5
+    after = build_features(df, market=market, context=perturbed, ticker="AAPL")
+
+    diff = (
+        (base.iloc[cut + 1 :] - after.iloc[cut + 1 :])
+        .loc[:, ["vix_level", "vix_ret_5", "vix_term"]]
+        .abs()
+        .sum()
+        .sum()
+    )
+    assert diff > 0
+
+
+def test_cross_asset_features_missing_context_yields_nan():
+    """When no context is supplied, every cross-asset column except sector_rel
+    (which has a neutral 0.0 fallback) must be NaN — i.e. the feature builder
+    never silently invents data when sources are absent.
+    """
+    df = _ohlcv()
+    feats = build_features(df, market=_ohlcv(seed=1), context=None, ticker="AAPL")
+    nan_cols = [c for c in _CONTEXT_FEATURES if c != "sector_rel_ret_20"]
+    for col in nan_cols:
+        assert feats[col].isna().all(), f"{col} should be NaN without context"
+
+
+def test_sector_rel_zero_for_spy_without_mapping():
+    """SPY has no sector mapping; the sector_rel_ret_20 feature must fall back to
+    0.0 so SPY rows survive the dropna step instead of being silently removed.
+    """
+    df = _ohlcv()
+    feats = build_features(df, market=_ohlcv(seed=1), context=_context(), ticker="SPY")
+    assert (feats["sector_rel_ret_20"] == 0.0).all()
