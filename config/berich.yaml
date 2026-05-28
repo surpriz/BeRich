@@ -22,24 +22,6 @@ watchlist:
   - JNJ
   - SPY   # benchmark / market proxy
 
-# Cross-asset context series. Downloaded by `berich data` and read by
-# features/build.py to provide regime, vol, rates, credit, and sectoral
-# information that is not in any single ticker's OHLCV. Never traded.
-context_tickers:
-  - ^VIX     # implied vol — fear gauge
-  - ^VIX9D   # short-term VIX (numerator of vix_term ratio)
-  - TLT      # 20+ year Treasuries — long-end rates proxy
-  - HYG      # high-yield credit
-  - LQD      # investment-grade credit (HYG-LQD = risk-on/risk-off)
-  - XLK      # Technology sector
-  - XLF      # Financials sector
-  - XLE      # Energy sector
-  - XLV      # Health Care sector
-  - XLY      # Consumer Discretionary sector
-  - XLC      # Communication Services sector
-  - XLI      # Industrials sector (future-proof)
-  - XLP      # Consumer Staples sector (future-proof)
-
 # Triple-barrier labeling defaults (used in Phase 1). ATR-relative barriers.
 labeling:
   horizon_days: 10        # vertical (time) barrier

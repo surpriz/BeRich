@@ -88,22 +88,10 @@ def _check_integrity(df: pd.DataFrame) -> list[str]:
 
 
 def update_watchlist(config: Config) -> list[IngestReport]:
-    """Incrementally refresh every watchlist + context-series ticker.
-
-    Context tickers (VIX, rates, credit, sector ETFs from
-    :attr:`Config.context_tickers`) are downloaded alongside the watchlist into
-    the same Parquet cache so they're available to the feature builder. They're
-    not predicted or traded — features/build.py reads them as cross-asset
-    inputs only.
-    """
+    """Incrementally refresh every ticker in the watchlist; return per-ticker reports."""
     store = OhlcvStore(config.ohlcv_dir)
     reports: list[IngestReport] = []
-    seen: set[str] = set()
-    for ticker in [*config.watchlist, *config.context_tickers]:
-        upper = ticker.upper()
-        if upper in seen:
-            continue
-        seen.add(upper)
+    for ticker in config.watchlist:
         report = _update_one(ticker, config, store)
         reports.append(report)
         level = logging.WARNING if report.warnings else logging.INFO
