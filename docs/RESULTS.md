@@ -587,13 +587,96 @@ No promotion. The risk overlay code stays merged behind
 ``scripts/pead_risk_managed.py`` for future use, but no live model
 changes.
 
-## Final verdict — v0.4.0
+## Phase 9 — core-satellite portfolio (the reframe)
 
-8 phases of exploration over OHLCV, macro cross-asset, earnings
+Hypothesis: the failures so far compared single-strategy Sharpe against
+B&H, but real quant books are core-satellite — a beta core (B&H) plus
+uncorrelated alpha overlays. The PEAD signal has the right shape (Sharpe
+0.849 at the trade level, low drawdown, ~15 % time-in-market) for a
+satellite, not a replacement. A 90 % B&H + 10 % PEAD blend, rebalanced
+monthly, *should* clear pure B&H if PEAD is genuinely uncorrelated.
+
+**Implementation:**
+- ``backtest/portfolio.py``: ``run_portfolio_backtest`` takes named
+  daily-return series + a weight policy (static or walk-forward) and
+  simulates monthly rebalance with turnover-based cost (default 1.5 bps).
+- ``backtest/strategies.py``: three composable return series —
+  ``build_bnh_returns`` (SPY long), ``build_pead_returns`` (avg of
+  currently-held PEAD events, cash on flat days), ``build_calendar_returns``
+  (turn-of-month SPY).
+- ``scripts/portfolio_sweep.py``: hand-picked static grid +
+  walk-forward weight optimization (SLSQP, max in-sample Sharpe with
+  weights ≥ 0 summing to 1, 1-year test folds after a 3-year warm-up).
+
+**Correlation matrix** of the three components (2010-2026):
+
+|                | bnh_spy | pead  | calendar_spy |
+|----------------|---------|-------|--------------|
+| bnh_spy        | 1.000   | 0.343 | 0.511        |
+| pead           | 0.343   | 1.000 | 0.187        |
+| calendar_spy   | 0.511   | 1.000 | 0.187        |
+
+Calendar is too correlated with B&H (0.51) to diversify — it's
+essentially a watered-down B&H with less time in market. PEAD has a
+more moderate 0.34 correlation but, as we'll see, the absolute return
+component is too thin to compensate.
+
+**Static grid result** (B&H Sharpe = 0.850):
+
+| mix         | Sharpe | Δ vs B&H | total_ret | max_DD | ann_vol | turnover |
+|-------------|--------|---------:|-----------|--------|---------|----------|
+| 100/0/0     | 0.850  |  0.000   | +789 %    | -33.7% | 16.8 %  | 0.00     |
+| 95/3/2      | 0.843  | -0.006   | +723 %    | -32.2% | 16.3 %  | 0.69     |
+| 90/5/5      | 0.838  | -0.011   | +664 %    | -30.7% | 15.8 %  | 1.25     |
+| 90/10/0     | 0.819  | -0.030   | +652 %    | -30.9% | 16.1 %  | 1.61     |
+| 80/20/0     | 0.770  | -0.080   | +531 %    | -28.2% | 15.7 %  | 2.88     |
+| 80/10/10    | 0.820  | -0.030   | +554 %    | -27.6% | 14.8 %  | 2.28     |
+| 70/15/15    | 0.792  | -0.058   | +458 %    | -24.6% | 14.0 %  | 3.10     |
+| 70/30/0     | 0.703  | -0.147   | +425 %    | -28.3% | 15.6 %  | 3.79     |
+| 60/40/0     | 0.621  | -0.229   | +333 %    | -29.4% | 16.0 %  | 4.34     |
+
+**Pure B&H is best.** Every overlay reduces Sharpe — the satellites
+trade some volatility reduction (ann_vol drops from 16.8 % to 14.0 %)
+for a bigger absolute return loss. The overlays don't add risk-adjusted
+return; they shave volatility off a strategy whose Sharpe already
+captures the time-in-market advantage of always being long.
+
+**Walk-forward weight optimization** (13 folds, 1 year each, 2012-11
+→ 2025-06):
+
+```
+fold 1  (2012-11):  bnh=0.05, pead=0.00, calendar=0.95
+fold 2  (2013-11):  bnh=0.22, pead=0.00, calendar=0.78
+...
+fold 7  (2018-09):  bnh=1.00, pead=0.00, calendar=0.00
+...
+fold 13 (2024-07):  bnh=0.58, pead=0.00, calendar=0.42
+
+  OOS Portfolio Sharpe = 0.634
+  OOS B&H Sharpe       = 0.848
+  delta                = -0.214
+```
+
+The optimizer **never picked PEAD** in any fold — calendar dominated
+the early years (low-vol bias paid off in choppy markets), then B&H
+won as the bull market accelerated. The forecast-on-train / apply-on-test
+discipline cost ~21 Sharpe points vs naive pure B&H. The instability
+of the early calendar-heavy allocations + the cost of monthly
+rebalancing make the dynamic policy *worse* than just holding SPY
+through the whole period.
+
+**Promote gate** (portfolio OOS Sharpe > pure B&H + 0.05) NOT MET by
+any variant — best static is the pure-B&H control itself (delta 0),
+walk-forward is -0.214. No promotion.
+
+## Final verdict — v0.4.0 (still)
+
+9 phases of exploration over OHLCV, macro cross-asset, earnings
 surprises, FinBERT news sentiment, mid/small-cap universes, short
-horizons, post-earnings drift, and risk management. **No combination
-tested publicly beats buy & hold in walk-forward with realistic fees
-and slippage on the US daily long-only universe.**
+horizons, post-earnings drift, risk management, and core-satellite
+portfolio reframing. **No combination tested publicly beats buy & hold
+in walk-forward with realistic fees and slippage on the US daily
+long-only universe.**
 
 The Phase 7 PEAD result (AUC 0.5346, Sharpe 0.849, max DD -6.7 % on
 the daily-aggregated event book) is the closest the project comes to

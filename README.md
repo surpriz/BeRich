@@ -26,6 +26,7 @@ rigorous walk-forward backtest before it is ever trusted.
 | 6 | Universe expansion to S&P 400/600 (~274 tickers, volume-proportional slippage) — no edge | ✅ done — small/mid Sharpe goes negative under realistic friction ([RESULTS](docs/RESULTS.md#phase-6--universe-expansion-mega-vs-mid-vs-small-vs-all)) |
 | 7 | PEAD (event-driven Post-Earnings Drift, 6 066 events, 11 features) — best AUC yet but still no Sharpe edge | ✅ done — AUC 0.5346, Sharpe 0.849 vs window B&H 1.013, not promoted ([RESULTS](docs/RESULTS.md#phase-7--pead-post-earnings-announcement-drift)) |
 | 8 | PEAD + risk overlay (Kelly + regime gate + drawdown gate + vol target) — no overlay clears B&H | ✅ done — final verdict: pivot away from US daily long-only ([RESULTS](docs/RESULTS.md#final-verdict--v040)) |
+| 9 | Core-satellite portfolio (B&H + PEAD + calendar, monthly rebalance, walk-forward weights) — pure B&H still wins | ✅ done — best static = 100/0/0, walk-forward optimizer never picks PEAD, no promote ([RESULTS](docs/RESULTS.md#phase-9--core-satellite-portfolio-the-reframe)) |
 
 v0.1.0 ships the data → features → label → walk-forward backtest → signal →
 sizing → drift → dashboard pipeline. The model produced does **not** beat
