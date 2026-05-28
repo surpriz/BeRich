@@ -23,6 +23,7 @@ rigorous walk-forward backtest before it is ever trusted.
 | 4b | Production deployment: systemd + Caddy HTTPS + 24/7 dashboard | ✅ done — see [docs/DEPLOY.md](docs/DEPLOY.md) |
 | 5a | Earnings features (6 columns, yfinance) — code merged, no edge | ✅ done — AUC 0.5117 vs 0.5169 baseline, not promoted ([RESULTS](docs/RESULTS.md#phase-5a--earnings-features-free-data-no-gpu)) |
 | 5b | News sentiment via Alpha Vantage + FinBERT (GPU) — code merged, no edge | ✅ done — AUC 0.5003 vs 0.5087 baseline on 2022-04+ window ([RESULTS](docs/RESULTS.md#phase-5b--news-sentiment-via-alpha-vantage--finbert-gpu)) |
+| 6 | Universe expansion to S&P 400/600 (~274 tickers, volume-proportional slippage) — no edge | ✅ done — small/mid Sharpe goes negative under realistic friction ([RESULTS](docs/RESULTS.md#phase-6--universe-expansion-mega-vs-mid-vs-small-vs-all)) |
 
 v0.1.0 ships the data → features → label → walk-forward backtest → signal →
 sizing → drift → dashboard pipeline. The model produced does **not** beat
@@ -39,6 +40,8 @@ uv run berich data            # refresh OHLCV + earnings caches from yfinance
                               #  FinBERT GPU scoring — costs AV quota)
 uv run berich news fetch      # standalone news refresh (25 req/day free tier)
 uv run berich news score      # FinBERT scoring on unscored cached rows
+uv run berich data --universe small      # Phase 6: refresh ~150 S&P 600 names
+uv run berich backtest --universe all --volume-slippage   # Phase 6 backtest
 uv run berich backtest        # walk-forward backtest of the LightGBM baseline
 uv run berich signals         # generate & persist today's signals + position sizing
 uv run berich drift           # feature-drift check (PSI + KS) vs the training era

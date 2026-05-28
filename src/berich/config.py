@@ -42,14 +42,48 @@ class SignalConfig(BaseModel):
     risk_pct: float = 0.01
 
 
+UNIVERSE_NAMES = ("mega", "mid", "small", "all")
+
+
 class Config(BaseModel):
     """Top-level project configuration."""
 
     data_dir: Path = Path("data")
     data: DataConfig = Field(default_factory=DataConfig)
     watchlist: list[str] = Field(default_factory=list)
+    # Phase 6 — wider universes. Either may be empty; the helpers below treat
+    # missing entries as "no extra tickers".
+    mid_cap_universe: list[str] = Field(default_factory=list)
+    small_cap_universe: list[str] = Field(default_factory=list)
     labeling: LabelingConfig = Field(default_factory=LabelingConfig)
     signals: SignalConfig = Field(default_factory=SignalConfig)
+
+    def tickers_for_universe(self, name: str) -> list[str]:
+        """Resolve ``mega | mid | small | all`` to a deduplicated list of tickers.
+
+        ``mega`` aliases to the existing ``watchlist`` so the default 10-ticker
+        production behavior is unchanged when the universe arg isn't passed.
+        ``all`` is the union of every populated universe (order: mega → mid →
+        small) with stable ordering and dedup on first occurrence.
+        """
+        if name == "mega":
+            return list(self.watchlist)
+        if name == "mid":
+            return list(self.mid_cap_universe)
+        if name == "small":
+            return list(self.small_cap_universe)
+        if name == "all":
+            seen: set[str] = set()
+            out: list[str] = []
+            for ticker in [*self.watchlist, *self.mid_cap_universe, *self.small_cap_universe]:
+                upper = ticker.upper()
+                if upper in seen:
+                    continue
+                seen.add(upper)
+                out.append(ticker)
+            return out
+        msg = f"unknown universe '{name}' (expected one of {UNIVERSE_NAMES})"
+        raise ValueError(msg)
 
     @property
     def ohlcv_dir(self) -> Path:

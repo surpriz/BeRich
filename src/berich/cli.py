@@ -11,17 +11,36 @@ import logging
 import sys
 
 from berich.config import DEFAULT_CONFIG_PATH, Config
-from berich.data import update_earnings, update_news_watchlist, update_watchlist
+from berich.data import (
+    update_earnings,
+    update_news_watchlist,
+    update_universe,
+    update_watchlist,
+)
 
 
 def _cmd_data(args: argparse.Namespace) -> int:
     config = Config.load(args.config)
-    reports = update_watchlist(config)
+    if args.universe == "mega":
+        reports = update_watchlist(config)
+    else:
+        tickers = config.tickers_for_universe(args.universe)
+        if not tickers:
+            print(f"No tickers configured for universe '{args.universe}'.")  # noqa: T201
+            return 1
+        print(  # noqa: T201
+            f"Refreshing {len(tickers)} tickers for universe '{args.universe}' "
+            f"(parallel, liquidity gate ON)..."
+        )
+        reports = update_universe(config, tickers)
     failed = [r for r in reports if not r.ok]
-    print(f"\n{len(reports)} tickers refreshed, {len(failed)} with warnings.")  # noqa: T201
+    print(  # noqa: T201
+        f"\n{len(reports)} tickers refreshed, {len(failed)} with warnings "
+        f"(universe={args.universe})."
+    )
 
     earn_failed: list = []
-    if not args.skip_earnings:
+    if not args.skip_earnings and args.universe == "mega":
         earnings_reports = update_earnings(config)
         earn_failed = [r for r in earnings_reports if not r.ok]
         print(  # noqa: T201
@@ -30,7 +49,7 @@ def _cmd_data(args: argparse.Namespace) -> int:
         )
 
     news_failed: list = []
-    if args.with_news:
+    if args.with_news and args.universe == "mega":
         news_reports = update_news_watchlist(config)
         news_failed = [r for r in news_reports if not r.ok]
         print(  # noqa: T201
@@ -55,35 +74,43 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     store = OhlcvStore(config.ohlcv_dir)
     label_cfg = LabelConfig(**config.labeling.model_dump())
 
-    earnings_store = EarningsStore(config.earnings_dir) if args.with_earnings else None
-    news_store = NewsStore(config.news_dir) if args.with_news else None
+    tickers = config.tickers_for_universe(args.universe)
+    # Earnings + news are only valid on the mega-cap watchlist (no caches for
+    # the wider universes); silently skip when running on mid/small/all.
+    can_use_extras = args.universe == "mega"
+    earnings_store = (
+        EarningsStore(config.earnings_dir) if (args.with_earnings and can_use_extras) else None
+    )
+    news_store = NewsStore(config.news_dir) if (args.with_news and can_use_extras) else None
     dataset = build_dataset(
         store,
-        config.watchlist,
+        tickers,
         label_cfg,
         earnings_store=earnings_store,
         news_store=news_store,
     )
     bits = ["22"]
-    if args.with_earnings:
+    if earnings_store is not None:
         bits.append("earnings")
-    if args.with_news:
+    if news_store is not None:
         bits.append("news")
     feat_mode = " + ".join(bits)
     print(  # noqa: T201
-        f"Dataset: {len(dataset)} samples, P(win)={dataset.y.mean():.3f}, features={feat_mode}"
+        f"Dataset: {len(dataset)} samples, P(win)={dataset.y.mean():.3f}, "
+        f"features={feat_mode}, universe={args.universe} ({len(tickers)} tickers)"
     )
 
     oof = oof_predict(dataset, LGBMModel, embargo=label_cfg.horizon_days)
     print(f"Out-of-sample AUC: {oof.auc:.4f}")  # noqa: T201
 
-    prices = {t: df for t in config.watchlist if (df := store.load(t)) is not None}
+    prices = {t: df for t in tickers if (df := store.load(t)) is not None and not df.empty}
     bt_cfg = BacktestConfig(
         entry_threshold=args.threshold,
         horizon_days=label_cfg.horizon_days,
         atr_window=label_cfg.atr_window,
         take_profit_atr=label_cfg.take_profit_atr,
         stop_loss_atr=label_cfg.stop_loss_atr,
+        volume_proportional_slippage=args.volume_slippage,
     )
     result = run_backtest(prices, oof, bt_cfg)
 
@@ -380,6 +407,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also fetch news via Alpha Vantage (Phase 5b). Costs API budget"
         " (25 req/day free tier). Run `berich news score` afterwards to FinBERT.",
     )
+    p_data.add_argument(
+        "--universe",
+        choices=["mega", "mid", "small", "all"],
+        default="mega",
+        help="Which universe to refresh (Phase 6). Default 'mega' = the existing"
+        " 10-ticker watchlist. 'mid'/'small'/'all' use the wider lists from"
+        " config and apply liquidity gates; earnings + news refresh only run"
+        " in 'mega' mode (those data sources are scoped to the watchlist).",
+    )
     p_data.set_defaults(func=_cmd_data)
 
     p_news = sub.add_parser("news", help="News pipeline (Alpha Vantage fetch + FinBERT GPU score)")
@@ -409,6 +445,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Include the 7 news/sentiment features (Phase 5b). Requires the"
         " news cache to be populated and FinBERT-scored.",
+    )
+    p_bt.add_argument(
+        "--universe",
+        choices=["mega", "mid", "small", "all"],
+        default="mega",
+        help="Which universe to backtest (Phase 6). The benchmark buy & hold"
+        " uses the same universe as the strategy for a fair comparison.",
+    )
+    p_bt.add_argument(
+        "--volume-slippage",
+        action="store_true",
+        help="Use the volume-proportional slippage model (Phase 6). Recommended"
+        " for wide universes — small-caps pay more per side than mega-caps.",
     )
     p_bt.set_defaults(func=_cmd_backtest)
 

@@ -28,7 +28,16 @@ if TYPE_CHECKING:
 
 
 class BacktestConfig(BaseModel):
-    """Trading and cost assumptions for the simulation."""
+    """Trading and cost assumptions for the simulation.
+
+    Slippage can be either a flat ``slippage_bps`` (Phase 2 default — fine
+    for mega-caps with deep books) or volume-proportional via
+    ``volume_proportional_slippage=True``. The latter scales each ticker's
+    slippage as ``slippage_bps * sqrt(volume_ref / ticker_median_volume)``
+    so a small-cap with 1/100th of SPY's volume pays ~10x the per-side
+    slippage of a mega-cap. The result is capped at ``slippage_cap_bps``
+    to keep extreme tickers from dominating the bill.
+    """
 
     entry_threshold: float = 0.5
     horizon_days: int = 10
@@ -37,6 +46,11 @@ class BacktestConfig(BaseModel):
     stop_loss_atr: float = 1.0
     fee_bps: float = 1.0  # per-side commission, basis points of notional
     slippage_bps: float = 5.0  # per-side slippage, basis points
+    volume_proportional_slippage: bool = False
+    # Reference volume = SPY's long-run median (~80M shares/day historically).
+    # When the per-ticker median is below this, slippage scales up.
+    volume_ref: float = 80_000_000.0
+    slippage_cap_bps: float = 100.0  # safety cap to keep micro-caps sane
 
 
 @dataclass
@@ -78,7 +92,6 @@ def run_backtest(
 ) -> BacktestResult:
     """Simulate the strategy across tickers and compare to equal-weight buy & hold."""
     fee = config.fee_bps / 1e4
-    slip = config.slippage_bps / 1e4
 
     strat_returns: dict[str, pd.Series] = {}
     bench_returns: dict[str, pd.Series] = {}
@@ -88,6 +101,7 @@ def run_backtest(
         sig = signals.frame[signals.frame["ticker"] == ticker]["proba"]
         if sig.empty:
             continue
+        slip = _slippage_for_ticker(df, config)
         r_strat, trades = _simulate_ticker(ticker, df, sig, config, fee=fee, slip=slip)
         # Benchmark and strategy share the same date window for a fair comparison.
         bench = df["close"].pct_change().reindex(r_strat.index).fillna(0.0)
@@ -114,6 +128,27 @@ def _equal_weight(per_ticker: dict[str, pd.Series]) -> pd.Series:
         return pd.Series(dtype=float)
     frame = pd.DataFrame(per_ticker).sort_index()
     return frame.mean(axis=1)
+
+
+def _slippage_for_ticker(df: pd.DataFrame, config: BacktestConfig) -> float:
+    """Per-side slippage (fraction, not bps) for one ticker.
+
+    Constant when ``volume_proportional_slippage`` is off (Phase 2 behavior).
+    Otherwise scaled by sqrt(volume_ref / median_volume) so a small-cap with
+    1/100th of SPY's daily volume pays ~10x the base bps. The result is
+    capped at ``slippage_cap_bps`` so a truly illiquid micro-cap doesn't
+    distort the aggregate result with an unrealistic fill cost.
+    """
+    base_bps = config.slippage_bps
+    if not config.volume_proportional_slippage:
+        return base_bps / 1e4
+    median_volume = float(df["volume"].median())
+    if median_volume <= 0 or pd.isna(median_volume):
+        scale = 1.0
+    else:
+        scale = (config.volume_ref / median_volume) ** 0.5
+    effective_bps = min(base_bps * scale, config.slippage_cap_bps)
+    return effective_bps / 1e4
 
 
 def _simulate_ticker(

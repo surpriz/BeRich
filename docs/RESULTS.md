@@ -303,28 +303,87 @@ opportunities (and re-test the trade frequency / cost trade-off), or
 move to per-event labels where the model's short-horizon edge could
 translate into a different P&L mechanism.
 
+## Phase 6 — universe expansion (mega vs mid vs small vs all)
+
+The hypothesis: mega-caps are chased by everyone (lower edge potential);
+small/mid caps have less analyst coverage and more documented anomalies, so
+**if** a tradable edge exists for daily/swing US equities, it should be
+visible there. We held the model + features constant (LightGBM on the 22
+base features, no earnings or news) and ran the same backtest on four
+universes with **volume-proportional slippage** so small-caps pay realistic
+fill costs (slippage_bps ∝ √(SPY_volume / ticker_volume), capped at 100 bps).
+
+Data: ~274 unique tickers cached (10 mega + 113 mid + 151 small), ~985k
+total sample-rows. Each universe's benchmark is an equal-weight buy & hold
+of **the same** tickers — apples-to-apples on Sharpe.
+
+| universe | tickers | in DS | samples  | P(win) | AUC    | Sharpe  | B&H     | beats | max DD  | trades |
+|----------|---------|-------|----------|--------|--------|---------|---------|-------|---------|--------|
+| mega     | 10      | 10    | 39 351   | 0.325  | 0.5153 | **+0.31** | **+1.15** | False | -0.25   | 1 710  |
+| mid      | 113     | 110   | 413 874  | 0.289  | 0.5108 | **-0.84** | +0.95   | False | -0.65   | 13 176 |
+| small    | 151     | 141   | 532 135  | 0.276  | 0.5109 | **-1.00** | +0.78   | False | -0.73   | 13 384 |
+| all      | 274     | 261   | 985 360  | 0.283  | 0.5069 | -0.92   | +0.87   | False | -0.69   | 27 634 |
+
+**The hypothesis is rejected — backwards.** Two observations:
+
+1. **AUC is essentially flat across universes** (0.5069–0.5153). The
+   model has the same modest predictive ability everywhere; small/mid caps
+   aren't "less efficient" in the sense of being easier to predict.
+2. **Realistic slippage destroys the strategy on small/mid caps.** Sharpe
+   goes from +0.31 (mega) to *negative* (mid/small/all). Buy & hold also
+   degrades on these universes (1.15 → 0.95 → 0.78 — small-caps have lower
+   risk-adjusted returns) but the strategy degrades much faster: gross
+   directional signal exists, but ~50 bps/side slippage on a 13 000-trade
+   book eats it whole.
+
+Top-10 importances on the 'all' universe model are revealing:
+
+```
+spy_rvol_20             22.82 %
+spy_ret_20              19.48 %
+days_to_month_end       12.63 %
+month_cos                9.22 %
+month_sin                8.70 %
+mom_120                  2.88 %
+rvol_20                  2.29 %
+dist_low_60              2.25 %
+ret_5                    2.24 %
+atr_pct                  1.97 %
+```
+
+The wider-universe model leans **heavily on macro regime + calendar**
+(SPY features + month encoding = 73% of total importance). Per-ticker
+features that were prominent on mega-caps (atr_pct, mom_120, rvol_20)
+fall to <3% each. With 985k samples the model finds that the
+cheapest-to-predict signal is "everyone moves with SPY and with the
+month-end cycle" — and that's not enough to outrun friction.
+
+**Verdict:** no promotion. The mega-cap baseline remains the only
+universe where the strategy at least produces a positive (if sub-B&H)
+Sharpe. The Phase 6 plumbing (universes config, parallel ingest,
+liquidity gate, volume-proportional slippage) is merged behind
+``--universe`` / ``--volume-slippage`` flags for future experiments;
+the v0.2.0+ default production behavior is unchanged.
+
 ## Open project (not started)
 
-After Phase 3 (OHLCV + macro), 5a (earnings surprises) and 5b (news
-sentiment), the daily / single-name / 10-day-triple-barrier target has
-absorbed every reasonable exogenous tabular signal without lifting Sharpe
-above buy & hold. The remaining candidate directions involve **changing the
-target or the universe**, not adding more features:
+After Phase 3 (OHLCV + macro), 5a (earnings surprises), 5b (news
+sentiment), and Phase 6 (universe expansion), every reasonable tabular +
+universe lever has been pulled without producing a tradable edge above
+buy & hold. The remaining candidate directions involve **changing the
+target itself**, not adding more features or names:
 
-- Tune the entry threshold per horizon: at h=3 the strategy fires too few
-  trades to accumulate alpha — try threshold 0.4 / 0.45 / 0.5 and see if
-  the AUC 0.58 model is harvestable with looser selection.
+- Tune the entry threshold per horizon: at h=3 (AUC 0.58, see horizon
+  sweep above) the strategy fires too few trades to accumulate alpha —
+  try threshold 0.4 / 0.45 / 0.5 and see if the high-AUC model is
+  harvestable with looser selection.
 - Per-event labels (post-earnings drift, news-burst reaction window)
   instead of the calendar-bar triple-barrier.
 - Intraday horizons (1-hour, 4-hour) where sentiment may matter more.
 - Meta-labeling (Lopez de Prado): a tiny primary detector + an ML
   secondary that predicts the primary's reliability for sizing.
-- **Wider universe** (Phase 6): mega-caps are the most efficient
-  benchmark; small/mid caps have less analyst coverage and more
-  documented anomalies. Running the same model on the S&P 600 / S&P 400
-  universe with a realistic volume-proportional slippage model is the
-  cleanest "is the edge elsewhere?" test we haven't yet attempted.
 
-None are started. The current v0.1.0+ infrastructure (data, features,
-backtest, registry, paper book, production deployment) is the platform
-on which any of these would sit.
+None are started. The current v0.2.0+ infrastructure (data layer with
+OHLCV + earnings + news + multi-universe, walk-forward backtest with
+realistic costs, registry guard, paper book, production deployment) is
+the platform on which any of these would sit.
