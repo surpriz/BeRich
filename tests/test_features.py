@@ -107,7 +107,7 @@ def test_calendar_features_match_index_dates():
     df = _ohlcv()
     feats = build_features(df, market=_ohlcv(seed=1))
     idx = pd.DatetimeIndex(df.index)
-    expected_dow_sin = np.sin(2.0 * np.pi * idx.dayofweek.to_numpy() / 5.0)
-    np.testing.assert_allclose(feats["dow_sin"].to_numpy(), expected_dow_sin)
+    expected_month_sin = np.sin(2.0 * np.pi * (idx.month.to_numpy() - 1) / 12.0)
+    np.testing.assert_allclose(feats["month_sin"].to_numpy(), expected_month_sin)
     # Business days remaining in the month is always >= 0.
     assert (feats["days_to_month_end"].dropna() >= 0).all()

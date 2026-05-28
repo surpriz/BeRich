@@ -45,8 +45,6 @@ FEATURE_COLUMNS: list[str] = [
     "volume_z20",
     "dist_high_60",
     "dist_low_60",
-    "dow_sin",
-    "dow_cos",
     "month_sin",
     "month_cos",
     "days_to_month_end",
@@ -65,12 +63,10 @@ def _calendar_features(index: pd.DatetimeIndex) -> pd.DataFrame:
     seasonality in equities.
     """
     out = pd.DataFrame(index=index)
-    # 0=Mon … 6=Sun (data is business days, so values land in 0..4 in practice).
+    # day-of-week proved to be ~0% LGBM importance, so it's no longer carried; only
+    # monthly seasonality (sin/cos) and days-to-month-end survive.
     index_series = pd.Series(index)
-    dow = index_series.dt.dayofweek.to_numpy()
     month = index_series.dt.month.to_numpy()
-    out["dow_sin"] = np.sin(2.0 * np.pi * dow / 5.0)
-    out["dow_cos"] = np.cos(2.0 * np.pi * dow / 5.0)
     out["month_sin"] = np.sin(2.0 * np.pi * (month - 1) / 12.0)
     out["month_cos"] = np.cos(2.0 * np.pi * (month - 1) / 12.0)
 
@@ -148,7 +144,7 @@ def build_features(
     feats["dist_low_60"] = ind.dist_to_rolling_low(close, low, DIST_LOOKBACK)
 
     calendar = _calendar_features(pd.DatetimeIndex(df.index))
-    for col in ("dow_sin", "dow_cos", "month_sin", "month_cos", "days_to_month_end"):
+    for col in ("month_sin", "month_cos", "days_to_month_end"):
         feats[col] = calendar[col]
 
     if market is not None:
