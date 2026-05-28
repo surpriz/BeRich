@@ -48,6 +48,9 @@ class Config(BaseModel):
     data_dir: Path = Path("data")
     data: DataConfig = Field(default_factory=DataConfig)
     watchlist: list[str] = Field(default_factory=list)
+    # Cross-asset context tickers (VIX, rates, credit, sector ETFs). Downloaded by
+    # `berich data` and consumed by features/build.py; never predicted or traded.
+    context_tickers: list[str] = Field(default_factory=list)
     labeling: LabelingConfig = Field(default_factory=LabelingConfig)
     signals: SignalConfig = Field(default_factory=SignalConfig)
 
