@@ -16,17 +16,29 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class Model(Protocol):
-    """Minimal fit/predict contract shared by all BeRich models."""
+    """Minimal fit/predict contract shared by all BeRich models.
+
+    The optional ``tickers`` Series is what lets sequence models (LSTM, TFT) split
+    the date-sorted panel into per-ticker streams so that lookback windows never mix
+    bars from different symbols. Tabular models ignore it.
+    """
 
     def fit(
         self,
         x: pd.DataFrame,
         y: pd.Series,
         sample_weight: pd.Series | None = None,
+        *,
+        tickers: pd.Series | None = None,
     ) -> Model:
         """Train on features ``x`` and binary labels ``y``."""
         ...
 
-    def predict_proba(self, x: pd.DataFrame) -> np.ndarray:
+    def predict_proba(
+        self,
+        x: pd.DataFrame,
+        *,
+        tickers: pd.Series | None = None,
+    ) -> np.ndarray:
         """Return P(label == 1) as a 1-D array aligned to ``x``."""
         ...

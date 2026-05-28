@@ -2,6 +2,7 @@
 
 from berich.models.base import Model
 from berich.models.lightgbm_model import LGBMModel
+from berich.models.lstm import LSTMConfig, LSTMModel
 from berich.models.registry import (
     ModelMetadata,
     list_models,
@@ -13,6 +14,8 @@ from berich.models.registry import (
 
 __all__ = [
     "LGBMModel",
+    "LSTMConfig",
+    "LSTMModel",
     "Model",
     "ModelMetadata",
     "list_models",

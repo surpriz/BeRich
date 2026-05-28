@@ -12,4 +12,6 @@ wheels/
 # BeRich data cache & ML artifacts
 data/
 mlruns/
+mlartifacts/
+mlflow.db
 *.parquet.tmp

@@ -76,10 +76,12 @@ def oof_predict(
         x_tr = dataset.x.iloc[fold.train_idx]
         y_tr = dataset.y.iloc[fold.train_idx]
         w_tr = dataset.weight.iloc[fold.train_idx]
-        model.fit(x_tr, y_tr, sample_weight=w_tr)
+        t_tr = dataset.tickers.iloc[fold.train_idx]
+        model.fit(x_tr, y_tr, sample_weight=w_tr, tickers=t_tr)
 
         x_te = dataset.x.iloc[fold.test_idx]
-        proba = model.predict_proba(x_te)
+        t_te = dataset.tickers.iloc[fold.test_idx]
+        proba = model.predict_proba(x_te, tickers=t_te)
         rows.append(
             pd.DataFrame(
                 {

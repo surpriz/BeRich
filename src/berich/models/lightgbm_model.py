@@ -43,12 +43,19 @@ class LGBMModel:
         x: pd.DataFrame,
         y: pd.Series,
         sample_weight: pd.Series | None = None,
+        *,
+        tickers: pd.Series | None = None,  # noqa: ARG002 — tabular model ignores ticker grouping
     ) -> LGBMModel:
         weight = None if sample_weight is None else sample_weight.to_numpy()
         self._clf.fit(x, y, sample_weight=weight)
         return self
 
-    def predict_proba(self, x: pd.DataFrame) -> np.ndarray:
+    def predict_proba(
+        self,
+        x: pd.DataFrame,
+        *,
+        tickers: pd.Series | None = None,  # noqa: ARG002 — tabular model ignores ticker grouping
+    ) -> np.ndarray:
         proba = self._clf.predict_proba(x)
         # Column order follows classes_; return the probability of the positive class.
         pos = list(self._clf.classes_).index(1)

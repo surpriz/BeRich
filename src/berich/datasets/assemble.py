@@ -80,7 +80,7 @@ def build_dataset(
     if not parts:
         empty_idx = pd.DatetimeIndex([])
         return SupervisedDataset(
-            x=pd.DataFrame(columns=FEATURE_COLUMNS),
+            x=pd.DataFrame(columns=pd.Index(FEATURE_COLUMNS)),
             y=pd.Series(dtype=int),
             weight=pd.Series(dtype=float),
             dates=empty_idx,

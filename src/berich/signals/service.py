@@ -51,7 +51,9 @@ class Signal:
 
     def as_row(self) -> dict[str, object]:
         row = asdict(self)
-        row["date"] = pd.Timestamp(self.date).date().isoformat()
+        # ``self.date`` is set by the producer and never NaT in practice; ignore
+        # the stub's NaT union here rather than litter the call sites with casts.
+        row["date"] = pd.Timestamp(self.date).date().isoformat()  # ty: ignore[unresolved-attribute]
         return row
 
 
