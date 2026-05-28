@@ -522,13 +522,111 @@ the paper-trade store now carries a ``source`` column so a future PEAD
 promotion would track separately from the daily-LGBM book. Production
 serving is unchanged.
 
+## Phase 8 — PEAD + risk management overlay
+
+Hypothesis: PEAD's directional signal is real (AUC 0.5346, Sharpe 0.849)
+but no risk management has been applied yet — equal sizing, no regime
+gating, no drawdown protection. Industry wisdom is that 80 % of a quant
+strategy's Sharpe comes from risk management, not signal. This is the
+last untested lever before the v0.3.0 verdict closes.
+
+**Implementation:**
+- New ``berich.risk`` module with three pure-math primitives
+  (``kelly_fraction``, ``vol_target_size``, ``inverse_vol_size``), two
+  binary gates (``regime_gate_spy`` based on rolling SPY-rvol quartile,
+  ``drawdown_gate`` based on running peak equity), and a combiner
+  ``RiskOverlay`` that runs them in order: threshold → gates → sizer.
+- ``berich.backtest.pead_engine`` re-uses the same PEAD OOF probas but
+  layers the overlay event-by-event. Gates see only realized history
+  before each event (no test-window leakage). Benchmark = the same
+  "blind long every event window" but scaled by the same per-event
+  position so the Sharpe comparison isolates the overlay's effect.
+- Walk-forward at the parameter level too: the regime-gate cutoff is a
+  rolling quartile (252-day lookback ending at event-1, never the
+  full sample); the drawdown gate watches only realized strategy
+  equity to date; Kelly W/L are configuration constants tuned to the
+  PEAD label thresholds (W=4 %, L=2 %).
+
+**Comparative result on the 6 066-event PEAD dataset:**
+
+| overlay     | AUC     | Sharpe   | window-B&H | total_return | max_DD | trades | gated | beats |
+|-------------|---------|----------|-----------:|--------------|--------|--------|-------|-------|
+| off         | 0.5346  | 0.849    | 1.013      | +17.7 %      | -6.7 % | 1 174  | 0     | False |
+| vol_gate    | 0.5346  | 0.428    | 0.589      | +5.8 %       | -6.4 % | 746    | 428   | False |
+| dd_gate     | 0.5346  | 0.849    | 1.013      | +17.7 %      | -6.7 % | 1 174  | 0     | False |
+| kelly       | 0.5346  | 0.849    | 1.013      | +17.7 %      | -6.7 % | 1 174  | 0     | False |
+| all         | 0.5346  | 0.428    | 0.589      | +5.8 %       | -6.4 % | 746    | 428   | False |
+
+(Daily-return Sharpe; the per-event aggregation is averaged over the
+event-day calendar, hence the modest total_return relative to the raw
+1 174-trade Phase 7 figure that compounded each trade independently.)
+
+**No overlay beats the buy-and-hold benchmark.** Three independent
+findings:
+
+1. **Drawdown gate never fired.** Strategy max DD on the sized book
+   is only 6.7 %, well below the 20 % cut-off. PEAD is naturally
+   drawdown-constrained at the daily-aggregated event level — the
+   gate has nothing to protect against.
+2. **Kelly + inverse-vol sizing leave Sharpe unchanged.** Because both
+   strategy and benchmark are scaled by the same per-event size in
+   our (honest) apples-to-apples comparison, a uniform multiplier
+   cancels in the Sharpe ratio. The sizer matters in absolute return
+   (it's hard-capped at 5 % per trade by ``max_position``), not in
+   risk-adjusted return relative to the same-window benchmark.
+3. **Regime gate skips winners.** Filtering out events when SPY's
+   trailing rvol is in the top quartile removes 428 of 1 174 trades
+   — but Sharpe drops from 0.849 to 0.428, and the *benchmark on the
+   surviving events* also drops (1.013 → 0.589). High-vol-regime
+   earnings events were ON AVERAGE profitable, so the regime gate
+   filters out winners, not losers. The "don't trade during macro
+   stress" intuition doesn't hold for PEAD specifically.
+
+Promote gate (``Sharpe > window-B&H AND AUC stable``) **not met**.
+No promotion. The risk overlay code stays merged behind
+``scripts/pead_risk_managed.py`` for future use, but no live model
+changes.
+
+## Final verdict — v0.4.0
+
+8 phases of exploration over OHLCV, macro cross-asset, earnings
+surprises, FinBERT news sentiment, mid/small-cap universes, short
+horizons, post-earnings drift, and risk management. **No combination
+tested publicly beats buy & hold in walk-forward with realistic fees
+and slippage on the US daily long-only universe.**
+
+The Phase 7 PEAD result (AUC 0.5346, Sharpe 0.849, max DD -6.7 % on
+the daily-aggregated event book) is the closest the project comes to
+a usable signal — and Phase 8 confirms that adding standard risk
+machinery on top doesn't unlock the additional Sharpe needed to
+clear the benchmark.
+
+Recommended pivot for any future iteration: **change the problem,
+not the algorithm**. The US daily long-only space is too efficient
+for the levers explored. Plausible next environments:
+
+- **Crypto** (24/7, retail-dominated, less efficient micro-structure).
+- **Intraday** (1-minute / 5-minute bars where short-horizon signals
+  matter and PEAD-like reactions are sharper).
+- **Market-neutral long/short** (cross-sectional ranking on the
+  ~274-ticker universe with paired short positions — removes the
+  ~10 %/yr equity beta from the benchmark, making "edge" possible
+  even with thin AUC).
+
+The v0.2.0+ infrastructure (data layer with multi-universe + earnings
++ news + GPU FinBERT, walk-forward backtest with realistic costs,
+event-level PEAD + risk overlay, registry guard, paper book,
+production deployment) is the platform on which any of these would
+sit — none of the new direction requires throwing away what's built.
+
 ## Open project (not started)
 
 After Phase 3 (OHLCV + macro), 5a (earnings surprises), 5b (news
 sentiment), Phase 6 (universe expansion), the h=3 exploit sweep, the
-calendar-only sanity check, and Phase 7 PEAD, the project has pulled
-every reasonable lever short of changing the very nature of the
-strategy. The remaining candidate directions:
+calendar-only sanity check, Phase 7 PEAD, and Phase 8 risk
+management, the project has pulled every reasonable lever short of
+changing the very nature of the strategy. The remaining candidate
+directions:
 
 - Tune the entry threshold per horizon: at h=3 (AUC 0.58, see horizon
   sweep above) the strategy fires too few trades to accumulate alpha —

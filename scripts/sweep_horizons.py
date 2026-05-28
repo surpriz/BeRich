@@ -107,9 +107,7 @@ def main(argv: list[str] | None = None) -> int:
             + ", ".join(f"h={r.horizon}" for r in winners)
         )
     else:
-        print(
-            f"\nNo horizon cleared the promote gate (AUC > {PROMOTE_MIN_AUC} AND Sharpe > B&H)."
-        )
+        print(f"\nNo horizon cleared the promote gate (AUC > {PROMOTE_MIN_AUC} AND Sharpe > B&H).")
     return 0
 
 
