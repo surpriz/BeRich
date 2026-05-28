@@ -8,17 +8,22 @@ rigorous walk-forward backtest before it is ever trusted.
 > only trust a model if it beats both a LightGBM baseline **and** buy & hold,
 > out-of-sample, with realistic fees and slippage.
 
-## Status
+## Status — v0.1.0 frozen as advisory infrastructure
 
 | Phase | Scope | State |
 |-------|-------|-------|
 | 0 | Scaffolding + yfinance ingestion (adjusted, incremental Parquet cache) | ✅ done |
-| 1 | Causal features (RSI, MACD, ATR, momentum, vol…) + triple-barrier labels + walk-forward splits | ✅ done |
+| 1 | Causal features + triple-barrier labels + walk-forward splits | ✅ done |
 | 2 | LightGBM baseline + event-based backtest (ATR SL/TP, fees, slippage) vs buy & hold | ✅ done |
 | 4 | Daily signal service + risk-based position sizing (DuckDB) | ✅ done |
 | 6 | Drift monitoring (PSI + KS) + APScheduler automation | ✅ done |
 | 5 | FastAPI API + Next.js dashboard | ✅ done |
-| 3 | LSTM / TFT on GPU + Optuna HPO + MLflow tracking | ⬜ todo (GPU machine) |
+| 3 | Feature engineering + LSTM/MLflow + label sweep + cross-asset experiment | ✅ **closed — no edge found, see [docs/RESULTS.md](docs/RESULTS.md)** |
+
+v0.1.0 ships the data → features → label → walk-forward backtest → signal →
+sizing → drift → dashboard pipeline. The model produced does **not** beat
+buy & hold; the registry refuses to promote it and the dashboard surfaces an
+"advisory only" banner. No edge is claimed.
 
 ## Quickstart
 
@@ -69,29 +74,32 @@ src/berich/
 frontend/        # Next.js dashboard (signals, backtest, drift)
 ```
 
-## GPU handoff (Phase 3)
+## GPU handoff (kept for future work)
 
 Deep models train on a GPU box; serving stays local. The seam is the **model
 registry** (`src/berich/models/registry.py`) and the `Model` protocol:
 
 ```
-GPU box   git clone + uv sync + uv add torch pytorch-forecasting optuna mlflow
-          add models/lstm.py + models/tft.py behind the Model protocol
-          train -> save_model(model, metadata) -> promote (guarded: must beat buy & hold)
+GPU box   git clone + uv sync --all-groups   (torch, mlflow, optuna are in the gpu group)
+          fit a model behind the Model protocol -> save_model(...) -> promote (guarded)
 sync      scp -r data/models/<name>  ->  local data/models/
 local     load_active() picks it up automatically; `berich signals` / `serve` use it,
           no code change. Falls back to the inline LightGBM baseline if nothing promoted.
 ```
 
 `promote()` refuses any model whose metadata says it does not beat buy & hold (the
-guard rule), so a worse model can never silently take over serving. Reuse
-`oof_predict` + `run_backtest` to fill the metrics on the GPU side exactly as
-`berich train` does for the baseline.
+guard rule), so a worse model can never silently take over serving. Phase 3 used
+this seam to train + evaluate an LSTM and a label sweep; the artifact was
+correctly refused (see RESULTS.md).
 
-## Current baseline result
+## Phase 3 — honest result
 
-On the default 10-ticker US-equity watchlist the LightGBM baseline scores an
-out-of-sample AUC near 0.51 and a Sharpe below buy & hold — i.e. **not yet a usable
-signal**. This is the expected, honest starting point; the backtest harness exists
-precisely to surface this rather than hide it. Phases 3+ (deep models, better
-features, sizing) aim to clear the baseline + buy & hold bar.
+The 10-ticker LightGBM baseline finishes Phase 3 at **OOS AUC ≈ 0.517, Sharpe
+≈ 0.43** vs **buy & hold Sharpe ≈ 1.15** — the strategy does not beat buy &
+hold. Deeper models (LSTM), wider feature sets (calendar, regime, longer
+momentum, mean-reversion), cross-asset macro context (VIX, TLT, HYG/LQD,
+sector ETFs), and alternative label geometries were all tested and none
+clears the bar. The macro features dominate LightGBM's importance ranking
+yet do not lift AUC — the signal exists at macro scale but does not convert
+to a tradeable single-name probability at the 10-day horizon. Full numbers
+and verdicts: [docs/RESULTS.md](docs/RESULTS.md).

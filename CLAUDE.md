@@ -50,48 +50,33 @@
 
   ## Current state (read before changing things)
 
-  Phases 0, 1, 2, 4, 5, 6 + model registry are done and tested (42 pytest passing, ruff +
-  ty clean, frontend builds). LightGBM baseline OOS AUC ≈ 0.52, Sharpe ≈ 0.54 vs buy &
-  hold ≈ 1.15 — **does NOT beat buy & hold yet**. This is the expected starting point;
-  Phase 3 (deep models, better features) aims to clear the guard.
+  **v0.1.0 — advisory infrastructure frozen, no edge claim.** All phases (0–6) are
+  done and tested (47 pytest passing, ruff + ty clean, frontend builds). The final
+  LightGBM baseline scores OOS AUC ≈ 0.517, Sharpe ≈ 0.43 vs buy & hold ≈ 1.15 —
+  **does not beat buy & hold**. The guard rule (`promote()`) refuses the model;
+  the dashboard surfaces an "advisory only" banner. This is shipped on purpose.
 
-  ## Phase 3 — what to do next, in order
+  ## Phase 3 outcome
 
-  The work below is staged from cheapest to heaviest. Don't skip 3a: a stronger feature
-  set often gives more lift than swapping LightGBM for an LSTM.
+  Phase 3 explored four levers — feature engineering (3a), LSTM (3b), label
+  geometry sweep, and cross-asset macro features (VIX, TLT, HYG/LQD, sector
+  ETFs). None lifted OOS AUC above ~0.52 nor Sharpe above buy & hold. The
+  cross-asset features dominated LightGBM's importance ranking (top 5 = pure
+  macro) yet did not lift AUC — the macro signal exists but is not convertible
+  to a tradeable single-name probability at the 10-day horizon. Full numbers,
+  methodology and verdicts in [`docs/RESULTS.md`](docs/RESULTS.md).
 
-  ### 3a. Improve the feature set
-  Add to `features/build.py` while keeping every feature causal:
-  - calendar: day-of-week, month, days-to-month-end (one-hot or sinusoidal encoding);
-  - market regime: SPY trailing return / SPY rolling vol, broadcast to every non-SPY
-    ticker with a one-day lag (no leakage from same-day SPY into AAPL);
-  - longer momentum: `mom_60`, `mom_120`;
-  - distance to N-day rolling high / low (mean-reversion proxy).
-  Update `FEATURE_COLUMNS` and add a no-lookahead test for any cross-asset feature. Re-run
-  `berich backtest`. Stop tuning here only once a thoughtful baseline has been tried.
+  Models / training driver from Phase 3 are kept in the codebase:
+  - `src/berich/models/lstm.py` — LSTM behind the `Model` protocol.
+  - `src/berich/training/deep.py` — MLflow-tracked OOF + backtest + guarded promote.
+  - `scripts/feature_importances.py`, `scripts/sweep_labels.py`, `scripts/train_lstm.py`.
+  These are reusable for future experiments. The `SECTOR_MAP` dict in
+  `features/build.py` is kept as a helper (not wired) for the same reason.
 
-  ### 3b. LSTM baseline (GPU)
-  Add `models/lstm.py` exposing the `Model` protocol. Use `make_sequences` from
-  `datasets/windows.py` for the `(n, lookback, n_features)` input. Train on CUDA, expose
-  hyperparameters (lookback, hidden, dropout, lr, epochs, batch). Wire `training/deep.py`
-  with an MLflow run that logs params, OOS AUC from `oof_predict`, and the backtest
-  verdict. Persist via `save_model` + try `promote` (guard).
-
-  ### 3c. Optuna HPO (GPU)
-  One Optuna study per model class. Two trials run in parallel on the two GPUs (set
-  `CUDA_VISIBLE_DEVICES` per worker). Search over lookback / hidden / lr / dropout.
-  Promote only if the best trial beats LightGBM AND buy & hold on OOS Sharpe.
-
-  ### 3d. TFT (GPU)
-  `pytorch-forecasting`'s `TemporalFusionTransformer`. Heavier — uses its own
-  `TimeSeriesDataSet`. Keep the `Model` protocol wrapper so the rest of the stack
-  (`signals/`, `backtest/`, registry) does not change.
-
-  ### 3e. Handoff back to local
-  On the GPU box, after a successful `promote`, the artifact lives in `data/models/<name>/`.
-  Sync to the local Mac with `scp -r jerome@<gpu-ip>:~/BeRich/data/models/<name>
-  ~/Desktop/BeRich/data/models/`. `signals/service.py` calls `load_active()` and serves it
-  with zero code change.
+  **Future work (not started): Phase 4 — exogenous information.** News / sentiment
+  via FinBERT, earnings surprises, sector flows. This is a separate project; the
+  v0.1.0 freeze is meant to keep the existing infrastructure stable while that
+  work is scoped properly.
 
   ## House rules for code changes
 
@@ -105,3 +90,9 @@
     `uv_build` or hatchling — they silently dropped subpackages under uv 0.11.
   - `.gitignore` patterns for runtime caches (`data/`, `mlruns/`) are anchored with a
     leading `/` to avoid swallowing `src/berich/data/` etc.
+  - **Do not reopen feature hunts in OHLCV or cross-asset macro without a new
+    data-source rationale.** Phase 3 conclusively explored that space; the next
+    edge-search lives in Phase 4 (exogenous info — news, earnings, flows). If a
+    proposal can be implemented with the data already in `data/ohlcv/` plus
+    standard cross-asset macro series, it has already been tried — read
+    `docs/RESULTS.md` first.

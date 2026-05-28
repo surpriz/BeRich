@@ -52,9 +52,9 @@ export default function Dashboard() {
         )}
       </header>
 
-      {/* Honest disclaimer: signals are advisory and gated by the backtest verdict. */}
+      {/* Honest disclaimer: v0.1.0 baseline does not beat buy & hold (see docs/RESULTS.md). */}
       <div className="mb-8 rounded-lg border border-[var(--color-neutral)]/30 bg-[var(--color-neutral)]/[0.06] px-4 py-3 text-sm text-[var(--color-neutral)]">
-        Advisory only. Trust signals when the backtest beats buy &amp; hold — not before. Not financial advice.
+        Advisory only — the current model does not beat buy &amp; hold. Not financial advice.
       </div>
 
       {s.error && (
