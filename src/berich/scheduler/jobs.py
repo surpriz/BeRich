@@ -20,6 +20,7 @@ from berich.data.store import OhlcvStore
 from berich.datasets import build_dataset
 from berich.labeling.triple_barrier import LabelConfig
 from berich.monitoring import feature_drift
+from berich.notifications import send_buy_signals_email
 from berich.signals import (
     SignalStore,
     generate_signals,
@@ -60,14 +61,22 @@ def daily_paper_job(config: Config) -> dict[str, int]:
     saved = signal_store.save(signals)
     opened = open_new_trades(config, store, signal_store)
     closed = update_open_trades(config, store)
+    # Email digest only fires when we actually opened paper trades — that filter
+    # makes the "is there a new BUY for me to act on" semantics exact, instead
+    # of spamming whenever the model emits a BUY proba on a ticker we already
+    # held.
+    notified = False
+    if opened > 0:
+        notified = send_buy_signals_email([s for s in signals if s.signal == "BUY"])
     logger.info(
         "daily_paper: %d news rows, %d finbert scored, %d signals saved,"
-        " %d paper opened, %d paper closed",
+        " %d paper opened, %d paper closed, email=%s",
         max(news_rows, 0),
         finbert_scored,
         saved,
         opened,
         closed,
+        notified,
     )
     return {
         "news_rows": max(news_rows, 0),
@@ -75,6 +84,7 @@ def daily_paper_job(config: Config) -> dict[str, int]:
         "signals_saved": saved,
         "trades_opened": opened,
         "trades_closed": closed,
+        "email_sent": int(notified),
     }
 
 

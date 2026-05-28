@@ -52,9 +52,26 @@ def client(tmp_path, monkeypatch):
 
 
 def test_health(client):
-    # /api/health is exempt from auth so the reverse proxy can probe liveness
-    # without owning the API key.
-    assert client.get("/api/health").json() == {"status": "ok"}
+    # /api/health is exempt from auth and now also carries freshness numbers
+    # (last refresh times, n_signals_today, n_open_positions) so a human can
+    # tell at a glance whether the scheduler is alive.
+    payload = client.get("/api/health").json()
+    assert payload["status"] == "ok"
+    expected_keys = {
+        "status",
+        "ohlcv_last_refresh",
+        "news_last_refresh",
+        "signals_last_date",
+        "n_signals_today",
+        "n_open_positions",
+    }
+    assert set(payload.keys()) == expected_keys
+    # The fixture seeds one AAPL signal → today's signals = 1, open positions = 0.
+    assert payload["n_signals_today"] == 1
+    assert payload["n_open_positions"] == 0
+    # AAPL OHLCV is seeded by the fixture; news cache is not, so last_news is None.
+    assert payload["ohlcv_last_refresh"] is not None
+    assert payload["news_last_refresh"] is None
 
 
 def test_watchlist(client):
@@ -87,6 +104,24 @@ def test_health_open_under_api_key(tmp_path, monkeypatch):
     cfg_path.write_text(yaml.safe_dump({"data_dir": str(data_dir), "watchlist": []}))
     client = TestClient(create_app(str(cfg_path)))
     assert client.get("/api/health").status_code == 200
+
+
+def test_paper_calibration_endpoint_shape(client):
+    payload = client.get("/api/paper/calibration").json()
+    assert {"n_trades_total", "n_with_proba", "is_well_calibrated", "buckets"} <= set(payload)
+    # No paper trades seeded → empty calibration table with placeholder rows.
+    assert payload["n_trades_total"] == 0
+    assert payload["n_with_proba"] == 0
+    assert all(b["n_trades"] == 0 for b in payload["buckets"])
+
+
+def test_paper_export_csv_endpoint_returns_csv(client):
+    response = client.get("/api/paper/export.csv")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    # Empty store → CSV with just a header row (or an empty body for pandas 2.x).
+    body = response.text
+    assert isinstance(body, str)
 
 
 def test_api_key_enforced(tmp_path, monkeypatch):

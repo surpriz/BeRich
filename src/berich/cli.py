@@ -290,7 +290,7 @@ PROMOTE_MIN_AUC = 0.55
 PROMOTE_MIN_EVENTS_PEAD = 1000
 
 
-def _cmd_paper(args: argparse.Namespace) -> int:
+def _cmd_paper(args: argparse.Namespace) -> int:  # noqa: C901,PLR0911,PLR0915 — multi-action dispatcher
     from berich.data.store import OhlcvStore
     from berich.signals import (
         SignalStore,
@@ -341,6 +341,37 @@ def _cmd_paper(args: argparse.Namespace) -> int:
                     f"{r['entry']:>9.2f}{r['exit_price']:>9.2f}"
                     f"{r['pnl_pct'] * 100:>7.2f}%{r['pnl_eur']:>10.2f}"
                 )
+        return 0
+
+    if args.action == "calibration":
+        from berich.signals import compute_calibration
+
+        report = compute_calibration(config)
+        print(  # noqa: T201
+            f"\nPaper calibration ({report.n_with_proba} of {report.n_trades_total} "
+            f"closed trades have a recorded proba)\n"
+        )
+        if report.n_with_proba == 0:
+            print("  No closed trades with a recorded proba yet.")  # noqa: T201
+            return 0
+        print(f"  {'bucket':<14}{'n':>5}{'mean_pred':>12}{'win_rate':>11}{'gap':>8}")  # noqa: T201
+        for b in report.buckets:
+            gap = b.win_rate - b.mean_predicted if b.n_trades else 0.0
+            print(  # noqa: T201
+                f"  [{b.low:.2f}, {b.high:.2f})  {b.n_trades:>5d}"
+                f"{b.mean_predicted:>12.3f}{b.win_rate:>11.3f}{gap:>+8.3f}"
+            )
+        verdict = "OK" if report.is_well_calibrated else "OFF — model proba ≠ outcomes"
+        print(f"\n  Verdict: {verdict}")  # noqa: T201
+        return 0
+
+    if args.action == "export":
+        df = PaperStore(config.db_path).all_trades()
+        if df.empty:
+            print("No paper trades to export.")  # noqa: T201
+            return 0
+        df.to_csv(args.output, index=False)
+        print(f"Exported {len(df)} paper trades to {args.output}")  # noqa: T201
         return 0
 
     # "equity" branch
@@ -573,9 +604,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_paper = sub.add_parser("paper", help="Paper-trading tracker (no real money)")
     p_paper.add_argument(
         "action",
-        choices=["update", "status", "equity"],
+        choices=["update", "status", "equity", "calibration", "export"],
         help="update = open new BUY signals + walk open trades; status = list "
-        "positions + recent closes; equity = summary metrics vs SPY benchmark",
+        "positions + recent closes; equity = summary metrics vs SPY benchmark; "
+        "calibration = predicted-proba vs realized win-rate buckets; export = "
+        "dump all paper_trades rows to CSV (use --output).",
+    )
+    p_paper.add_argument(
+        "--output",
+        default="paper_trades.csv",
+        help="Output file for the `export` action (default: %(default)s).",
     )
     p_paper.set_defaults(func=_cmd_paper)
 

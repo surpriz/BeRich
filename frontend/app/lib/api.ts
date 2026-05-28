@@ -99,6 +99,23 @@ export type PaperClosedTrade = {
   pnl_eur: number;
 };
 
+export type CalibrationBucket = {
+  bucket: string;
+  low: number;
+  high: number;
+  midpoint: number;
+  mean_predicted: number;
+  win_rate: number;
+  n_trades: number;
+};
+
+export type PaperCalibration = {
+  n_trades_total: number;
+  n_with_proba: number;
+  is_well_calibrated: boolean;
+  buckets: CalibrationBucket[];
+};
+
 async function get<T>(path: string): Promise<T> {
   const key = process.env.NEXT_PUBLIC_API_KEY;
   const res = await fetch(`${API_BASE}${path}`, {
@@ -116,4 +133,7 @@ export const api = {
   paperPositions: () => get<PaperPositions>("/paper/positions"),
   paperEquity: () => get<PaperEquity>("/paper/equity"),
   paperClosed: (limit = 25) => get<PaperClosedTrade[]>(`/paper/closed-trades?limit=${limit}`),
+  paperCalibration: () => get<PaperCalibration>("/paper/calibration"),
 };
+
+export const PAPER_EXPORT_URL = `${API_BASE}/paper/export.csv`;

@@ -15,17 +15,21 @@ secret.
 
 from __future__ import annotations
 
+import io
 import os
 from functools import lru_cache
 
 import pandas as pd
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
 from berich.config import DEFAULT_CONFIG_PATH, Config
+from berich.data import NewsStore
 from berich.data.store import OhlcvStore
 from berich.signals import (
     SignalStore,
+    compute_calibration,
     get_equity_curve,
     get_open_positions,
     get_paper_metrics,
@@ -62,8 +66,22 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
     guard = [Depends(_require_api_key)]
 
     @router.get("/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok"}
+    def health() -> dict[str, object]:
+        """Liveness + freshness probe (no auth — used by Caddy and dashboards).
+
+        Returns the basic ``status: ok`` plus four freshness numbers a human
+        can scan at a glance to tell if the scheduler is alive: last refresh
+        timestamps for OHLCV / news / signals, today's signal count, and the
+        number of paper positions currently open.
+        """
+        return {
+            "status": "ok",
+            "ohlcv_last_refresh": _last_refresh(store, "AAPL"),
+            "news_last_refresh": _last_news_refresh(config),
+            "signals_last_date": _last_signals_date(signal_store),
+            "n_signals_today": _n_signals_today(signal_store),
+            "n_open_positions": _n_open_positions(config),
+        }
 
     @router.get("/watchlist", dependencies=guard)
     def watchlist() -> list[str]:
@@ -136,8 +154,74 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
                 df[col] = pd.to_datetime(df[col]).dt.strftime("%Y-%m-%dT%H:%M:%S")
         return df.to_dict(orient="records")
 
+    @router.get("/paper/calibration", dependencies=guard)
+    def paper_calibration() -> dict:
+        report = compute_calibration(config)
+        return {
+            "n_trades_total": report.n_trades_total,
+            "n_with_proba": report.n_with_proba,
+            "is_well_calibrated": report.is_well_calibrated,
+            "buckets": [b.as_row() for b in report.buckets],
+        }
+
+    @router.get("/paper/export.csv", dependencies=guard)
+    def paper_export_csv() -> Response:
+        df = PaperStore(config.db_path).all_trades()
+        buf = io.StringIO()
+        df.to_csv(buf, index=False)
+        return Response(
+            content=buf.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=paper_trades.csv"},
+        )
+
     app.include_router(router)
     return app
+
+
+def _last_refresh(store: OhlcvStore, ticker: str) -> str | None:
+    """ISO date of the most recent OHLCV bar for ``ticker`` (proxy for cache freshness)."""
+    last = store.last_date(ticker)
+    if last is None:
+        return None
+    # ``last_date`` returns a real Timestamp; the cast collapses the NaTType
+    # branch ty insists on adding.
+    return pd.Timestamp(last).date().isoformat()  # ty: ignore[unresolved-attribute]
+
+
+def _last_news_refresh(config: Config) -> str | None:
+    """Most recent ``time_published`` across the news cache, or ``None`` if no cache."""
+    store = NewsStore(config.news_dir)
+    if not store.has_any_data():
+        return None
+    latest: pd.Timestamp | None = None
+    for ticker in config.watchlist:
+        ts = store.last_time(ticker)
+        if ts is None:
+            continue
+        if latest is None or ts > latest:
+            latest = ts
+    if latest is None:
+        return None
+    # ``last_time`` already guarantees a real Timestamp; the cast collapses
+    # ty's NaTType union without a runtime branch.
+    return pd.Timestamp(latest).isoformat()  # ty: ignore[unresolved-attribute]
+
+
+def _last_signals_date(signal_store: SignalStore) -> str | None:
+    latest = signal_store.latest()
+    if latest.empty:
+        return None
+    return str(latest["date"].iloc[0])
+
+
+def _n_signals_today(signal_store: SignalStore) -> int:
+    latest = signal_store.latest()
+    return len(latest)
+
+
+def _n_open_positions(config: Config) -> int:
+    return len(PaperStore(config.db_path).open_trades())
 
 
 @lru_cache(maxsize=8)

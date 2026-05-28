@@ -51,11 +51,21 @@ processes both bind to `127.0.0.1` and are reachable only through the proxy
 - **API key in `/etc/berich/env` (mode 600, owner root).** Loaded by systemd
   via `EnvironmentFile=`; never committed. The frontend reads its copy from
   the same file at unit start (interpolated into a systemd `Environment=`
-  directive in `berich-frontend.service`). The token is the only secret on
-  this box.
+  directive in `berich-frontend.service`). The token is the primary secret
+  on this box.
+- **Optional secrets in `/etc/berich/env`** (all opt-in, scheduler
+  degrades gracefully when absent):
+  - `ALPHAVANTAGE_KEY` — Phase 5b news fetcher
+  - `NOTIFY_EMAIL`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` — Phase polish
+    email digest fired by the scheduler when new BUY signals open paper
+    trades. Use a Gmail App Password (not your account password) if
+    `SMTP_HOST=smtp.gmail.com`. Missing any of the four → email path
+    silently skipped, the rest of the job still runs.
 - **`/api/health` is intentionally exempt from the API key.** Caddy and any
-  external uptime probe can ping it for liveness; no information leakage —
-  it returns `{"status":"ok"}` and nothing else.
+  external uptime probe can ping it; the payload now includes the last
+  refresh dates for OHLCV / news / signals plus the count of today's
+  signals and currently open paper positions, so a dashboard or alerting
+  rule can detect a stale scheduler at a glance.
 - **UFW** allows only 22 / 80 / 443. Even if 3000 or 8000 were accidentally
   rebound to `0.0.0.0`, the firewall would still block them.
 

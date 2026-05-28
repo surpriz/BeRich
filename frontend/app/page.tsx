@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import {
   api,
+  PAPER_EXPORT_URL,
   type Backtest,
   type DriftReport,
+  type PaperCalibration,
   type PaperClosedTrade,
   type PaperEquity,
   type PaperPositions,
@@ -12,6 +14,7 @@ import {
 } from "@/app/lib/api";
 import { SignalsTable } from "./components/SignalsTable";
 import { BacktestPanel } from "./components/BacktestPanel";
+import { CalibrationCard } from "./components/CalibrationCard";
 import { DriftPanel } from "./components/DriftPanel";
 import { PaperPanel } from "./components/PaperPanel";
 
@@ -22,6 +25,7 @@ type State = {
   paperEquity?: PaperEquity;
   paperPositions?: PaperPositions;
   paperClosed?: PaperClosedTrade[];
+  paperCalibration?: PaperCalibration;
   error?: string;
 };
 
@@ -32,17 +36,33 @@ export default function Dashboard() {
     let alive = true;
     (async () => {
       try {
-        const [signals, drift, backtest, paperEquity, paperPositions, paperClosed] =
-          await Promise.all([
-            api.signals(),
-            api.drift(),
-            api.backtest(),
-            api.paperEquity(),
-            api.paperPositions(),
-            api.paperClosed(),
-          ]);
+        const [
+          signals,
+          drift,
+          backtest,
+          paperEquity,
+          paperPositions,
+          paperClosed,
+          paperCalibration,
+        ] = await Promise.all([
+          api.signals(),
+          api.drift(),
+          api.backtest(),
+          api.paperEquity(),
+          api.paperPositions(),
+          api.paperClosed(),
+          api.paperCalibration(),
+        ]);
         if (alive)
-          setS({ signals, drift, backtest, paperEquity, paperPositions, paperClosed });
+          setS({
+            signals,
+            drift,
+            backtest,
+            paperEquity,
+            paperPositions,
+            paperClosed,
+            paperCalibration,
+          });
       } catch (e) {
         if (alive) setS({ error: e instanceof Error ? e.message : "request failed" });
       }
@@ -100,6 +120,32 @@ export default function Dashboard() {
           ) : (
             <Skeleton h={600} />
           )}
+
+          <div className="grid gap-8 lg:grid-cols-2">
+            <section>
+              {s.paperCalibration ? (
+                <CalibrationCard calibration={s.paperCalibration} />
+              ) : (
+                <Skeleton h={300} />
+              )}
+            </section>
+            <section className="card flex flex-col justify-between p-5">
+              <div>
+                <h3 className="font-display text-sm font-bold uppercase tracking-widest text-[var(--color-muted)]">
+                  Export
+                </h3>
+                <p className="mt-2 text-sm text-[var(--color-faint)]">
+                  Download the full paper-trade history as CSV for external analysis.
+                </p>
+              </div>
+              <a
+                href={PAPER_EXPORT_URL}
+                className="mt-4 inline-block self-start rounded-md border border-[var(--color-line)] bg-[var(--color-line)]/[0.04] px-4 py-2 text-sm text-[var(--color-bull)] hover:bg-[var(--color-line)]/[0.10]"
+              >
+                Download paper_trades.csv →
+              </a>
+            </section>
+          </div>
 
           <div className="grid gap-8 lg:grid-cols-5">
             <section className="lg:col-span-3">{s.backtest ? <BacktestPanel bt={s.backtest} /> : <Skeleton h={460} />}</section>
