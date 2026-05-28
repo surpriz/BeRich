@@ -365,13 +365,78 @@ liquidity gate, volume-proportional slippage) is merged behind
 ``--universe`` / ``--volume-slippage`` flags for future experiments;
 the v0.2.0+ default production behavior is unchanged.
 
+## h=3 exploit sweep (TP × SL × threshold)
+
+The horizon-sweep finding ("AUC 0.5834 at h=3 but only 88 trades") begged
+the question: is the signal harvestable with better trade engineering?
+Tested 4 TP/SL combos × 4 entry thresholds (3 quantile modes + the legacy
+0.5 baseline). Quantile thresholds set so the strategy fires on the
+top-N% of bars by model confidence.
+
+Best combo: **TP=1.5·ATR, SL=1.0·ATR, top-quintile threshold** (entry at
+proba ≥ 0.402). Clears AUC gate at 0.5511 and produces a positive Sharpe
+0.370 over 1 529 trades, but the buy & hold benchmark stays at 1.149 →
+gate (AUC > 0.55 AND Sharpe > B&H AND trades ≥ 200) **not met, no
+promotion**.
+
+Symmetric barriers (1/1, 0.75/0.75) gave lower AUC (0.5067–0.5192) than
+the asymmetric ones (1.5/1.0 at 0.5511, 1.0/1.5 at 0.5209) — the model
+extracts more signal when the upper barrier is comfortably above the
+lower, which is consistent with the Phase 3 label sweep result that the
+asymmetric (2/1) labeling was the only one where LGBM extracted positive
+predictive value at all.
+
+Honest verdict on h=3: the signal **is** real and reproducible (AUC
+0.55–0.58 depending on the label geometry) but it doesn't scale into
+enough Sharpe to outrun a 15-year equity bull market in a long-only
+book. Better trade engineering moved Sharpe from ~0.08 to ~0.37 — a
+meaningful improvement, but the benchmark stays ~3× ahead.
+
+## Calendar-only baseline (turn-of-month, no ML)
+
+The Phase 6 importances showed the wider-universe model leaning heavily
+on macro + calendar features (~73 % of total). That raised an honest
+question: does a no-ML turn-of-month rule already capture most of the
+calendar effect?
+
+Rule: long during the last 3 + first 3 business days around each month
+boundary (≈ 29 % time-in-market), flat the rest of the year, with the
+same fee + slippage assumptions as the ML backtests. Equal-weight across
+the 10 mega-caps; benchmark is the same universe held 100 % of the time.
+
+| metric          | turn-of-month | buy & hold   | delta    |
+|-----------------|---------------|--------------|----------|
+| total return    | +164 %        | +3 029 %     | -2 865 % |
+| CAGR            | 6.1 %         | 23.4 %       | -17.3 %  |
+| ann vol         | 10.7 %        | 20.1 %       | -9.4 %   |
+| **Sharpe**      | **0.61**      | **1.15**     | -0.54    |
+| max drawdown    | -17.5 %       | -31.7 %      | +14.1 %  |
+
+Turn-of-month delivers Sharpe 0.61 by itself — **higher than the
+LightGBM baseline (~0.43) on the same universe**. The risk-adjusted
+return is real (lower vol, smaller drawdowns, half the time in the
+market), the absolute return is much smaller because the rule sits in
+cash 71 % of the year. Still doesn't beat the full-time-long B&H Sharpe
+(1.15), but the bar is lower.
+
+The honest read: most of the calendar "lift" the ML model picks up via
+``days_to_month_end`` and ``month_sin/cos`` was already capturable with
+a no-ML rule. The ML model isn't providing meaningful incremental
+information above this trivial seasonality on the mega-cap watchlist —
+they both fail to beat B&H, but the calendar rule does so with less
+machinery and slightly better Sharpe. Worth recording as a discipline
+test for any future model: it must clear the turn-of-month baseline,
+not just buy & hold.
+
 ## Open project (not started)
 
 After Phase 3 (OHLCV + macro), 5a (earnings surprises), 5b (news
-sentiment), and Phase 6 (universe expansion), every reasonable tabular +
-universe lever has been pulled without producing a tradable edge above
-buy & hold. The remaining candidate directions involve **changing the
-target itself**, not adding more features or names:
+sentiment), Phase 6 (universe expansion), and the h=3 exploit sweep,
+every reasonable tabular + universe lever has been pulled without
+producing a tradable edge above buy & hold (and the turn-of-month
+sanity check shows even a pure calendar rule matches the ML baseline).
+The remaining candidate directions involve **changing the target
+itself**, not adding more features or names:
 
 - Tune the entry threshold per horizon: at h=3 (AUC 0.58, see horizon
   sweep above) the strategy fires too few trades to accumulate alpha —
