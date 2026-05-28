@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from berich.datasets.assemble import build_dataset
-from berich.features.build import FEATURE_COLUMNS, build_features
+from berich.features.build import FEATURE_COLUMNS, MARKET_TICKER, build_features
 from berich.features.indicators import atr
 from berich.labeling.triple_barrier import LabelConfig
 from berich.models import LGBMModel, load_active
@@ -103,13 +103,14 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
     """Serve the promoted (or freshly trained) model and emit one signal per ticker."""
     label_cfg = LabelConfig(**config.labeling.model_dump())
     model = _resolve_model(store, config, label_cfg)
+    market = store.load(MARKET_TICKER)
 
     signals: list[Signal] = []
     for ticker in config.watchlist:
         df = store.load(ticker)
         if df is None or df.empty:
             continue
-        signal = _signal_for_ticker(ticker, df, model, config, label_cfg)
+        signal = _signal_for_ticker(ticker, df, model, config, label_cfg, market=market)
         if signal is not None:
             signals.append(signal)
     return signals
@@ -121,8 +122,10 @@ def _signal_for_ticker(
     model: Model,
     config: Config,
     label_cfg: LabelConfig,
+    *,
+    market: pd.DataFrame | None = None,
 ) -> Signal | None:
-    feats = build_features(df).dropna()
+    feats = build_features(df, market=market).dropna()
     if feats.empty:
         return None
     last_date = feats.index[-1]

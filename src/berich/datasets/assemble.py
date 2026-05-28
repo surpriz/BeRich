@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from berich.features.build import FEATURE_COLUMNS, build_features
+from berich.features.build import FEATURE_COLUMNS, MARKET_TICKER, build_features
 from berich.labeling.triple_barrier import LabelConfig, triple_barrier_labels
 
 if TYPE_CHECKING:
@@ -41,9 +41,10 @@ def build_ticker_dataset(
     label_config: LabelConfig,
     *,
     ticker: str,
+    market: pd.DataFrame | None = None,
 ) -> SupervisedDataset:
     """Build a supervised dataset for a single OHLCV frame."""
-    feats = build_features(df)
+    feats = build_features(df, market=market)
     labels = triple_barrier_labels(df, label_config)
 
     joined = feats.join(labels[["label", "sample_weight"]]).dropna()
@@ -65,10 +66,14 @@ def build_dataset(
     """Build a combined dataset across tickers, sorted by date then ticker.
 
     Tickers that are absent from the cache are skipped. The result is globally
-    date-sorted so walk-forward splits stay chronological across the panel.
+    date-sorted so walk-forward splits stay chronological across the panel. The
+    market-regime ticker (SPY) is loaded once and broadcast to every ticker — with a
+    one-bar lag enforced inside :func:`build_features` so cross-asset features can
+    never use information from the same calendar day.
     """
+    market = store.load(MARKET_TICKER)
     parts = [
-        build_ticker_dataset(df, label_config, ticker=t)
+        build_ticker_dataset(df, label_config, ticker=t, market=market)
         for t in tickers
         if (df := store.load(t)) is not None and not df.empty
     ]

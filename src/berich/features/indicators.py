@@ -83,3 +83,27 @@ def zscore(series: pd.Series, window: int = 20) -> pd.Series:
     mean = series.rolling(window, min_periods=window).mean()
     std = series.rolling(window, min_periods=window).std()
     return (series - mean) / std.replace(0.0, np.nan)
+
+
+def dist_to_rolling_high(close: pd.Series, high: pd.Series, window: int) -> pd.Series:
+    """Fractional gap between close and the trailing ``window``-bar rolling high.
+
+    Value is in (-1, 0]: 0 when today's close is itself the rolling high; negative
+    otherwise (a mean-reversion proxy for how far we've fallen from the recent peak).
+    """
+    roll_high = high.rolling(window, min_periods=window).max()
+    out = close / roll_high - 1.0
+    out.name = f"dist_high_{window}"
+    return out
+
+
+def dist_to_rolling_low(close: pd.Series, low: pd.Series, window: int) -> pd.Series:
+    """Fractional gap between close and the trailing ``window``-bar rolling low.
+
+    Value is in [0, +inf): 0 when today's close is itself the rolling low; positive
+    otherwise (a mean-reversion proxy for how far we've risen from the recent trough).
+    """
+    roll_low = low.rolling(window, min_periods=window).min()
+    out = close / roll_low - 1.0
+    out.name = f"dist_low_{window}"
+    return out
