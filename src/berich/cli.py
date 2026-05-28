@@ -11,22 +11,28 @@ import logging
 import sys
 
 from berich.config import DEFAULT_CONFIG_PATH, Config
-from berich.data import update_watchlist
+from berich.data import update_earnings, update_watchlist
 
 
 def _cmd_data(args: argparse.Namespace) -> int:
     config = Config.load(args.config)
     reports = update_watchlist(config)
     failed = [r for r in reports if not r.ok]
+    print(f"\n{len(reports)} tickers refreshed, {len(failed)} with warnings.")  # noqa: T201
+    if args.skip_earnings:
+        return 1 if failed else 0
+    earnings_reports = update_earnings(config)
+    earn_failed = [r for r in earnings_reports if not r.ok]
     print(  # noqa: T201
-        f"\n{len(reports)} tickers refreshed, {len(failed)} with warnings."
+        f"{len(earnings_reports)} earnings calendars refreshed, {len(earn_failed)} with warnings."
     )
-    return 1 if failed else 0
+    return 1 if (failed or earn_failed) else 0
 
 
 def _cmd_backtest(args: argparse.Namespace) -> int:
     # Imported lazily so `berich data` doesn't pay for lightgbm/sklearn import time.
     from berich.backtest import BacktestConfig, run_backtest
+    from berich.data import EarningsStore
     from berich.data.store import OhlcvStore
     from berich.datasets import build_dataset
     from berich.labeling.triple_barrier import LabelConfig
@@ -37,8 +43,12 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     store = OhlcvStore(config.ohlcv_dir)
     label_cfg = LabelConfig(**config.labeling.model_dump())
 
-    dataset = build_dataset(store, config.watchlist, label_cfg)
-    print(f"Dataset: {len(dataset)} samples, P(win)={dataset.y.mean():.3f}")  # noqa: T201
+    earnings_store = EarningsStore(config.earnings_dir) if args.with_earnings else None
+    dataset = build_dataset(store, config.watchlist, label_cfg, earnings_store=earnings_store)
+    feat_mode = "22 + earnings" if args.with_earnings else "22"
+    print(  # noqa: T201
+        f"Dataset: {len(dataset)} samples, P(win)={dataset.y.mean():.3f}, features={feat_mode}"
+    )
 
     oof = oof_predict(dataset, LGBMModel, embargo=label_cfg.horizon_days)
     print(f"Out-of-sample AUC: {oof.auc:.4f}")  # noqa: T201
@@ -189,9 +199,10 @@ def _cmd_schedule(args: argparse.Namespace) -> int:
 
 def _cmd_train(args: argparse.Namespace) -> int:
     from berich.backtest import BacktestConfig, run_backtest
+    from berich.data import EarningsStore
     from berich.data.store import OhlcvStore
     from berich.datasets import build_dataset
-    from berich.features.build import FEATURE_COLUMNS
+    from berich.features.build import feature_columns
     from berich.labeling.triple_barrier import LabelConfig
     from berich.models import LGBMModel, ModelMetadata, promote, save_model
     from berich.training import oof_predict
@@ -200,7 +211,8 @@ def _cmd_train(args: argparse.Namespace) -> int:
     store = OhlcvStore(config.ohlcv_dir)
     label_cfg = LabelConfig(**config.labeling.model_dump())
 
-    dataset = build_dataset(store, config.watchlist, label_cfg)
+    earnings_store = EarningsStore(config.earnings_dir) if args.with_earnings else None
+    dataset = build_dataset(store, config.watchlist, label_cfg, earnings_store=earnings_store)
     oof = oof_predict(dataset, LGBMModel, embargo=label_cfg.horizon_days)
     prices = {t: df for t in config.watchlist if (df := store.load(t)) is not None}
     result = run_backtest(prices, oof, BacktestConfig(entry_threshold=0.5))
@@ -210,7 +222,7 @@ def _cmd_train(args: argparse.Namespace) -> int:
     meta = ModelMetadata(
         name=args.name,
         framework="lightgbm",
-        feature_columns=FEATURE_COLUMNS,
+        feature_columns=feature_columns(earnings=args.with_earnings),
         metrics={
             "auc": oof.auc,
             "sharpe": result.strategy.sharpe,
@@ -273,7 +285,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_data = sub.add_parser("data", help="Refresh the OHLCV cache from yfinance")
+    p_data = sub.add_parser("data", help="Refresh OHLCV + earnings caches from yfinance")
+    p_data.add_argument(
+        "--skip-earnings",
+        action="store_true",
+        help="Skip the earnings-calendar refresh (Phase 5a). OHLCV only.",
+    )
     p_data.set_defaults(func=_cmd_data)
 
     p_bt = sub.add_parser("backtest", help="Walk-forward backtest of the LightGBM baseline")
@@ -282,6 +299,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.5,
         help="Min P(win) to enter a long (default: %(default)s)",
+    )
+    p_bt.add_argument(
+        "--with-earnings",
+        action="store_true",
+        help="Include the 6 earnings features (Phase 5a). Default off for parity"
+        " with the v0.1.0 baseline.",
     )
     p_bt.set_defaults(func=_cmd_backtest)
 
@@ -314,6 +337,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Promote even if it does not beat buy & hold",
+    )
+    p_train.add_argument(
+        "--with-earnings",
+        action="store_true",
+        help="Include the 6 earnings features. The artifact metadata records"
+        " the choice so serving stays in sync.",
     )
     p_train.set_defaults(func=_cmd_train)
 

@@ -21,6 +21,7 @@ rigorous walk-forward backtest before it is ever trusted.
 | 3 | Feature engineering + LSTM/MLflow + label sweep + cross-asset experiment | ✅ **closed — no edge found, see [docs/RESULTS.md](docs/RESULTS.md)** |
 | 4a | Paper-trading tracker (DuckDB-backed, daily roundtrip vs SPY) | ✅ done |
 | 4b | Production deployment: systemd + Caddy HTTPS + 24/7 dashboard | ✅ done — see [docs/DEPLOY.md](docs/DEPLOY.md) |
+| 5a | Earnings features (6 columns, yfinance) — code merged, no edge | ✅ done — AUC 0.5117 vs 0.5169 baseline, not promoted ([RESULTS](docs/RESULTS.md#phase-5a--earnings-features-free-data-no-gpu)) |
 
 v0.1.0 ships the data → features → label → walk-forward backtest → signal →
 sizing → drift → dashboard pipeline. The model produced does **not** beat
@@ -31,7 +32,8 @@ buy & hold; the registry refuses to promote it and the dashboard surfaces an
 
 ```bash
 uv sync --all-groups          # install deps
-uv run berich data            # refresh the OHLCV cache from yfinance
+uv run berich data            # refresh OHLCV + earnings caches from yfinance
+                              # (use --skip-earnings to refresh OHLCV only)
 uv run berich backtest        # walk-forward backtest of the LightGBM baseline
 uv run berich signals         # generate & persist today's signals + position sizing
 uv run berich drift           # feature-drift check (PSI + KS) vs the training era

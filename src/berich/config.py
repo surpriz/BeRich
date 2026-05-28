@@ -66,6 +66,11 @@ class Config(BaseModel):
         """Registry directory holding trained model artifacts + metadata."""
         return self.data_dir / "models"
 
+    @property
+    def earnings_dir(self) -> Path:
+        """Per-ticker earnings cache (Phase 5a). Empty by default until populated."""
+        return self.data_dir / "earnings"
+
     @classmethod
     def load(cls, path: Path | str = DEFAULT_CONFIG_PATH) -> Config:
         """Load and validate configuration from a YAML file."""

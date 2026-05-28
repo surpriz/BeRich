@@ -17,6 +17,10 @@ import numpy as np
 import pandas as pd
 
 from berich.features import indicators as ind
+from berich.features.earnings_features import (
+    EARNINGS_FEATURE_COLUMNS,
+    build_earnings_features,
+)
 
 # Ticker used as the broad-market regime proxy in the SPY features.
 MARKET_TICKER = "SPY"
@@ -70,6 +74,20 @@ FEATURE_COLUMNS: list[str] = [
 ]
 
 
+def feature_columns(*, earnings: bool = False) -> list[str]:
+    """Canonical ordered feature list.
+
+    Returns the 22-column base set; when ``earnings`` is True, appends the six
+    earnings-derived columns from :mod:`berich.features.earnings_features` in
+    the order they appear there. Callers (training, scaling, serving) must use
+    the same value of ``earnings`` end-to-end — the model registry remembers
+    which one was active for each artifact in its metadata.
+    """
+    if earnings:
+        return [*FEATURE_COLUMNS, *EARNINGS_FEATURE_COLUMNS]
+    return list(FEATURE_COLUMNS)
+
+
 def _calendar_features(index: pd.DatetimeIndex) -> pd.DataFrame:
     """Sinusoidal monthly encoding plus business days to month-end.
 
@@ -119,13 +137,21 @@ def build_features(
     df: pd.DataFrame,
     *,
     market: pd.DataFrame | None = None,
+    earnings: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Compute the canonical feature matrix from an OHLCV frame.
 
-    Returns a frame with exactly ``FEATURE_COLUMNS``, indexed like ``df``. Rows where
-    any feature is still warming up are left as NaN for the caller to drop. When
-    ``market`` is omitted the SPY regime columns are NaN, which the join+dropna
-    pipeline filters out before training.
+    Returns a frame indexed like ``df``. When ``earnings`` is omitted the
+    column set is the 22-column base (``FEATURE_COLUMNS``); when an earnings
+    frame is supplied the six earnings columns are appended in
+    ``EARNINGS_FEATURE_COLUMNS`` order. Passing an empty earnings frame is
+    explicitly supported and yields neutral defaults for those six columns
+    (so ETFs / indices with no announcements stay in the panel rather than
+    being silently dropped by ``dropna``).
+
+    Rows where any base feature is still warming up are left as NaN for the
+    caller to drop. When ``market`` is omitted the SPY regime columns are NaN
+    and those rows get filtered out at the join+dropna step.
     """
     close, high, low, volume = df["close"], df["high"], df["low"], df["volume"]
     feats = pd.DataFrame(index=df.index)
@@ -169,4 +195,8 @@ def build_features(
         feats["spy_ret_20"] = np.nan
         feats["spy_rvol_20"] = np.nan
 
-    return feats[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan)
+    base = feats[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan)
+    if earnings is None:
+        return base
+    earnings_feats = build_earnings_features(pd.DatetimeIndex(df.index), earnings)
+    return pd.concat([base, earnings_feats], axis=1)

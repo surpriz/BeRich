@@ -17,8 +17,14 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from berich.data.earnings import EarningsStore
 from berich.datasets.assemble import build_dataset
-from berich.features.build import FEATURE_COLUMNS, MARKET_TICKER, build_features
+from berich.features.build import (
+    MARKET_TICKER,
+    build_features,
+    feature_columns,
+)
+from berich.features.earnings_features import EARNINGS_FEATURE_COLUMNS
 from berich.features.indicators import atr
 from berich.labeling.triple_barrier import LabelConfig
 from berich.models import LGBMModel, load_active
@@ -75,44 +81,90 @@ def _size_position(entry: float, stop: float, config: Config) -> tuple[int, floa
     return shares, shares * entry
 
 
-def _train_model(store: OhlcvStore, config: Config, label_cfg: LabelConfig) -> Model:
-    dataset = build_dataset(store, config.watchlist, label_cfg)
+def _earnings_store_if_available(config: Config) -> EarningsStore | None:
+    """Return an EarningsStore iff the cache directory has at least one non-empty file.
+
+    Backward-compat with v0.1.0: if the user hasn't run ``berich data`` since
+    Phase 5a landed, the directory is missing or empty and we silently fall
+    back to the 22-feature mode used by every previously-trained model.
+    """
+    store = EarningsStore(config.earnings_dir)
+    return store if store.has_any_data() else None
+
+
+def _train_model(
+    store: OhlcvStore,
+    config: Config,
+    label_cfg: LabelConfig,
+    *,
+    earnings_store: EarningsStore | None,
+) -> Model:
+    dataset = build_dataset(store, config.watchlist, label_cfg, earnings_store=earnings_store)
     return LGBMModel().fit(dataset.x, dataset.y, sample_weight=dataset.weight)
 
 
-def _resolve_model(store: OhlcvStore, config: Config, label_cfg: LabelConfig) -> Model:
-    """Use the promoted registry model if one exists; otherwise train the baseline.
+def _resolve_model(
+    store: OhlcvStore,
+    config: Config,
+    label_cfg: LabelConfig,
+) -> tuple[Model, bool]:
+    """Return ``(model, with_earnings)`` — what to serve + whether it needs earnings.
 
-    This is the GPU handoff point: once an LSTM/TFT artifact is trained, saved, and
-    promoted on the GPU box and synced here, serving picks it up automatically with no
-    code change. Until then we fall back to training the LightGBM baseline inline.
+    Decision tree:
+      - promoted model in the registry → trust its ``feature_columns`` to know
+        whether it was trained with earnings, use it as-is.
+      - no promoted model → train a fresh LightGBM inline. Use earnings only
+        if the local cache actually contains data (v0.1.0 boxes that never
+        ran the new ``berich data`` get the 22-feature fallback for free).
     """
     active = load_active(config.models_dir)
     if active is not None:
         model, meta = active
-        if meta.feature_columns != FEATURE_COLUMNS:
+        meta_has_earnings = all(c in meta.feature_columns for c in EARNINGS_FEATURE_COLUMNS)
+        expected = feature_columns(earnings=meta_has_earnings)
+        if meta.feature_columns != expected:
             logger.warning(
                 "active model '%s' feature columns differ from current; retraining baseline",
                 meta.name,
             )
         else:
-            logger.info("serving promoted model '%s' (%s)", meta.name, meta.framework)
-            return model
-    return _train_model(store, config, label_cfg)
+            logger.info(
+                "serving promoted model '%s' (%s, earnings=%s)",
+                meta.name,
+                meta.framework,
+                meta_has_earnings,
+            )
+            return model, meta_has_earnings
+
+    earnings_store = _earnings_store_if_available(config)
+    with_earnings = earnings_store is not None
+    model = _train_model(store, config, label_cfg, earnings_store=earnings_store)
+    return model, with_earnings
 
 
 def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
     """Serve the promoted (or freshly trained) model and emit one signal per ticker."""
     label_cfg = LabelConfig(**config.labeling.model_dump())
-    model = _resolve_model(store, config, label_cfg)
+    model, with_earnings = _resolve_model(store, config, label_cfg)
     market = store.load(MARKET_TICKER)
+    earnings_store = _earnings_store_if_available(config) if with_earnings else None
 
     signals: list[Signal] = []
     for ticker in config.watchlist:
         df = store.load(ticker)
         if df is None or df.empty:
             continue
-        signal = _signal_for_ticker(ticker, df, model, config, label_cfg, market=market)
+        earnings_df = earnings_store.load(ticker) if earnings_store is not None else None
+        signal = _signal_for_ticker(
+            ticker,
+            df,
+            model,
+            config,
+            label_cfg,
+            market=market,
+            earnings=earnings_df,
+            with_earnings=with_earnings,
+        )
         if signal is not None:
             signals.append(signal)
     return signals
@@ -126,12 +178,21 @@ def _signal_for_ticker(
     label_cfg: LabelConfig,
     *,
     market: pd.DataFrame | None = None,
+    earnings: pd.DataFrame | None = None,
+    with_earnings: bool = False,
 ) -> Signal | None:
-    feats = build_features(df, market=market).dropna()
+    # When ``with_earnings`` is True we always pass an earnings frame (an empty
+    # one falls back to neutral defaults inside build_earnings_features), so the
+    # column shape stays consistent across all tickers in the same call.
+    earnings_arg = earnings if with_earnings else None
+    if with_earnings and earnings_arg is None:
+        earnings_arg = pd.DataFrame()
+    feats = build_features(df, market=market, earnings=earnings_arg).dropna()
     if feats.empty:
         return None
     last_date = feats.index[-1]
-    x = feats.loc[[last_date], FEATURE_COLUMNS]
+    cols = feature_columns(earnings=with_earnings)
+    x = feats.loc[[last_date], cols]
     proba = float(model.predict_proba(x)[0])
 
     a = float(atr(df["high"], df["low"], df["close"], label_cfg.atr_window).loc[last_date])

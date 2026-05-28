@@ -15,10 +15,15 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from berich.features.build import FEATURE_COLUMNS, MARKET_TICKER, build_features
+from berich.features.build import (
+    MARKET_TICKER,
+    build_features,
+    feature_columns,
+)
 from berich.labeling.triple_barrier import LabelConfig, triple_barrier_labels
 
 if TYPE_CHECKING:
+    from berich.data.earnings import EarningsStore
     from berich.data.store import OhlcvStore
 
 
@@ -42,15 +47,17 @@ def build_ticker_dataset(
     *,
     ticker: str,
     market: pd.DataFrame | None = None,
+    earnings: pd.DataFrame | None = None,
 ) -> SupervisedDataset:
     """Build a supervised dataset for a single OHLCV frame."""
-    feats = build_features(df, market=market)
+    feats = build_features(df, market=market, earnings=earnings)
     labels = triple_barrier_labels(df, label_config)
 
     joined = feats.join(labels[["label", "sample_weight"]]).dropna()
     y = (joined["label"] == 1).astype(int)
+    cols = feature_columns(earnings=earnings is not None)
     return SupervisedDataset(
-        x=joined[FEATURE_COLUMNS],
+        x=joined[cols],
         y=y,
         weight=joined["sample_weight"],
         dates=pd.DatetimeIndex(joined.index),
@@ -62,25 +69,49 @@ def build_dataset(
     store: OhlcvStore,
     tickers: list[str],
     label_config: LabelConfig,
+    *,
+    earnings_store: EarningsStore | None = None,
 ) -> SupervisedDataset:
     """Build a combined dataset across tickers, sorted by date then ticker.
 
     Tickers that are absent from the cache are skipped. The result is globally
-    date-sorted so walk-forward splits stay chronological across the panel. The
-    market-regime ticker (SPY) is loaded once and broadcast to every ticker — with a
-    one-bar lag enforced inside :func:`build_features` so cross-asset features can
-    never use information from the same calendar day.
+    date-sorted so walk-forward splits stay chronological across the panel.
+    The market-regime ticker (SPY) is loaded once and broadcast to every
+    ticker — with a one-bar lag enforced inside :func:`build_features` so
+    cross-asset features can never use information from the same calendar day.
+
+    When ``earnings_store`` is supplied, the six earnings features are
+    appended for every ticker (neutral defaults for tickers without an
+    earnings track such as SPY). The model registry's metadata captures
+    which mode was used so serving stays in sync at load time.
     """
     market = store.load(MARKET_TICKER)
+    use_earnings = earnings_store is not None
+
+    def _earnings_for(ticker: str) -> pd.DataFrame | None:
+        # Always pass a frame when earnings mode is on (even an empty one) so the
+        # column shape stays uniform across tickers — neutral defaults handle the
+        # missing-cache case inside build_earnings_features.
+        if earnings_store is None:
+            return None
+        loaded = earnings_store.load(ticker)
+        return loaded if loaded is not None else pd.DataFrame()
+
     parts = [
-        build_ticker_dataset(df, label_config, ticker=t, market=market)
+        build_ticker_dataset(
+            df,
+            label_config,
+            ticker=t,
+            market=market,
+            earnings=_earnings_for(t) if use_earnings else None,
+        )
         for t in tickers
         if (df := store.load(t)) is not None and not df.empty
     ]
     if not parts:
         empty_idx = pd.DatetimeIndex([])
         return SupervisedDataset(
-            x=pd.DataFrame(columns=pd.Index(FEATURE_COLUMNS)),
+            x=pd.DataFrame(columns=pd.Index(feature_columns(earnings=use_earnings))),
             y=pd.Series(dtype=int),
             weight=pd.Series(dtype=float),
             dates=empty_idx,

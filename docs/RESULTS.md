@@ -142,15 +142,70 @@ cross-asset track requires a new data-source rationale (see CLAUDE.md
   "advisory only — model does not beat buy & hold" banner; the registry
   refuses to promote a sub-buy-hold model; no edge is claimed.
 
+## Phase 5a — earnings features (free data, no GPU)
+
+The hypothesis: earnings surprises are exogenous information not encoded in
+price or macro context, so they might lift the single-name signal. Six
+features were added behind a `--with-earnings` flag (default off):
+`days_to_next_earnings`, `days_since_last_earnings`, `last_surprise_pct`,
+`surprise_4q_mean`, `pre_earnings_window`, `post_earnings_window`. Data comes
+from `yfinance.Ticker(...).earnings_dates` and is cached under
+`data/earnings/*.parquet`. Coverage is ~6 years (~25 quarters per stock);
+ETFs and indices return empty — the feature builder substitutes neutral
+defaults so SPY survives the join.
+
+**Result on the same 10-ticker watchlist (LightGBM, walk-forward OOS):**
+
+| feature set         | AUC    | Sharpe | B&H Sharpe |
+|---------------------|--------|--------|------------|
+| 22 (baseline)       | 0.5169 | 0.432  | 1.149      |
+| 22 + 6 earnings     | 0.5117 | 0.399  | 1.149      |
+
+Both AUC and Sharpe regress slightly. Promote threshold (AUC > 0.54 AND
+Sharpe > buy & hold) is not met by a wide margin; no model was promoted.
+The Phase 5a code is merged behind the `--with-earnings` flag so future
+experiments can flip it without re-implementing the plumbing.
+
+Importance ranking (top 10, 28-feature model) is informative:
+
+```
+spy_rvol_20             10.31 %
+spy_ret_20               6.42 %
+mom_120                  5.62 %
+atr_pct                  4.75 %
+month_cos                4.72 %
+dist_low_60              4.45 %
+days_to_month_end        4.43 %
+month_sin                4.33 %
+last_surprise_pct        4.33 %  ← earnings
+rvol_20                  4.24 %
+```
+
+`last_surprise_pct` (rank 9, 4.33 %) and `surprise_4q_mean` (rank 13, 3.92 %)
+are non-trivially used by the model — they carry real predictive content —
+yet the net effect on AUC/Sharpe is mildly negative. Same pattern as the
+cross-asset macro features in Phase 3: the model uses them, but the
+information doesn't translate into a tradeable single-name probability at
+the 10-day horizon. The pre/post-earnings binary windows are dead weight
+(0.00 % importance — too sparse to learn from).
+
+The honest read: earnings surprises *are* informative at the price-reaction
+scale (which is well documented), but our triple-barrier, daily, single-name
+target captures the wrong part of that information for a tradable edge.
+Same verdict shape as Phase 3 — different data, same conclusion. Moving on
+to Phase 5b (news/sentiment via FinBERT) is the next plausible probe; the
+earnings feature plumbing stays in the repo for any future model that wants
+to use it without re-implementing it.
+
 ## Open project (not started)
 
-The next plausible source of lift is **exogenous information** — data the
-price/volume panel and macro context don't contain:
+The next plausible source of lift is **qualitatively different** exogenous
+information — text rather than tabular:
 
 - News sentiment via FinBERT on per-ticker headlines.
-- Earnings surprises (consensus vs. actual, drift around the print).
+- Earnings *transcripts* (not just surprises) — language signal around the
+  call vs the dry beat/miss number.
 - Sector flows / 13F changes / insider filings.
 
-This is a separate project, not a quick follow-up. The freeze of v0.1.0 is
-intended to keep the existing infrastructure stable while that work is
-scoped properly.
+These are larger projects than the OHLCV/macro/earnings tabular features
+explored so far. They live in Phase 5b+ and are not started.
