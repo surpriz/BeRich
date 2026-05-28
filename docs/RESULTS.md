@@ -266,19 +266,64 @@ FinBERT pipeline + GPU scoring + scheduler integration are in place so a
 future attempt with a different label (intraday? per-event reaction
 window?) can reuse all of it.
 
+## Horizon sweep (v0.2.0 follow-up)
+
+Every result above used the default horizon `h=10`. The Phase 3 label
+sweep tested 10 vs 20 with different TP/SL ratios but never shorter
+horizons. Holding TP/SL at 2/1·ATR and the 22-feature baseline constant,
+we ran h ∈ {3, 5, 7, 10}:
+
+| h  | samples | P(win) | AUC    | Sharpe | B&H Sharpe | trades | beats |
+|----|---------|--------|--------|--------|------------|--------|-------|
+| 3  | 39421   | 0.101  | **0.5834** | 0.087  | 1.149      | 88     | False |
+| 5  | 39401   | 0.195  | **0.5576** | 0.387  | 1.149      | 482    | False |
+| 7  | 39381   | 0.261  | 0.5358 | 0.348  | 1.149      | 1135   | False |
+| 10 | 39351   | 0.325  | 0.5153 | 0.398  | 1.149      | 1710   | False |
+
+**AUC drops monotonically as the horizon lengthens** — at h=3 the model
+scores 0.5834, a level we never saw across any feature-engineering
+experiment, including news sentiment. The signal is real and the shorter
+window makes it visible: there's less noise to confuse the classifier.
+Two horizons (h=3, h=5) clear the AUC promote bar (0.54).
+
+So why didn't we promote? **Sharpe never beats buy & hold** at any
+horizon. At h=3 the model only fires 88 trades over ~15 years of data
+(P(win)=10%, very few setups clear threshold 0.5), so even good
+predictions don't accumulate to enough alpha; at h=5 we get 482 trades
+but Sharpe still tops out at 0.387 vs B&H's 1.149. The model
+**knows something** at short horizons but the long-only triple-barrier
+construct doesn't convert that knowledge into spread above passive equity.
+
+This is the most informative single result in the project to date: it
+splits the previous "no edge anywhere" verdict into "no *tradable*
+edge under this target shape, but the underlying directional signal at
+3–5 day horizons is non-trivial". The next probe is naturally to change
+the target itself — either lower the entry threshold to harvest more h=3
+opportunities (and re-test the trade frequency / cost trade-off), or
+move to per-event labels where the model's short-horizon edge could
+translate into a different P&L mechanism.
+
 ## Open project (not started)
 
 After Phase 3 (OHLCV + macro), 5a (earnings surprises) and 5b (news
 sentiment), the daily / single-name / 10-day-triple-barrier target has
-absorbed every reasonable exogenous tabular signal without lifting AUC
-past 0.51. The remaining candidate directions involve **changing the
-target**, not adding more features:
+absorbed every reasonable exogenous tabular signal without lifting Sharpe
+above buy & hold. The remaining candidate directions involve **changing the
+target or the universe**, not adding more features:
 
+- Tune the entry threshold per horizon: at h=3 the strategy fires too few
+  trades to accumulate alpha — try threshold 0.4 / 0.45 / 0.5 and see if
+  the AUC 0.58 model is harvestable with looser selection.
 - Per-event labels (post-earnings drift, news-burst reaction window)
   instead of the calendar-bar triple-barrier.
 - Intraday horizons (1-hour, 4-hour) where sentiment may matter more.
 - Meta-labeling (Lopez de Prado): a tiny primary detector + an ML
   secondary that predicts the primary's reliability for sizing.
+- **Wider universe** (Phase 6): mega-caps are the most efficient
+  benchmark; small/mid caps have less analyst coverage and more
+  documented anomalies. Running the same model on the S&P 600 / S&P 400
+  universe with a realistic volume-proportional slippage model is the
+  cleanest "is the edge elsewhere?" test we haven't yet attempted.
 
 None are started. The current v0.1.0+ infrastructure (data, features,
 backtest, registry, paper book, production deployment) is the platform
