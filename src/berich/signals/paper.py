@@ -89,6 +89,15 @@ CREATE TABLE IF NOT EXISTS paper_trades (
 );
 """
 
+# Phase 7 — add the ``source`` column on existing tables. DuckDB's
+# ``ADD COLUMN IF NOT EXISTS`` is a safe no-op on freshly-created tables and
+# only fires the actual ALTER on tables that pre-date this migration. The
+# default keeps the daily-LGBM book unaffected; PEAD signals will write
+# ``'pead'`` so the two strategies can be tracked separately.
+_MIGRATION_SOURCE_COLUMN = (
+    "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS source VARCHAR DEFAULT 'daily_lgbm';"
+)
+
 _TRADE_COLUMNS = (
     "date_open",
     "ticker",
@@ -151,6 +160,7 @@ class PaperStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as con:
             con.execute(_SCHEMA)
+            con.execute(_MIGRATION_SOURCE_COLUMN)
 
     def _connect(self) -> duckdb.DuckDBPyConnection:
         return duckdb.connect(str(self.db_path))

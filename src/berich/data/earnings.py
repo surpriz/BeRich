@@ -138,16 +138,26 @@ def fetch_earnings(ticker: str) -> pd.DataFrame:
     return out[~out.index.duplicated(keep="last")].sort_index()
 
 
-def update_earnings(config: Config) -> list[EarningsReport]:
-    """Refresh earnings for every watchlist ticker. Idempotent: re-running is a no-op.
+def update_earnings(
+    config: Config,
+    tickers: list[str] | None = None,
+) -> list[EarningsReport]:
+    """Refresh earnings for ``tickers`` (defaults to the watchlist).
 
-    Tickers that return zero rows (ETFs, indices) are still cached as an empty
-    file so the next call doesn't re-fetch. Network errors are caught per ticker
-    so one bad symbol doesn't kill the batch.
+    Idempotent: re-running is a no-op for tickers already cached today.
+    Tickers that return zero rows (ETFs, indices) are still cached as an
+    empty file so the next call doesn't re-fetch. Network errors are caught
+    per ticker so one bad symbol doesn't kill the batch.
+
+    Passing a wider list (e.g. ``config.tickers_for_universe("all")``)
+    lets the Phase 7 PEAD dataset cover small/mid caps — yfinance's
+    earnings_dates endpoint isn't rate-limited the way AV news is, so a
+    few hundred sequential requests is fine here.
     """
     store = EarningsStore(config.earnings_dir)
+    target = tickers if tickers is not None else config.watchlist
     reports: list[EarningsReport] = []
-    for ticker in config.watchlist:
+    for ticker in target:
         report = _update_one(ticker, store)
         reports.append(report)
         level = logging.WARNING if report.warnings else logging.INFO
@@ -164,7 +174,7 @@ def update_earnings(config: Config) -> list[EarningsReport]:
 def _update_one(ticker: str, store: EarningsStore) -> EarningsReport:
     try:
         fresh = fetch_earnings(ticker)
-    except (OSError, ValueError, RuntimeError) as exc:
+    except Exception as exc:  # noqa: BLE001 — yfinance throws a zoo of unrelated types
         return EarningsReport(ticker=ticker, warnings=[f"fetch failed: {exc.__class__.__name__}"])
     store.save(ticker, fresh)
     merged = store.load(ticker)

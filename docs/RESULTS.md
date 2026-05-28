@@ -428,15 +428,107 @@ machinery and slightly better Sharpe. Worth recording as a discipline
 test for any future model: it must clear the turn-of-month baseline,
 not just buy & hold.
 
+## Phase 7 — PEAD (Post-Earnings Announcement Drift)
+
+The most documented anomaly in the academic finance literature: stocks
+that beat (miss) earnings expectations tend to drift up (down) for
+several days after the announcement. Bernard & Thomas (1989) and
+follow-up work make it the canonical "event-driven" effect. v0.2.0 had
+exhausted the "predict every day" approach; this is the "predict
+specific events" experiment.
+
+**Implementation:**
+- New event-level labelling (``src/berich/labeling/pead.py``): one row per
+  (ticker, earnings announcement) instead of one per trading day. Entry
+  date = first trading day strictly after the announcement (after-close
+  convention). Forward returns over 5 and 20 trading days. Binary labels:
+  ``drift_5d`` = 1 iff fwd 5d return > 2%; ``drift_20d`` = 1 iff > 5%.
+- Event-level features (``src/berich/features/pead_features.py``): 11
+  features computed strictly at the event date (no leakage from the
+  forward window). Mix of earnings-specific (surprise_pct, surprise_4q_mean,
+  days_since_last_earnings), pre-event price action
+  (pre_announce_run_5d, pre_announce_vol_20d, pre_rsi_14), macro
+  regime (market_regime_spy_rvol, sector_relative_5d), size proxy
+  (log_volume_median), and news (news_count_pre_5d, sentiment_mean_pre_5d).
+- Event-driven backtest: long the predicted-positive events at the
+  entry-day **open** (with 10 bps slippage to model after-hours fills),
+  exit at the close ``hold_days`` later (5 bps slippage). Standard fees.
+  Benchmark = same (ticker, entry → exit) windows held long with no
+  signal filter — i.e. "what if you blindly long every earnings window".
+- Walk-forward chronological at the event grain, 5 folds, min 500 train events.
+
+**Data:** earnings calendar fetched via yfinance for all 274 tickers
+(mega + mid + small caps), ~6 800 cached announcements total. After
+windowing (need 20 forward bars) and filtering to tickers with valid
+OHLCV: **6 066 PEAD events** spanning 2010-01 to 2026-04. P(drift_5d) = 0.362.
+
+**Result on the full universe:**
+
+| metric                  | value     |
+|-------------------------|-----------|
+| events                  | 6 066     |
+| OOS AUC                 | **0.5346** |
+| n trades (threshold 0.5)| 1 174     |
+| strategy Sharpe         | **0.849** |
+| window-B&H Sharpe       | **1.013** |
+| beats window B&H        | False     |
+| strategy total return   | +737 %    |
+| strategy max DD         | -78.7 %   |
+
+Promote gate (AUC > 0.55 AND Sharpe > window B&H AND events >= 1000)
+**not met** — AUC fell just shy of 0.55, Sharpe is below the
+no-signal-filter window benchmark. No promotion.
+
+Two readings of this:
+
+1. **PEAD is the best AUC any model has produced on a sizable sample
+   in this project** (0.5346 over 6 066 events vs ~0.51 on every
+   daily-bar attempt). The directional signal exists at the event
+   grain — substantially more than at the daily grain.
+
+2. **It still doesn't beat blindly long every earnings window.** The
+   benchmark — hold the stock from the day after each announcement to
+   5 days later, every single event — earns Sharpe 1.013 in this
+   sample. The model's filter (predict-positive → take the trade)
+   raises trade-level AUC but lowers per-period Sharpe vs the
+   "always-on" event exposure. Consistent with the literature finding
+   that PEAD has decayed since the 2000s as the effect became widely
+   known and traded out.
+
+Top-10 PEAD feature importances:
+
+```
+market_regime_spy_rvol  20.43 %
+surprise_pct            14.01 %
+log_volume_median       13.31 %
+pre_announce_vol_20d    12.74 %
+surprise_4q_mean        12.31 %
+pre_rsi_14              12.04 %
+pre_announce_run_5d     11.57 %
+days_since_last_earnings 3.09 %
+sector_relative_5d       0.21 %
+sentiment_mean_pre_5d    0.18 %
+news_count_pre_5d        ...
+```
+
+The earnings-specific signals **are used** (surprise + 4q mean +
+days-since together = ~30 % of importance) but the macro-regime feature
+still leads the ranking — same pattern as Phases 5–6. News features
+(sentiment + count) add nothing at the event grain either — they were
+worth less than 0.5 % combined, mirroring Phase 5b's verdict.
+
+The PEAD code stays merged behind ``berich pead {train|backtest}`` and
+the paper-trade store now carries a ``source`` column so a future PEAD
+promotion would track separately from the daily-LGBM book. Production
+serving is unchanged.
+
 ## Open project (not started)
 
 After Phase 3 (OHLCV + macro), 5a (earnings surprises), 5b (news
-sentiment), Phase 6 (universe expansion), and the h=3 exploit sweep,
-every reasonable tabular + universe lever has been pulled without
-producing a tradable edge above buy & hold (and the turn-of-month
-sanity check shows even a pure calendar rule matches the ML baseline).
-The remaining candidate directions involve **changing the target
-itself**, not adding more features or names:
+sentiment), Phase 6 (universe expansion), the h=3 exploit sweep, the
+calendar-only sanity check, and Phase 7 PEAD, the project has pulled
+every reasonable lever short of changing the very nature of the
+strategy. The remaining candidate directions:
 
 - Tune the entry threshold per horizon: at h=3 (AUC 0.58, see horizon
   sweep above) the strategy fires too few trades to accumulate alpha —

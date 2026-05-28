@@ -115,21 +115,13 @@ def main(argv: list[str] | None = None) -> int:
         else 0.0
     )
 
-    print(
-        f"\nTurn-of-month strategy (J-{args.window} to J+{args.window}), 10 mega-caps:"
-    )
-    print(
-        f"  window time-in-market: {held_fraction * 100:.1f}% of trading days"
-    )
-    print(
-        f"  {'metric':<18}{'strategy':>12}{'buy & hold':>12}{'delta':>10}"
-    )
+    print(f"\nTurn-of-month strategy (J-{args.window} to J+{args.window}), 10 mega-caps:")
+    print(f"  window time-in-market: {held_fraction * 100:.1f}% of trading days")
+    print(f"  {'metric':<18}{'strategy':>12}{'buy & hold':>12}{'delta':>10}")
     for key in strat_metrics.as_dict():
         s = strat_metrics.as_dict()[key]
         b = bench_metrics.as_dict()[key]
-        print(
-            f"  {key:<18}{s:>12.4f}{b:>12.4f}{s - b:>10.4f}"
-        )
+        print(f"  {key:<18}{s:>12.4f}{b:>12.4f}{s - b:>10.4f}")
     beats = strat_metrics.sharpe > bench_metrics.sharpe
     verdict = "BEATS" if beats else "does NOT beat"
     print(f"\nTurn-of-month {verdict} buy & hold on Sharpe.")

@@ -203,6 +203,93 @@ def _cmd_news(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_pead(args: argparse.Namespace) -> int:
+    """Event-level PEAD training / backtest dispatcher.
+
+    ``train`` and ``backtest`` differ only in whether a passing promote gate
+    actually writes to the registry — backtest is read-only and useful for
+    quick parameter sweeps without risking accidental promotion.
+    """
+    import numpy as np
+
+    from berich.data import EarningsStore, NewsStore
+    from berich.data.store import OhlcvStore
+    from berich.datasets.pead import build_pead_dataset
+    from berich.features.pead_features import PEAD_FEATURE_COLUMNS
+    from berich.models import LGBMModel, ModelMetadata, promote, save_model
+    from berich.training.pead import oof_predict_pead, run_pead_backtest
+
+    config = Config.load(args.config)
+    store = OhlcvStore(config.ohlcv_dir)
+    earnings_store = EarningsStore(config.earnings_dir)
+    news_store = NewsStore(config.news_dir)
+    news_arg = news_store if news_store.has_any_data() else None
+
+    tickers = config.tickers_for_universe(args.universe)
+    print(  # noqa: T201
+        f"PEAD universe={args.universe} tickers={len(tickers)} label={args.label_horizon}"
+    )
+    dataset = build_pead_dataset(
+        store, earnings_store, tickers, news_store=news_arg, label_horizon=args.label_horizon
+    )
+    if not len(dataset):
+        print("No PEAD events; run `berich data --universe ... ` then refetch earnings.")  # noqa: T201
+        return 1
+    print(f"  events={len(dataset)} P(drift)={dataset.y.mean():.3f}")  # noqa: T201
+
+    oof = oof_predict_pead(dataset, LGBMModel, n_folds=5, min_train=500)
+    bt = run_pead_backtest(dataset, oof, store, threshold=args.threshold)
+    print(  # noqa: T201
+        f"  OOS AUC={oof.auc:.4f}  Sharpe={bt.strategy.sharpe:.3f}  "
+        f"vs window B&H={bt.benchmark.sharpe:.3f}  trades={bt.strategy.n_trades:.0f}"
+    )
+    final = LGBMModel().fit(dataset.x, dataset.y)
+    imp = np.asarray(final.feature_importances_, dtype=float)
+    order = np.argsort(imp)[::-1][:5]
+    print(  # noqa: T201
+        "  top features: "
+        + ", ".join(f"{PEAD_FEATURE_COLUMNS[i]}={imp[i] / imp.sum() * 100:.1f}%" for i in order)
+    )
+
+    if args.action == "backtest":
+        return 0
+
+    gate_pass = (
+        oof.auc > PROMOTE_MIN_AUC and bt.beats_buy_hold and len(dataset) >= PROMOTE_MIN_EVENTS_PEAD
+    )
+    print(  # noqa: T201
+        f"  Gate (AUC > {PROMOTE_MIN_AUC} AND Sharpe > window B&H AND events"
+        f" >= {PROMOTE_MIN_EVENTS_PEAD}): {gate_pass}"
+    )
+    if not gate_pass:
+        print("  No promotion.")  # noqa: T201
+        return 0
+
+    meta = ModelMetadata(
+        name=args.name,
+        framework="lightgbm",
+        feature_columns=list(PEAD_FEATURE_COLUMNS),
+        metrics={
+            "auc": oof.auc,
+            "sharpe": bt.strategy.sharpe,
+            "benchmark_sharpe": bt.benchmark.sharpe,
+        },
+        beats_buy_hold=bt.beats_buy_hold,
+        notes=f"pead label={args.label_horizon} universe={args.universe}",
+    )
+    save_model(final, meta, registry_dir=config.models_dir)
+    try:
+        promote(args.name, registry_dir=config.models_dir, force=False)
+        print(f"  Promoted '{args.name}'.")  # noqa: T201
+    except ValueError as exc:
+        print(f"  Saved '{args.name}' but registry blocked promotion: {exc}")  # noqa: T201
+    return 0
+
+
+PROMOTE_MIN_AUC = 0.55
+PROMOTE_MIN_EVENTS_PEAD = 1000
+
+
 def _cmd_paper(args: argparse.Namespace) -> int:
     from berich.data.store import OhlcvStore
     from berich.signals import (
@@ -466,6 +553,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_drift = sub.add_parser("drift", help="Check feature drift vs the training era")
     p_drift.set_defaults(func=_cmd_drift)
+
+    p_pead = sub.add_parser("pead", help="Event-driven Post-Earnings Drift model (Phase 7)")
+    p_pead.add_argument(
+        "action",
+        choices=["train", "backtest"],
+        help="train = walk-forward + promote-gated train; backtest = OOS + report only.",
+    )
+    p_pead.add_argument(
+        "--universe",
+        choices=["mega", "mid", "small", "all"],
+        default="all",
+    )
+    p_pead.add_argument("--label-horizon", choices=["5d", "20d"], default="5d")
+    p_pead.add_argument("--threshold", type=float, default=0.5)
+    p_pead.add_argument("--name", default="pead-lgbm")
+    p_pead.set_defaults(func=_cmd_pead)
 
     p_paper = sub.add_parser("paper", help="Paper-trading tracker (no real money)")
     p_paper.add_argument(
