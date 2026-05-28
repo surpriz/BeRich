@@ -26,11 +26,12 @@ dependencies = [
 berich = "berich.cli:main"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/berich"]
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["berich*"]
 
 [tool.ruff]
 line-length = 100
