@@ -614,7 +614,7 @@ def _cmd_train(args: argparse.Namespace) -> int:
         },
         beats_buy_hold=result.beats_buy_hold,
     )
-    save_model(model, meta, registry_dir=config.models_dir)
+    artifact_dir = save_model(model, meta, registry_dir=config.models_dir)
     print(  # noqa: T201
         f"Saved '{args.name}': AUC={oof.auc:.4f}, "
         f"Sharpe={result.strategy.sharpe:.3f} vs {result.benchmark.sharpe:.3f}, "
@@ -625,6 +625,35 @@ def _cmd_train(args: argparse.Namespace) -> int:
         print(f"Promoted '{args.name}' as the active serving model.")  # noqa: T201
     except ValueError as exc:
         print(f"Not promoted: {exc}")  # noqa: T201
+
+    if args.calibrate:
+        from berich.signals.calibration import fit_calibrator, save_calibrator
+
+        calibrator = fit_calibrator(
+            oof.frame["proba"].to_numpy(), oof.frame["y_true"].to_numpy(), method="isotonic"
+        )
+        save_calibrator(calibrator, artifact_dir=artifact_dir)
+        print(f"Saved isotonic calibrator next to '{args.name}'.")  # noqa: T201
+
+    if args.with_meta:
+        from berich.training.meta import build_meta_dataset, train_meta_model
+
+        meta_ds = build_meta_dataset(dataset, oof, buy_threshold=config.signals.buy_threshold)
+        if len(meta_ds) < 50:  # noqa: PLR2004
+            print(f"Meta-label skipped: only {len(meta_ds)} BUY candidates (need >= 50).")  # noqa: T201
+            return 0
+        meta_model, meta_auc = train_meta_model(meta_ds)
+        meta_dir = config.models_dir_for("meta")
+        meta_meta = ModelMetadata(
+            name=args.name,
+            framework="meta-lightgbm",
+            feature_columns=list(meta_ds.x.columns),
+            metrics={"meta_auc": meta_auc, "n_candidates": float(len(meta_ds))},
+            notes="meta-labeling precision filter (set signals.use_meta_label=true to activate)",
+        )
+        save_model(meta_model, meta_meta, registry_dir=meta_dir)
+        promote(args.name, registry_dir=meta_dir, force=True)  # filter, not a standalone strategy
+        print(f"Saved + activated meta-labeler '{args.name}' (in-sample AUC={meta_auc:.4f}).")  # noqa: T201
     return 0
 
 
@@ -833,6 +862,16 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subcomm
         "--with-news",
         action="store_true",
         help="Include the 7 news/sentiment features (Phase 5b).",
+    )
+    p_train.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="Fit an isotonic probability calibrator from the OOF and save it with the artifact.",
+    )
+    p_train.add_argument(
+        "--with-meta",
+        action="store_true",
+        help="Train + activate a meta-labeling precision filter (set signals.use_meta_label).",
     )
     p_train.set_defaults(func=_cmd_train)
 
