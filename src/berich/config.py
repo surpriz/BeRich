@@ -84,7 +84,8 @@ class ZooConfig(BaseModel):
 
     enabled_models: list[str] = Field(default_factory=lambda: ["lgbm", "patchtst"])
     gpu_ids: list[int] | None = None  # None = all visible GPUs
-    hpo_trials: int = 20
+    hpo_trials: int = 20  # weekend (deep) search
+    nightly_hpo_trials: int = 6  # light nightly search that accumulates into the same study
 
 
 UNIVERSE_NAMES = ("mega", "mid", "small", "all")

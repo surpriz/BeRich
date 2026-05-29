@@ -16,6 +16,7 @@ from berich.scheduler.jobs import (
     check_drift_job,
     daily_paper_job,
     longshort_signals_job,
+    nightly_hpo_job,
     refresh_universe_job,
     retrain_asset_models_job,
     retrain_zoo_job,
@@ -48,6 +49,17 @@ def build_scheduler(config: Config) -> BlockingScheduler:
         CronTrigger(day_of_week="mon-fri", hour=22, minute=45, timezone="Europe/Paris"),
         args=[config],
         id="refresh_universe",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # Light nightly HPO at 23:00 Paris weekdays — a few trials into the shared study, so the
+    # best params keep improving and feed the 23:30 retrain (the weekend job does the deep sweep).
+    scheduler.add_job(
+        nightly_hpo_job,
+        CronTrigger(day_of_week="mon-fri", hour=23, minute=0, timezone="Europe/Paris"),
+        args=[config],
+        id="nightly_hpo",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

@@ -307,18 +307,32 @@ def retrain_asset_models_job(config: Config) -> dict[str, object]:
     return results
 
 
-def weekend_hpo_job(config: Config) -> dict[str, float]:
-    """Weekend: run Optuna HPO for each searchable zoo model to keep the GPUs busy."""
+def _run_hpo_round(config: Config, n_trials: int, label: str) -> dict[str, float]:
+    """Run an Optuna round of ``n_trials`` per searchable model into the shared study."""
     from berich.training.hpo import SUPPORTED_MODELS, run_hpo  # noqa: PLC0415
 
     out: dict[str, float] = {}
     for model_name in config.zoo.enabled_models:
         if model_name not in SUPPORTED_MODELS:
             continue
-        study = run_hpo(config, model_name, n_trials=config.zoo.hpo_trials)
+        study = run_hpo(config, model_name, n_trials=n_trials)
         out[model_name] = float(study.best_value)
-        logger.info("weekend HPO %s best Sharpe=%.3f", model_name, study.best_value)
+        logger.info("%s HPO %s best Sharpe=%.3f", label, model_name, study.best_value)
     return out
+
+
+def nightly_hpo_job(config: Config) -> dict[str, float]:
+    """Nightly: a light Optuna round (few trials) that accumulates into the shared study.
+
+    Trials persist in the SQLite study, so a handful each night keeps improving the best
+    params that ``retrain_zoo_job`` consumes — without the weekend's full GPU sweep.
+    """
+    return _run_hpo_round(config, config.zoo.nightly_hpo_trials, "nightly")
+
+
+def weekend_hpo_job(config: Config) -> dict[str, float]:
+    """Weekend: a deep Optuna sweep for each searchable zoo model to keep the GPUs busy."""
+    return _run_hpo_round(config, config.zoo.hpo_trials, "weekend")
 
 
 def check_drift_job(config: Config) -> DriftReport:
