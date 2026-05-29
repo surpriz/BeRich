@@ -72,6 +72,7 @@ def build_dataset(
     tickers: list[str],
     label_config: LabelConfig,
     *,
+    market_ticker: str = MARKET_TICKER,
     earnings_store: EarningsStore | None = None,
     news_store: NewsStore | None = None,
 ) -> SupervisedDataset:
@@ -88,7 +89,7 @@ def build_dataset(
     The model registry's metadata records which mode each artifact was
     trained with so serving stays in sync at load time.
     """
-    market = store.load(MARKET_TICKER)
+    market = store.load(market_ticker)
     use_earnings = earnings_store is not None
     use_news = news_store is not None
 

@@ -29,6 +29,23 @@ from berich.features.news_features import (
 # Ticker used as the broad-market regime proxy in the SPY features.
 MARKET_TICKER = "SPY"
 
+# Per-asset-class regime proxy. The regime *columns* keep their historical names
+# (spy_ret_20 / spy_rvol_20) so promoted models' feature_columns stay valid — only the
+# *source* series changes (BTC for crypto, the dollar index for forex, etc.).
+_MARKET_REFERENCE: dict[str, str] = {
+    "crypto": "BTC-USD",
+    "us_stocks": MARKET_TICKER,
+    "fr_stocks": MARKET_TICKER,
+    "forex": "DX-Y.NYB",
+    "commodities": MARKET_TICKER,
+}
+
+
+def market_reference_for(asset_class: str) -> str:
+    """Return the regime-proxy ticker for an asset class (SPY for anything unmapped)."""
+    return _MARKET_REFERENCE.get(asset_class, MARKET_TICKER)
+
+
 # Lookback window for cross-asset SPY regime features.
 MARKET_LOOKBACK = 20
 

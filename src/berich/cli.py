@@ -66,6 +66,7 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     from berich.data import EarningsStore, NewsStore
     from berich.data.store import OhlcvStore
     from berich.datasets import build_dataset
+    from berich.features.build import MARKET_TICKER, market_reference_for
     from berich.labeling.triple_barrier import LabelConfig
     from berich.models import LGBMModel
     from berich.training import oof_predict
@@ -74,10 +75,21 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     store = OhlcvStore(config.ohlcv_dir)
     label_cfg = LabelConfig(**config.labeling.model_dump())
 
-    tickers = config.tickers_for_universe(args.universe)
-    # Earnings + news are only valid on the mega-cap watchlist (no caches for
-    # the wider universes); silently skip when running on mid/small/all.
-    can_use_extras = args.universe == "mega"
+    asset_class = getattr(args, "asset_class", None)
+    if asset_class:
+        # Non-equity asset class: resolve from the multi-asset universes, use the
+        # class-specific regime proxy, and skip earnings/news (no caches for these).
+        tickers = config.universes.get(asset_class)
+        market_ticker = market_reference_for(asset_class)
+        can_use_extras = False
+        scope_label = asset_class
+    else:
+        tickers = config.tickers_for_universe(args.universe)
+        market_ticker = MARKET_TICKER
+        # Earnings + news are only valid on the mega-cap watchlist (no caches for
+        # the wider universes); silently skip when running on mid/small/all.
+        can_use_extras = args.universe == "mega"
+        scope_label = args.universe
     earnings_store = (
         EarningsStore(config.earnings_dir) if (args.with_earnings and can_use_extras) else None
     )
@@ -86,6 +98,7 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
         store,
         tickers,
         label_cfg,
+        market_ticker=market_ticker,
         earnings_store=earnings_store,
         news_store=news_store,
     )
@@ -97,7 +110,7 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     feat_mode = " + ".join(bits)
     print(  # noqa: T201
         f"Dataset: {len(dataset)} samples, P(win)={dataset.y.mean():.3f}, "
-        f"features={feat_mode}, universe={args.universe} ({len(tickers)} tickers)"
+        f"features={feat_mode}, universe={scope_label} ({len(tickers)} tickers)"
     )
 
     oof = oof_predict(dataset, LGBMModel, embargo=label_cfg.horizon_days)
@@ -288,6 +301,96 @@ def _cmd_pead(args: argparse.Namespace) -> int:
 
 PROMOTE_MIN_AUC = 0.55
 PROMOTE_MIN_EVENTS_PEAD = 1000
+
+
+def _cmd_longshort(args: argparse.Namespace) -> int:
+    """Market-neutral long/short cross-sectional training / backtest dispatcher.
+
+    ``backtest`` is read-only (OOS rank-IC + Sharpe-significance report); ``train``
+    additionally saves a ``market_neutral`` artifact and runs it through the
+    Sharpe-significance promotion gate (no buy-&-hold benchmark — see RESULTS.md).
+    """
+    from berich.backtest.longshort import LongShortConfig, run_longshort_backtest
+    from berich.data.store import OhlcvStore
+    from berich.datasets.cross_sectional import build_panel_dataset
+    from berich.features.build import FEATURE_COLUMNS
+    from berich.labeling.cross_sectional import CrossSectionalLabelConfig
+    from berich.models import ModelMetadata, promote, save_model
+    from berich.models.lightgbm_ranker import LGBMRanker
+    from berich.training.cross_sectional import oof_predict_cross_sectional
+
+    config = Config.load(args.config)
+    ls = config.longshort
+    store = OhlcvStore(config.ohlcv_dir)
+    universe = args.universe or ls.universe
+    tickers = config.tickers_for_universe(universe)
+    label_cfg = CrossSectionalLabelConfig(
+        horizon_days=ls.horizon_days,
+        beta_window=ls.beta_window,
+        residualize=ls.residualize,
+        standardize="rank" if ls.standardize == "rank" else "zscore",
+    )
+    print(f"long/short universe={universe} tickers={len(tickers)} horizon={ls.horizon_days}d")  # noqa: T201
+    panel = build_panel_dataset(
+        store,
+        tickers,
+        label_cfg,
+        market_ticker=ls.market_ticker,
+        min_names_per_date=ls.min_names_per_date,
+    )
+    if not len(panel):
+        print("Empty panel — too few names per date or no cached OHLCV. Run `berich data`.")  # noqa: T201
+        return 1
+    print(f"  panel rows={len(panel)} dates={panel.dates.nunique()}")  # noqa: T201
+
+    oof = oof_predict_cross_sectional(panel, LGBMRanker, embargo=ls.horizon_days)
+    prices = {t: df for t in tickers if (df := store.load(t)) is not None}
+    bt_cfg = LongShortConfig(
+        top_decile=ls.top_decile,
+        bottom_decile=ls.bottom_decile,
+        weighting=ls.weighting,
+        rebalance_days=ls.rebalance_days,
+        gross_leverage=ls.gross_leverage,
+        target_vol=ls.target_vol,
+        vol_lookback=ls.vol_lookback,
+        fee_bps=ls.fee_bps,
+        slippage_bps=ls.slippage_bps,
+        borrow_bps_annual=ls.borrow_bps_annual,
+        min_names=ls.min_names_per_date,
+    )
+    res = run_longshort_backtest(prices, oof, bt_cfg, n_trials=ls.n_trials)
+    sig = res.significance
+    print(  # noqa: T201
+        f"  rank_IC={oof.rank_ic:.4f} (t={oof.ic_t_stat:.2f})  Sharpe={sig.sharpe:.3f}  "
+        f"DSR={sig.deflated_sharpe:.3f}  p={sig.p_value:.3f}  boot_p={sig.bootstrap_p_value:.3f}"
+    )
+    print(  # noqa: T201
+        f"  total_return={res.metrics.total_return:.1%}  maxDD={res.metrics.max_drawdown:.1%}  "
+        f"rebalances={res.n_rebalances}  avg_gross={res.avg_gross_exposure:.2f}"
+    )
+
+    if args.action == "backtest":
+        return 0
+
+    registry_dir = config.models_dir_for("longshort")
+    final = LGBMRanker().fit(panel.x, panel.y, sample_weight=panel.weight, tickers=panel.tickers)
+    metrics = {**sig.as_dict(), "rank_ic": oof.rank_ic, "ic_t_stat": oof.ic_t_stat}
+    meta = ModelMetadata(
+        name=args.name,
+        framework="lightgbm-ranker",
+        feature_columns=list(FEATURE_COLUMNS),
+        metrics=metrics,
+        beats_buy_hold=False,  # not applicable — market-neutral gate is Sharpe-significance
+        strategy_type="market_neutral",
+        notes=f"longshort universe={universe} horizon={ls.horizon_days}d n_trials={ls.n_trials}",
+    )
+    save_model(final, meta, registry_dir=registry_dir)
+    try:
+        promote(args.name, registry_dir=registry_dir, force=args.force)
+        print(f"  Promoted '{args.name}' (market_neutral).")  # noqa: T201
+    except ValueError as exc:
+        print(f"  Saved '{args.name}' but registry blocked promotion: {exc}")  # noqa: T201
+    return 0
 
 
 def _cmd_paper(args: argparse.Namespace) -> int:  # noqa: C901,PLR0911,PLR0915 — multi-action dispatcher
@@ -504,7 +607,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subcommand registry
     parser = argparse.ArgumentParser(prog="berich", description="Swing-trading ML advisor")
     parser.add_argument(
         "--config",
@@ -577,6 +680,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use the volume-proportional slippage model (Phase 6). Recommended"
         " for wide universes — small-caps pay more per side than mega-caps.",
     )
+    p_bt.add_argument(
+        "--asset-class",
+        choices=["crypto", "forex", "commodities", "fr_stocks"],
+        default=None,
+        help="Backtest a non-US-equity universe (Phase 10). Resolves tickers from the"
+        " multi-asset config, uses a class-specific regime proxy (e.g. BTC for crypto),"
+        " and disables earnings/news. Overrides --universe when set.",
+    )
     p_bt.set_defaults(func=_cmd_backtest)
 
     p_sig = sub.add_parser("signals", help="Generate today's signals for the watchlist")
@@ -600,6 +711,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_pead.add_argument("--threshold", type=float, default=0.5)
     p_pead.add_argument("--name", default="pead-lgbm")
     p_pead.set_defaults(func=_cmd_pead)
+
+    p_ls = sub.add_parser(
+        "longshort", help="Market-neutral long/short cross-sectional model (Phase 10)"
+    )
+    p_ls.add_argument(
+        "action",
+        choices=["train", "backtest"],
+        help="train = walk-forward + significance-gated promote; backtest = OOS + report only.",
+    )
+    p_ls.add_argument(
+        "--universe",
+        choices=["mega", "mid", "small", "all"],
+        default=None,
+        help="Override the configured longshort universe (default: config value, 'all').",
+    )
+    p_ls.add_argument("--name", default="longshort-ranker")
+    p_ls.add_argument(
+        "--force", action="store_true", help="Promote even if the significance gate fails"
+    )
+    p_ls.set_defaults(func=_cmd_longshort)
 
     p_paper = sub.add_parser("paper", help="Paper-trading tracker (no real money)")
     p_paper.add_argument(

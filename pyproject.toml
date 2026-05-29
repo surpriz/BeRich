@@ -1,10 +1,10 @@
 [project]
 name = "berich"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.4.0"
+description = "Personal swing-trading advisory tool — ML trend-probability signals over US daily equities"
 readme = "README.md"
 authors = [
-    { name = "Jerome LAVAL", email = "jerome.laval-ext@aroma-zone.com" }
+    { name = "Jerome LAVAL", email = "jerome0laval@gmail.com" }
 ]
 requires-python = ">=3.12,<3.14"
 dependencies = [

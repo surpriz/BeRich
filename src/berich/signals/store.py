@@ -33,6 +33,24 @@ CREATE TABLE IF NOT EXISTS signals (
 );
 """
 
+# Enriched-advice columns added after the original schema; ADD COLUMN IF NOT EXISTS keeps
+# pre-existing DuckDB files valid (the columns are nullable / have safe defaults).
+_MIGRATIONS = (
+    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS proba_calibrated DOUBLE",
+    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS meta_proba DOUBLE",
+    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS acted BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS ret_q10 DOUBLE",
+    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS ret_q50 DOUBLE",
+    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS ret_q90 DOUBLE",
+    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS sigma_horizon DOUBLE",
+    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS sltp_method VARCHAR DEFAULT 'atr_fixed'",
+)
+
+_INSERT_COLUMNS = (
+    "date, ticker, signal, proba, entry, stop_loss, take_profit, size_shares, notional, "
+    "proba_calibrated, meta_proba, acted, ret_q10, ret_q50, ret_q90, sigma_horizon, sltp_method"
+)
+
 
 class SignalStore:
     """Read/write signals in a DuckDB file."""
@@ -42,6 +60,8 @@ class SignalStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as con:
             con.execute(_SCHEMA)
+            for migration in _MIGRATIONS:
+                con.execute(migration)
 
     def _connect(self) -> duckdb.DuckDBPyConnection:
         return duckdb.connect(str(self.db_path))
@@ -58,11 +78,8 @@ class SignalStore:
                 "DELETE FROM signals WHERE (date, ticker) IN (SELECT date, ticker FROM incoming)"
             )
             con.execute(
-                "INSERT INTO signals "
-                "(date, ticker, signal, proba, entry, stop_loss, take_profit, "
-                "size_shares, notional) "
-                "SELECT date, ticker, signal, proba, entry, stop_loss, take_profit, "
-                "size_shares, notional FROM incoming"
+                f"INSERT INTO signals ({_INSERT_COLUMNS}) "  # noqa: S608 — column list is a module constant
+                f"SELECT {_INSERT_COLUMNS} FROM incoming"
             )
         return len(rows)
 

@@ -28,8 +28,11 @@ from berich.features.build import (
 from berich.features.earnings_features import EARNINGS_FEATURE_COLUMNS
 from berich.features.indicators import atr
 from berich.features.news_features import NEWS_FEATURE_COLUMNS
-from berich.labeling.triple_barrier import LabelConfig
+from berich.features.volatility import forecast_vol
+from berich.labeling.triple_barrier import LabelConfig, adaptive_barriers
 from berich.models import LGBMModel, load_active
+from berich.models.meta_labeler import PRIMARY_PROBA_COL
+from berich.signals.calibration import ProbaCalibrator, load_calibrator
 
 if TYPE_CHECKING:
     from berich.config import Config
@@ -56,6 +59,15 @@ class Signal:
     take_profit: float
     size_shares: int
     notional: float
+    # Enriched advice fields (optional; default to neutral/None for back-compat).
+    proba_calibrated: float | None = None
+    meta_proba: float | None = None
+    acted: bool = True  # False when the meta-label filter vetoed a BUY
+    ret_q10: float | None = None
+    ret_q50: float | None = None
+    ret_q90: float | None = None
+    sigma_horizon: float | None = None
+    sltp_method: str = "atr_fixed"  # "vol_scaled" | "quantile" | "atr_fixed"
 
     def as_row(self) -> dict[str, object]:
         row = asdict(self)
@@ -173,6 +185,22 @@ def _resolve_model(
     return model, with_earnings, with_news
 
 
+def _load_calibrator(config: Config) -> ProbaCalibrator | None:
+    """Load the calibrator saved next to the active model, if any."""
+    active = load_active(config.models_dir)
+    if active is None:
+        return None
+    return load_calibrator(config.models_dir / active[1].name)
+
+
+def _load_meta_labeler(config: Config) -> Model | None:
+    """Load the promoted meta-labeling model from the ``meta/`` namespace, if enabled."""
+    if not config.signals.use_meta_label:
+        return None
+    active = load_active(config.models_dir / "meta")
+    return active[0] if active is not None else None
+
+
 def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
     """Serve the promoted (or freshly trained) model and emit one signal per ticker."""
     label_cfg = LabelConfig(**config.labeling.model_dump())
@@ -180,6 +208,8 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
     market = store.load(MARKET_TICKER)
     earnings_store = _earnings_store_if_available(config) if with_earnings else None
     news_store = _news_store_if_available(config) if with_news else None
+    calibrator = _load_calibrator(config)
+    meta_model = _load_meta_labeler(config)
 
     signals: list[Signal] = []
     for ticker in config.watchlist:
@@ -199,6 +229,8 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
             news=news_df,
             with_earnings=with_earnings,
             with_news=with_news,
+            calibrator=calibrator,
+            meta_model=meta_model,
         )
         if signal is not None:
             signals.append(signal)
@@ -217,6 +249,8 @@ def _signal_for_ticker(
     news: pd.DataFrame | None = None,
     with_earnings: bool = False,
     with_news: bool = False,
+    calibrator: ProbaCalibrator | None = None,
+    meta_model: Model | None = None,
 ) -> Signal | None:
     # When a feature family is on we always pass an (optionally empty) frame so the
     # column shape stays consistent across tickers — empty frames get the neutral
@@ -233,28 +267,72 @@ def _signal_for_ticker(
     last_date = feats.index[-1]
     cols = feature_columns(earnings=with_earnings, news=with_news)
     x = feats.loc[[last_date], cols]
-    proba = float(model.predict_proba(x)[0])
+    raw_proba = float(model.predict_proba(x)[0])
+    # Calibrated proba (if a calibrator was fit) drives the decision + sizing.
+    proba_cal = float(calibrator.transform(np.array([raw_proba]))[0]) if calibrator else None
+    eff_proba = proba_cal if proba_cal is not None else raw_proba
 
     a = float(atr(df["high"], df["low"], df["close"], label_cfg.atr_window).loc[last_date])
     entry = float(df["close"].loc[last_date])
     if np.isnan(a):
         return None
-    stop = entry - label_cfg.stop_loss_atr * a
-    target = entry + label_cfg.take_profit_atr * a
 
-    decision = _classify(proba, config)
+    q10 = q50 = q90 = None
+    sigma_h: float | None = None
+    if config.signals.adaptive_sltp:
+        vf = forecast_vol(
+            df["close"].loc[:last_date],
+            horizon_days=label_cfg.horizon_days,
+            method=config.signals.vol_method,
+        )
+        sigma_h = vf.horizon_sigma
+        quantiles = None
+        predict_quantiles = getattr(model, "predict_quantiles", None)
+        if predict_quantiles is not None:
+            q = np.asarray(predict_quantiles(x))[0]
+            q10, q90 = float(q[0]), float(q[-1])
+            q50 = float(q[len(q) // 2])
+            quantiles = (q10, q90)
+        stop, target, rationale = adaptive_barriers(entry, a, vf, label_cfg, quantiles=quantiles)
+        sltp_method = str(rationale["method"])
+    else:
+        stop = entry - label_cfg.stop_loss_atr * a
+        target = entry + label_cfg.take_profit_atr * a
+        sltp_method = "atr_fixed"
+
+    decision = _classify(eff_proba, config)
+
+    # Meta-labeling precision filter: veto a BUY whose meta P(correct) is too low.
+    meta_proba: float | None = None
+    acted = True
+    if meta_model is not None and decision == BUY:
+        meta_x = x.copy()
+        meta_x[PRIMARY_PROBA_COL] = eff_proba
+        meta_proba = float(meta_model.predict_proba(meta_x)[0])
+        if meta_proba < config.signals.meta_threshold:
+            acted = False
+            decision = NEUTRAL
+
     shares, notional = _size_position(entry, stop, config) if decision == BUY else (0, 0.0)
 
     return Signal(
         date=last_date,
         ticker=ticker,
         signal=decision,
-        proba=round(proba, 4),
+        proba=round(raw_proba, 4),
         entry=round(entry, 2),
         stop_loss=round(stop, 2),
         take_profit=round(target, 2),
         size_shares=shares,
         notional=round(notional, 2),
+        proba_calibrated=None if proba_cal is None else round(proba_cal, 4),
+        meta_proba=None if meta_proba is None else round(meta_proba, 4),
+        acted=acted,
+        ret_q10=None if q10 is None else round(q10, 4),
+        ret_q50=None if q50 is None else round(q50, 4),
+        ret_q90=None if q90 is None else round(q90, 4),
+        sigma_horizon=None if sigma_h is None else round(sigma_h, 6),
+        sltp_method=sltp_method,
     )
 
 

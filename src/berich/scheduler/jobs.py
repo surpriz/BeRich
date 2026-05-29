@@ -8,6 +8,7 @@ idempotent: re-running a day's refresh/signals overwrites rather than duplicates
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from berich.data import (
@@ -29,6 +30,8 @@ from berich.signals import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from berich.config import Config
     from berich.monitoring import DriftReport
 
@@ -146,6 +149,91 @@ def _try_finbert_score(config: Config) -> int:
         )
         total += store.update_finbert(ticker, scores)
     return total
+
+
+def _zoo_factory(model_name: str, *, device: str | None = None) -> tuple[str, dict, Callable]:
+    """Return ``(framework, hyperparams, factory)`` for a zoo model name."""
+    if model_name == "lgbm":
+        from berich.models import LGBMModel  # noqa: PLC0415
+
+        return "lightgbm", {}, LGBMModel
+    if model_name == "patchtst":
+        from berich.models import PatchTSTConfig, PatchTSTModel  # noqa: PLC0415
+
+        cfg = PatchTSTConfig(device=device)
+        return "patchtst", cfg.as_dict(), lambda: PatchTSTModel(cfg)
+    if model_name == "lstm":
+        from berich.models import LSTMConfig, LSTMModel  # noqa: PLC0415
+
+        cfg = LSTMConfig(device=device)
+        return "lstm", cfg.as_dict(), lambda: LSTMModel(cfg)
+    msg = f"unknown zoo model '{model_name}'"
+    raise ValueError(msg)
+
+
+def retrain_zoo_job(config: Config, *, date_str: str | None = None) -> dict[str, object]:
+    """Nightly: retrain the enabled zoo, then promote the single best guard-passing model.
+
+    Idempotent: each model saves to a *dated* artifact name (re-running a night overwrites
+    that night's candidates), and only one model — the highest OOS Sharpe that beats both
+    the LightGBM baseline and buy & hold — is promoted. If none clears the guard the active
+    model is left untouched.
+    """
+    from berich.models import promote  # noqa: PLC0415
+    from berich.training.deep import baseline_sharpe, train_deep_model  # noqa: PLC0415
+
+    base = baseline_sharpe(config)
+    day = date_str or datetime.now(UTC).date().isoformat()
+
+    results = []
+    for model_name in config.zoo.enabled_models:
+        framework, hyperparams, factory = _zoo_factory(model_name)
+        name = f"{model_name}-{day}"
+        res = train_deep_model(
+            config,
+            name=name,
+            framework=framework,
+            model_factory=factory,
+            hyperparams=hyperparams,
+            baseline_sharpe=base,
+            promote_if_passes=False,
+        )
+        results.append((name, res))
+        logger.info(
+            "zoo retrain %s: Sharpe=%.3f promotable=%s",
+            name,
+            res.strategy_sharpe,
+            res.beats_buy_hold and res.beats_baseline,
+        )
+
+    promotable = [(n, r) for n, r in results if r.beats_buy_hold and r.beats_baseline]
+    promoted = ""
+    if promotable:
+        best_name, _ = max(promotable, key=lambda nr: nr[1].strategy_sharpe)
+        try:
+            promote(best_name, registry_dir=config.models_dir)
+            promoted = best_name
+            logger.info("zoo retrain promoted '%s'", best_name)
+        except ValueError as exc:
+            logger.warning("zoo retrain promotion blocked: %s", exc)
+    else:
+        logger.info("zoo retrain: no candidate beat baseline + buy & hold; active unchanged")
+
+    return {"baseline_sharpe": base, "candidates": len(results), "promoted": promoted}
+
+
+def weekend_hpo_job(config: Config) -> dict[str, float]:
+    """Weekend: run Optuna HPO for each searchable zoo model to keep the GPUs busy."""
+    from berich.training.hpo import SUPPORTED_MODELS, run_hpo  # noqa: PLC0415
+
+    out: dict[str, float] = {}
+    for model_name in config.zoo.enabled_models:
+        if model_name not in SUPPORTED_MODELS:
+            continue
+        study = run_hpo(config, model_name, n_trials=config.zoo.hpo_trials)
+        out[model_name] = float(study.best_value)
+        logger.info("weekend HPO %s best Sharpe=%.3f", model_name, study.best_value)
+    return out
 
 
 def check_drift_job(config: Config) -> DriftReport:

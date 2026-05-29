@@ -52,4 +52,4 @@ def test_should_retrain_threshold():
 def test_build_scheduler_registers_jobs():
     scheduler = build_scheduler(Config(watchlist=["AAPL"]))
     job_ids = {job.id for job in scheduler.get_jobs()}
-    assert job_ids == {"daily_paper", "check_drift"}
+    assert job_ids == {"daily_paper", "check_drift", "retrain_zoo", "weekend_hpo"}

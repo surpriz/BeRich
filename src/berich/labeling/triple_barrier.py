@@ -17,11 +17,16 @@ dropped before training.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel
 
 from berich.features.indicators import atr
+
+if TYPE_CHECKING:
+    from berich.features.volatility import VolForecast
 
 
 class LabelConfig(BaseModel):
@@ -31,6 +36,56 @@ class LabelConfig(BaseModel):
     atr_window: int = 14
     take_profit_atr: float = 2.0
     stop_loss_atr: float = 1.0
+
+
+# Adaptive barrier scaling is clipped to this band so a single noisy vol estimate can't
+# blow the stop out (or collapse it) relative to the configured ATR width.
+_ADAPTIVE_SCALE_MIN = 0.5
+_ADAPTIVE_SCALE_MAX = 2.5
+
+
+def adaptive_barriers(
+    entry: float,
+    atr_t: float,
+    vol_forecast: VolForecast,
+    config: LabelConfig,
+    *,
+    quantiles: tuple[float, float] | None = None,
+) -> tuple[float, float, dict[str, float | str]]:
+    """Derive (stop, target) from a vol forecast or predicted return quantiles.
+
+    - When ``quantiles`` (q_low_ret, q_high_ret) are supplied (a distributional model's
+      forward-return band), barriers are placed directly at those return levels.
+    - Otherwise the configured ATR multipliers are scaled by the ratio of forecasted
+      daily vol to the ATR-implied daily range, clipped to a sane band.
+
+    Returns ``(stop, target, rationale)`` where ``rationale`` explains the choice.
+    """
+    if quantiles is not None:
+        q_low, q_high = quantiles
+        target = entry * (1.0 + q_high)
+        stop = entry * (1.0 + q_low)
+        return stop, target, {"method": "quantile", "q_low": q_low, "q_high": q_high}
+
+    atr_pct = atr_t / entry if entry > 0 else 0.0
+    if atr_pct > 0 and vol_forecast.sigma_daily > 0:
+        scale = float(
+            np.clip(vol_forecast.sigma_daily / atr_pct, _ADAPTIVE_SCALE_MIN, _ADAPTIVE_SCALE_MAX)
+        )
+    else:
+        scale = 1.0
+    target = entry + config.take_profit_atr * scale * atr_t
+    stop = entry - config.stop_loss_atr * scale * atr_t
+    return (
+        stop,
+        target,
+        {
+            "method": "vol_scaled",
+            "scale": scale,
+            "sigma_daily": vol_forecast.sigma_daily,
+            "horizon_sigma": vol_forecast.horizon_sigma,
+        },
+    )
 
 
 def triple_barrier_labels(df: pd.DataFrame, config: LabelConfig) -> pd.DataFrame:

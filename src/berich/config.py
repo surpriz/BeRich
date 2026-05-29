@@ -40,6 +40,49 @@ class SignalConfig(BaseModel):
     sell_threshold: float = 0.30
     capital: float = 10_000.0
     risk_pct: float = 0.01
+    # Adaptive SL/TP: scale the ATR barriers by a vol forecast (and use a model's return
+    # quantiles when available) instead of fixed multiples. On by default — it improves
+    # the advice without changing the model.
+    adaptive_sltp: bool = True
+    vol_method: str = "ewma"  # "ewma" | "garch"
+    # Meta-labeling precision filter: when on and a meta artifact exists, a BUY is
+    # downgraded to NEUTRAL if the meta model's P(signal correct) < meta_threshold.
+    use_meta_label: bool = False
+    meta_threshold: float = 0.5
+
+
+class LongShortConfigModel(BaseModel):
+    """Market-neutral long/short cross-sectional parameters (the ``longshort`` block)."""
+
+    universe: str = "all"  # cross-sectional ranking needs breadth, not the 10-name mega set
+    market_ticker: str = "SPY"
+    # Label
+    horizon_days: int = 5
+    beta_window: int = 60
+    residualize: bool = True
+    standardize: str = "zscore"  # "zscore" | "rank"
+    min_names_per_date: int = 20
+    # Portfolio
+    top_decile: float = 0.1
+    bottom_decile: float = 0.1
+    weighting: str = "inverse_vol"  # "equal" | "inverse_vol"
+    rebalance_days: int = 5
+    gross_leverage: float = 1.0
+    target_vol: float = 0.10
+    vol_lookback: int = 20
+    fee_bps: float = 1.0
+    slippage_bps: float = 5.0
+    borrow_bps_annual: float = 50.0
+    # Significance: deflate the Sharpe for the many trials already run (see docs/RESULTS.md).
+    n_trials: int = 9
+
+
+class ZooConfig(BaseModel):
+    """Model-zoo training / nightly-retrain configuration."""
+
+    enabled_models: list[str] = Field(default_factory=lambda: ["lgbm", "patchtst"])
+    gpu_ids: list[int] | None = None  # None = all visible GPUs
+    hpo_trials: int = 20
 
 
 UNIVERSE_NAMES = ("mega", "mid", "small", "all")
@@ -107,6 +150,8 @@ class Config(BaseModel):
     universes: AssetUniverses = Field(default_factory=AssetUniverses)
     labeling: LabelingConfig = Field(default_factory=LabelingConfig)
     signals: SignalConfig = Field(default_factory=SignalConfig)
+    longshort: LongShortConfigModel = Field(default_factory=LongShortConfigModel)
+    zoo: ZooConfig = Field(default_factory=ZooConfig)
 
     def tickers_for_universe(self, name: str) -> list[str]:
         """Resolve ``mega | mid | small | all`` to a deduplicated list of tickers.
@@ -180,9 +225,25 @@ class Config(BaseModel):
         return self.data_dir / "berich.duckdb"
 
     @property
+    def optuna_db(self) -> Path:
+        """SQLite RDB backing Optuna studies (shared across GPU workers)."""
+        return self.data_dir / "optuna.db"
+
+    @property
     def models_dir(self) -> Path:
         """Registry directory holding trained model artifacts + metadata."""
         return self.data_dir / "models"
+
+    def models_dir_for(self, asset_class: str) -> Path:
+        """Registry directory namespaced by asset class.
+
+        ``us_stocks`` keeps the historical root (``data/models/``) so existing
+        artifacts and the daily-LGBM serving path are unchanged; every other class
+        (and the long/short track) gets its own subdirectory.
+        """
+        if asset_class in ("us_stocks", "mega", ""):
+            return self.models_dir
+        return self.models_dir / asset_class
 
     @property
     def earnings_dir(self) -> Path:

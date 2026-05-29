@@ -19,8 +19,9 @@ purged are silently skipped.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+import joblib
 import numpy as np
 import pandas as pd
 
@@ -28,7 +29,67 @@ from berich.signals.paper import CLOSED_STATUSES, PaperStore
 from berich.signals.store import SignalStore
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from berich.config import Config
+
+CALIBRATOR_FILE = "calibrator.joblib"
+
+
+@dataclass
+class ProbaCalibrator:
+    """A fitted transform mapping raw model probabilities to calibrated ones.
+
+    Fit on out-of-fold ``(proba, y_true)`` so it is leak-free, then applied to the live
+    proba before it feeds SL/TP sizing and the BUY/SELL threshold.
+    """
+
+    method: str  # "isotonic" | "sigmoid"
+    model: Any
+
+    def transform(self, proba: np.ndarray) -> np.ndarray:
+        p = np.asarray(proba, dtype=float).ravel()
+        if self.method == "sigmoid":
+            out = self.model.predict_proba(p.reshape(-1, 1))[:, 1]
+        else:
+            out = self.model.predict(p)
+        return np.clip(np.asarray(out, dtype=float), 0.0, 1.0)
+
+
+def fit_calibrator(
+    proba: np.ndarray,
+    y_true: np.ndarray,
+    *,
+    method: str = "isotonic",
+) -> ProbaCalibrator:
+    """Fit a :class:`ProbaCalibrator` on out-of-fold predictions (leak-free)."""
+    p = np.asarray(proba, dtype=float).ravel()
+    y = np.asarray(y_true, dtype=float).ravel()
+    if method == "sigmoid":
+        from sklearn.linear_model import LogisticRegression  # noqa: PLC0415
+
+        model = LogisticRegression().fit(p.reshape(-1, 1), y.astype(int))
+    else:
+        from sklearn.isotonic import IsotonicRegression  # noqa: PLC0415
+
+        model = IsotonicRegression(out_of_bounds="clip").fit(p, y)
+    return ProbaCalibrator(method=method, model=model)
+
+
+def save_calibrator(calibrator: ProbaCalibrator, *, artifact_dir: Path) -> Path:
+    """Persist a calibrator alongside its model artifact."""
+    path = artifact_dir / CALIBRATOR_FILE
+    joblib.dump(calibrator, path)
+    return path
+
+
+def load_calibrator(artifact_dir: Path) -> ProbaCalibrator | None:
+    """Load a calibrator if one was saved next to the artifact, else ``None``."""
+    path = artifact_dir / CALIBRATOR_FILE
+    if not path.exists():
+        return None
+    return joblib.load(path)
+
 
 DEFAULT_BUCKETS: tuple[tuple[float, float], ...] = (
     (0.00, 0.50),
@@ -181,4 +242,12 @@ def compute_calibration(
     )
 
 
-__all__ = ["CalibrationBucket", "CalibrationReport", "compute_calibration"]
+__all__ = [
+    "CalibrationBucket",
+    "CalibrationReport",
+    "ProbaCalibrator",
+    "compute_calibration",
+    "fit_calibrator",
+    "load_calibrator",
+    "save_calibrator",
+]

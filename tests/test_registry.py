@@ -69,3 +69,44 @@ def test_list_models(tmp_path):
     save_model(_trained_model(), _meta("b", beats=False), registry_dir=tmp_path)
     names = {m.name for m in list_models(tmp_path)}
     assert names == {"a", "b"}
+
+
+def _mn_meta(name: str, *, sharpe: float, dsr: float, pval: float) -> ModelMetadata:
+    return ModelMetadata(
+        name=name,
+        framework="lightgbm-ranker",
+        feature_columns=["a", "b", "c"],
+        metrics={"sharpe": sharpe, "deflated_sharpe": dsr, "sharpe_pvalue": pval},
+        strategy_type="market_neutral",
+    )
+
+
+def test_market_neutral_promotes_on_significant_sharpe(tmp_path):
+    save_model(
+        _trained_model(), _mn_meta("ls", sharpe=1.2, dsr=0.98, pval=0.01), registry_dir=tmp_path
+    )
+    promote("ls", registry_dir=tmp_path)  # beats_buy_hold is False but gate is Sharpe-based
+    active = load_active(tmp_path)
+    assert active is not None and active[1].name == "ls"
+
+
+def test_market_neutral_refused_on_weak_dsr(tmp_path):
+    save_model(
+        _trained_model(), _mn_meta("weak_ls", sharpe=0.4, dsr=0.6, pval=0.2), registry_dir=tmp_path
+    )
+    with pytest.raises(ValueError, match="deflated Sharpe"):
+        promote("weak_ls", registry_dir=tmp_path)
+
+
+def test_legacy_metadata_without_strategy_type_defaults_long_only(tmp_path):
+    # An artifact written before strategy_type existed must still load and gate as long-only.
+    save_model(_trained_model(), _meta("legacy", beats=True), registry_dir=tmp_path)
+    # Overwrite with a pre-field metadata file (no strategy_type key).
+    (tmp_path / "legacy" / "metadata.json").write_text(
+        '{"name": "legacy", "framework": "lightgbm", "feature_columns": ["a", "b", "c"], '
+        '"metrics": {}, "beats_buy_hold": true}',
+        encoding="utf-8",
+    )
+    meta = load_model("legacy", registry_dir=tmp_path)[1]
+    assert meta.strategy_type == "long_only"
+    promote("legacy", registry_dir=tmp_path)  # legacy long-only gate still applies

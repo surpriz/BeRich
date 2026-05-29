@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # BeRich — AI agent context
 
   BeRich is a personal swing-trading advisory tool. ML predicts a **trend probability**
@@ -24,59 +28,85 @@
   ## Architecture (modules behind the `Model` protocol)
 
   src/berich/
-    data/        yfinance ingestion + Parquet OHLCV cache
-    features/    causal indicators + canonical FEATURE_COLUMNS
-    labeling/    triple-barrier labels with sample weights
-    datasets/    walk-forward splits, sequence windowing, StandardScaler
-    models/      base.py Model protocol + lightgbm_model.py + registry.py
-    training/    oof_predict (walk-forward out-of-sample probabilities)
-    backtest/    event-based engine + risk/perf metrics
-    signals/     daily signal generation + risk-based sizing + DuckDB persistence
-    monitoring/  PSI + KS feature drift
-    scheduler/   APScheduler jobs (daily signals, weekly drift)
-    api/         FastAPI backend
-  frontend/      Next.js dashboard (lightweight-charts)
+    data/          yfinance OHLCV + earnings + Alpha Vantage news, Parquet/cache
+    features/      causal indicators, canonical FEATURE_COLUMNS, earnings/news features
+    labeling/      triple-barrier labels with sample weights
+    datasets/      walk-forward splits, sequence windowing, StandardScaler
+    models/        base.py Model protocol + lightgbm_model.py, lstm.py, finbert_scorer.py, registry.py
+    training/      walk_forward.py (OOS probs), deep.py (LSTM), pead.py (event model)
+    backtest/      engine.py (triple-barrier), pead_engine.py, portfolio.py, strategies.py, metrics.py
+    signals/       service.py (daily signals), calibration.py, paper.py (paper book), store.py (DuckDB)
+    risk/          gating.py, sizing.py, sizing_strategy.py (risk-based position sizing)
+    monitoring/    PSI + KS feature drift
+    notifications/ email.py (digest)
+    scheduler/     APScheduler jobs (daily signals, weekly drift, ingestion)
+    api/           FastAPI backend (signals, explain, universes, health)
+  frontend/        Next.js dashboard — multi-asset universe tabs, ticker drill-down
+                   (lightweight-charts), EN/FR i18n, health footer
 
   `models/base.py` defines a 2-method `Model` protocol: `fit(x, y, sample_weight=None)`
-  and `predict_proba(x) -> np.ndarray`. Every model — LightGBM today, LSTM and TFT next —
-  must implement it so training, backtesting, signal service, and the registry stay
-  model-agnostic.
+  and `predict_proba(x) -> np.ndarray`. Every model implements it so training,
+  backtesting, signal service, and the registry stay model-agnostic.
+
+  Frontend i18n is home-grown (`frontend/app/lib/i18n/`, EN/FR JSON catalogs +
+  React context with localStorage persistence) — `next-intl` was deliberately
+  not adopted. The `/explain` endpoint returns SHAP-style feature contributions
+  via LightGBM `predict_contrib`.
 
   ## CLI surface
 
-  `berich data | backtest | signals | drift | train | models | serve | schedule`. The
-  `train` command runs the walk-forward OOS, fits a final model on all labeled history,
-  saves it to `data/models/<name>/`, and tries to promote it through the guard.
+  `berich data | news | backtest | signals | drift | pead | paper | train | models | serve | schedule`
+  (defined in `src/berich/cli.py`). The `train` command runs the walk-forward OOS,
+  fits a final model on all labeled history, saves it to `data/models/<name>/`, and
+  tries to promote it through the guard. `news` runs the Alpha Vantage fetch +
+  FinBERT GPU scoring pipeline; `pead` runs the event-driven Post-Earnings Drift
+  model; `paper` drives the paper-trading book. The CLI uses lazy imports inside
+  subcommands to keep startup fast (hence the `PLC0415` ruff ignore).
+
+  ## Common commands
+
+  - **Lint / format / types / tests** (run before claiming a task done):
+    `uv run ruff format src/ tests/` · `uv run ruff check src/ tests/` ·
+    `uv run ty check src/` · `uv run pytest -q` (149 tests).
+  - **Single test**: `uv run pytest tests/test_pead.py -q` or
+    `uv run pytest tests/test_signals.py::test_name -q`.
+  - **Frontend** (`frontend/`): `npm run build` · `npm run dev` · `npm run lint`.
+  - GPU-only deps (torch, lightning, mlflow, optuna, pytorch-forecasting) live in the
+    `gpu` dependency group; the `news`/`pead`/LSTM training paths need them.
+    Deployment (systemd units + Caddy HTTPS) is documented in `docs/DEPLOY.md`.
 
   ## Current state (read before changing things)
 
-  **v0.1.0 — advisory infrastructure frozen, no edge claim.** All phases (0–6) are
-  done and tested (47 pytest passing, ruff + ty clean, frontend builds). The final
-  LightGBM baseline scores OOS AUC ≈ 0.517, Sharpe ≈ 0.43 vs buy & hold ≈ 1.15 —
-  **does not beat buy & hold**. The guard rule (`promote()`) refuses the model;
-  the dashboard surfaces an "advisory only" banner. This is shipped on purpose.
+  **v0.4.0 — advisory infrastructure, no edge claim.** Phases 0–9 are done and
+  tested (149 pytest passing, ruff + ty clean, frontend builds). Across nine phases
+  — OHLCV + cross-asset macro, earnings surprises, FinBERT news sentiment, mid/small-cap
+  universes, short horizons, post-earnings drift (PEAD), a risk-management overlay,
+  and a core-satellite portfolio reframe — **no combination beats buy & hold**
+  walk-forward with realistic fees + slippage on the US daily long-only universe.
+  The PEAD event book (AUC ≈ 0.535, trade-level Sharpe ≈ 0.849, max DD ≈ -6.7 %) is
+  the closest to a usable signal but still does not clear the benchmark once blended.
+  The guard rule (`promote()`) refuses every variant; the dashboard surfaces an
+  "advisory only" banner. This is shipped on purpose.
 
-  ## Phase 3 outcome
+  ## Exploration history & guardrails (read `docs/RESULTS.md` first)
 
-  Phase 3 explored four levers — feature engineering (3a), LSTM (3b), label
-  geometry sweep, and cross-asset macro features (VIX, TLT, HYG/LQD, sector
-  ETFs). None lifted OOS AUC above ~0.52 nor Sharpe above buy & hold. The
-  cross-asset features dominated LightGBM's importance ranking (top 5 = pure
-  macro) yet did not lift AUC — the macro signal exists but is not convertible
-  to a tradeable single-name probability at the 10-day horizon. Full numbers,
-  methodology and verdicts in [`docs/RESULTS.md`](docs/RESULTS.md).
+  [`docs/RESULTS.md`](docs/RESULTS.md) is the authoritative log of all nine phases —
+  full numbers, methodology, correlation matrices, and the per-phase promote-gate
+  verdicts. **Before proposing any new edge search, read it** so you don't re-run a
+  lever that already failed. Two hard guardrails:
 
-  Models / training driver from Phase 3 are kept in the codebase:
-  - `src/berich/models/lstm.py` — LSTM behind the `Model` protocol.
-  - `src/berich/training/deep.py` — MLflow-tracked OOF + backtest + guarded promote.
-  - `scripts/feature_importances.py`, `scripts/sweep_labels.py`, `scripts/train_lstm.py`.
-  These are reusable for future experiments. The `SECTOR_MAP` dict in
-  `features/build.py` is kept as a helper (not wired) for the same reason.
+  - **Do not reopen feature hunts in OHLCV or cross-asset macro.** Phase 3 settled
+    that space: macro features dominate LightGBM importance yet don't lift AUC. If a
+    proposal uses only `data/ohlcv/` plus standard cross-asset series, it's been tried.
+  - **Do not re-litigate the portfolio overlays.** Phase 9 showed every B&H + PEAD /
+    calendar blend reduces Sharpe vs pure B&H; the walk-forward optimizer never picked
+    PEAD. The reframe is closed.
 
-  **Future work (not started): Phase 4 — exogenous information.** News / sentiment
-  via FinBERT, earnings surprises, sector flows. This is a separate project; the
-  v0.1.0 freeze is meant to keep the existing infrastructure stable while that
-  work is scoped properly.
+  The recommended pivot for any future iteration is to **change the problem, not the
+  algorithm** (crypto / intraday bars / market-neutral long-short) — see the final
+  verdict in `docs/RESULTS.md`. Experiment scripts are kept under `scripts/`
+  (`sweep_*.py`, `exploit_h3.py`, `calendar_baseline.py`, `portfolio_sweep.py`,
+  `train_pead.py`, `train_lstm.py`, …) and are reusable for those directions.
 
   ## House rules for code changes
 
@@ -90,9 +120,6 @@
     `uv_build` or hatchling — they silently dropped subpackages under uv 0.11.
   - `.gitignore` patterns for runtime caches (`data/`, `mlruns/`) are anchored with a
     leading `/` to avoid swallowing `src/berich/data/` etc.
-  - **Do not reopen feature hunts in OHLCV or cross-asset macro without a new
-    data-source rationale.** Phase 3 conclusively explored that space; the next
-    edge-search lives in Phase 4 (exogenous info — news, earnings, flows). If a
-    proposal can be implemented with the data already in `data/ohlcv/` plus
-    standard cross-asset macro series, it has already been tried — read
-    `docs/RESULTS.md` first.
+  - Before any new edge search, read `docs/RESULTS.md` and respect the two guardrails
+    in "Exploration history & guardrails" above (no OHLCV/macro re-hunts, no portfolio
+    overlay re-litigation).

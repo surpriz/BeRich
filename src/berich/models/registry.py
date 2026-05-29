@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import joblib
 from pydantic import BaseModel, Field
@@ -33,6 +33,11 @@ MODEL_FILE = "model.joblib"
 META_FILE = "metadata.json"
 ACTIVE_POINTER = "active.json"
 
+# Market-neutral promotion thresholds (the strategy has no buy-&-hold benchmark, so the
+# bar is a positive, statistically significant Sharpe — see backtest/significance.py).
+MIN_DEFLATED_SHARPE = 0.95
+MAX_SHARPE_PVALUE = 0.05
+
 
 class ModelMetadata(BaseModel):
     """Everything needed to serve and audit a saved model."""
@@ -43,6 +48,9 @@ class ModelMetadata(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     metrics: dict[str, float] = Field(default_factory=dict)
     beats_buy_hold: bool = False
+    # "long_only" keeps the historical beats-buy-&-hold gate; existing artifacts that
+    # predate this field deserialize to "long_only", so the legacy guard is unchanged.
+    strategy_type: Literal["long_only", "market_neutral"] = "long_only"
     notes: str = ""
 
 
@@ -80,18 +88,42 @@ def list_models(registry_dir: Path) -> list[ModelMetadata]:
     return sorted(metas, key=lambda m: m.created_at, reverse=True)
 
 
+def _gate_failure(meta: ModelMetadata) -> str | None:
+    """Reason a model fails its promotion gate, or ``None`` if it passes.
+
+    The gate depends on ``strategy_type``:
+    - ``long_only`` keeps the historical rule — it must beat buy & hold.
+    - ``market_neutral`` has no buy-&-hold benchmark, so it must show a positive Sharpe
+      that is statistically significant (deflated Sharpe + one-sided p-value).
+    """
+    if meta.strategy_type == "long_only":
+        if not meta.beats_buy_hold:
+            return "it does not beat buy & hold"
+        return None
+
+    sharpe = meta.metrics.get("sharpe", 0.0)
+    dsr = meta.metrics.get("deflated_sharpe", 0.0)
+    pval = meta.metrics.get("sharpe_pvalue", 1.0)
+    if sharpe <= 0:
+        return f"Sharpe is not positive (sharpe={sharpe:.3f})"
+    if dsr < MIN_DEFLATED_SHARPE:
+        return f"deflated Sharpe {dsr:.3f} < {MIN_DEFLATED_SHARPE}"
+    if pval >= MAX_SHARPE_PVALUE:
+        return f"Sharpe p-value {pval:.3f} >= {MAX_SHARPE_PVALUE}"
+    return None
+
+
 def promote(name: str, *, registry_dir: Path, force: bool = False) -> ModelMetadata:
     """Mark a model as the active one used for serving.
 
-    Refuses to promote a model whose metadata reports it does not beat buy & hold,
-    unless ``force=True``. This enforces the design's guard rule at the registry level.
+    Refuses to promote a model that fails its strategy-type gate (beats buy & hold for
+    long-only; positive, significant Sharpe for market-neutral) unless ``force=True``.
+    This enforces the design's guard rule at the registry level.
     """
     _, meta = load_model(name, registry_dir=registry_dir)
-    if not meta.beats_buy_hold and not force:
-        msg = (
-            f"refusing to promote '{name}': it does not beat buy & hold "
-            f"(use force=True to override)"
-        )
+    failure = _gate_failure(meta)
+    if failure is not None and not force:
+        msg = f"refusing to promote '{name}': {failure} (use force=True to override)"
         raise ValueError(msg)
     (registry_dir / ACTIVE_POINTER).write_text(json.dumps({"name": name}), encoding="utf-8")
     return meta
