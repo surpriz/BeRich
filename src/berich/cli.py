@@ -583,64 +583,23 @@ def _cmd_schedule(args: argparse.Namespace) -> int:
     return 0
 
 
-def _train_asset_class(args: argparse.Namespace, asset_class: str) -> int:
-    """Train a dedicated base-22 model for one non-US asset class and force-promote it.
-
-    Saved to the per-class registry namespace (data/models/<class>/) so serving uses it
-    instead of the US model. Force-promoted because these are explicitly advisory/experimental
-    (the dashboard banner says so); the printed line states whether it beat that class's B&H.
-    """
-    from berich.backtest import BacktestConfig, run_backtest
-    from berich.data.store import OhlcvStore
-    from berich.datasets import build_dataset
-    from berich.features.build import feature_columns, market_reference_for
-    from berich.labeling.triple_barrier import LabelConfig
-    from berich.models import LGBMModel, ModelMetadata, promote, save_model
-    from berich.training import oof_predict
-
-    config = Config.load(args.config)
-    store = OhlcvStore(config.ohlcv_dir)
-    label_cfg = LabelConfig(**config.labeling.model_dump())
-    tickers = config.universes.get(asset_class)
-    market_ticker = market_reference_for(asset_class)
-    name = f"{asset_class}-lgbm" if args.name == "lgbm-baseline" else args.name
-
-    dataset = build_dataset(store, tickers, label_cfg, market_ticker=market_ticker)
-    if not len(dataset):
-        print(f"No data for '{asset_class}'. Run `berich data` / fetch its universe first.")  # noqa: T201
-        return 1
-    oof = oof_predict(dataset, LGBMModel, embargo=label_cfg.horizon_days)
-    prices = {t: df for t in tickers if (df := store.load(t)) is not None and not df.empty}
-    result = run_backtest(prices, oof, BacktestConfig(entry_threshold=0.5))
-    model = LGBMModel().fit(dataset.x, dataset.y, sample_weight=dataset.weight)
-
-    registry_dir = config.models_dir_for(asset_class)
-    meta = ModelMetadata(
-        name=name,
-        framework="lightgbm",
-        feature_columns=feature_columns(),
-        metrics={
-            "auc": oof.auc,
-            "sharpe": result.strategy.sharpe,
-            "benchmark_sharpe": result.benchmark.sharpe,
-        },
-        beats_buy_hold=result.beats_buy_hold,
-        notes=f"dedicated {asset_class} model (advisory; market={market_ticker})",
-    )
-    save_model(model, meta, registry_dir=registry_dir)
-    promote(name, registry_dir=registry_dir, force=True)  # advisory — UI flags it experimental
-    print(  # noqa: T201
-        f"Trained + promoted '{name}' for {asset_class} ({len(tickers)} tickers): "
-        f"AUC={oof.auc:.4f}, Sharpe={result.strategy.sharpe:.3f} vs class B&H "
-        f"{result.benchmark.sharpe:.3f} (beats_bh={result.beats_buy_hold}, advisory)."
-    )
-    return 0
-
-
-def _cmd_train(args: argparse.Namespace) -> int:
+def _cmd_train(args: argparse.Namespace) -> int:  # noqa: PLR0915 — flat train dispatcher
     asset_class = getattr(args, "asset_class", None)
     if asset_class:
-        return _train_asset_class(args, asset_class)
+        from berich.training.asset_class import train_asset_class_model
+
+        config = Config.load(args.config)
+        name = None if args.name == "lgbm-baseline" else args.name
+        res = train_asset_class_model(config, asset_class, name=name)
+        if not res.get("trained"):
+            print(f"No model for '{asset_class}': {res.get('reason')}.")  # noqa: T201
+            return 1
+        print(  # noqa: T201
+            f"Trained + promoted '{res['name']}' for {asset_class} ({res['n_tickers']} tickers): "
+            f"AUC={res['auc']:.4f}, Sharpe={res['sharpe']:.3f} vs class B&H "
+            f"{res['benchmark_sharpe']:.3f} (beats_bh={res['beats_buy_hold']}, advisory)."
+        )
+        return 0
 
     from berich.backtest import BacktestConfig, run_backtest
     from berich.data import EarningsStore, NewsStore

@@ -57,6 +57,7 @@ def test_build_scheduler_registers_jobs():
         "refresh_universe",
         "check_drift",
         "retrain_zoo",
+        "retrain_asset_models",
         "weekend_hpo",
         "longshort_signals",
     }

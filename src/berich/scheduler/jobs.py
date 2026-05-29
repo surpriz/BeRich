@@ -272,6 +272,24 @@ def retrain_zoo_job(config: Config, *, date_str: str | None = None) -> dict[str,
     return {"baseline_sharpe": base, "candidates": len(results), "promoted": promoted}
 
 
+def retrain_asset_models_job(config: Config) -> dict[str, object]:
+    """Nightly: retrain + force-promote the dedicated per-asset-class advisory models."""
+    from berich.training.asset_class import train_asset_class_model  # noqa: PLC0415
+
+    results = {}
+    for asset_class in ("crypto", "forex", "commodities", "fr_stocks"):
+        if not config.universes.get(asset_class):
+            continue
+        try:
+            res = train_asset_class_model(config, asset_class)
+            results[asset_class] = res.get("auc") if res.get("trained") else res.get("reason")
+        except Exception:  # noqa: BLE001 — one class failing must not abort the others
+            logger.warning("retrain_asset_models: %s failed", asset_class, exc_info=True)
+            results[asset_class] = "error"
+    logger.info("retrain_asset_models: %s", results)
+    return results
+
+
 def weekend_hpo_job(config: Config) -> dict[str, float]:
     """Weekend: run Optuna HPO for each searchable zoo model to keep the GPUs busy."""
     from berich.training.hpo import SUPPORTED_MODELS, run_hpo  # noqa: PLC0415

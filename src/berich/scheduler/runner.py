@@ -17,6 +17,7 @@ from berich.scheduler.jobs import (
     daily_paper_job,
     longshort_signals_job,
     refresh_universe_job,
+    retrain_asset_models_job,
     retrain_zoo_job,
     weekend_hpo_job,
 )
@@ -59,6 +60,17 @@ def build_scheduler(config: Config) -> BlockingScheduler:
         CronTrigger(day_of_week="mon-fri", hour=23, minute=30, timezone="Europe/Paris"),
         args=[config],
         id="retrain_zoo",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # Dedicated per-asset-class models retrained at 23:35 Paris weekdays — after the wider
+    # universe refresh (22:45), alongside the US zoo retrain.
+    scheduler.add_job(
+        retrain_asset_models_job,
+        CronTrigger(day_of_week="mon-fri", hour=23, minute=35, timezone="Europe/Paris"),
+        args=[config],
+        id="retrain_asset_models",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
