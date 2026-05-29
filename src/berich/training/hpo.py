@@ -349,6 +349,69 @@ def best_params_for(config: Config, model_name: str, *, study_prefix: str = "ber
     return {k: v for k, v in best.items() if not k.startswith("feat_")}
 
 
+def apply_hpo_best(config: Config, model_name: str = "lgbm") -> dict[str, object]:
+    """Train + promote the final US model using the HPO study's best params *and features*.
+
+    Reads the best trial, trains a LightGBM on its selected feature subset with its tuned
+    params, fits a calibrator, and force-promotes it (advisory). This is how the feature-
+    selection result from the search actually reaches production. LightGBM only for now.
+    """
+    import optuna  # noqa: PLC0415
+
+    from berich.models import LGBMModel, ModelMetadata, promote, save_model  # noqa: PLC0415
+    from berich.signals.calibration import fit_calibrator, save_calibrator  # noqa: PLC0415
+
+    if model_name != "lgbm":
+        msg = "apply_hpo_best currently supports only the lgbm model"
+        raise ValueError(msg)
+    study = optuna.load_study(
+        study_name=f"berich-hpo-{model_name}", storage=f"sqlite:///{config.optuna_db}"
+    )
+    best = study.best_trial
+    params = {k: v for k, v in best.params.items() if not k.startswith("feat_")}
+    features = best.user_attrs.get("features")
+
+    store = OhlcvStore(config.ohlcv_dir)
+    label_cfg = LabelConfig(**config.labeling.model_dump())
+    dataset = build_dataset(store, config.watchlist, label_cfg)
+    if features:
+        dataset = replace(dataset, x=dataset.x[list(features)])
+
+    oof = oof_predict(dataset, lambda: LGBMModel(**params), embargo=label_cfg.horizon_days)
+    prices = {t: df for t in config.watchlist if (df := store.load(t)) is not None}
+    bt = run_backtest(prices, oof, BacktestConfig(entry_threshold=config.signals.buy_threshold))
+    model = LGBMModel(**params).fit(dataset.x, dataset.y, sample_weight=dataset.weight)
+
+    name = f"{model_name}-hpo"
+    meta = ModelMetadata(
+        name=name,
+        framework="lightgbm",
+        feature_columns=list(dataset.x.columns),
+        metrics={
+            "auc": oof.auc,
+            "sharpe": bt.strategy.sharpe,
+            "benchmark_sharpe": bt.benchmark.sharpe,
+        },
+        beats_buy_hold=bt.beats_buy_hold,
+        notes=f"HPO best: {len(dataset.x.columns)} features, params={params}",
+    )
+    artifact_dir = save_model(model, meta, registry_dir=config.models_dir)
+    cal = fit_calibrator(oof.frame["proba"].to_numpy(), oof.frame["y_true"].to_numpy())
+    save_calibrator(cal, artifact_dir=artifact_dir)
+    promote(name, registry_dir=config.models_dir, force=True)
+    logger.info(
+        "applied HPO best '%s': %d features, Sharpe=%.3f",
+        name, len(dataset.x.columns), bt.strategy.sharpe,
+    )
+    return {
+        "name": name,
+        "auc": oof.auc,
+        "sharpe": bt.strategy.sharpe,
+        "n_features": len(dataset.x.columns),
+        "features": list(dataset.x.columns),
+    }
+
+
 def _log_to_mlflow(model_name: str, study: optuna.Study) -> None:
     try:
         import mlflow  # noqa: PLC0415
@@ -366,6 +429,7 @@ __all__ = [
     "FEATURE_GROUPS",
     "LONGSHORT_MODELS",
     "SUPPORTED_MODELS",
+    "apply_hpo_best",
     "best_params_for",
     "objective_for",
     "run_hpo",

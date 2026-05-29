@@ -594,6 +594,16 @@ def _cmd_schedule(args: argparse.Namespace) -> int:
 
 
 def _cmd_train(args: argparse.Namespace) -> int:  # noqa: PLR0915 — flat train dispatcher
+    if getattr(args, "from_hpo", False):
+        from berich.training.hpo import apply_hpo_best
+
+        res = apply_hpo_best(Config.load(args.config))
+        print(  # noqa: T201
+            f"Promoted '{res['name']}' from HPO best: {res['n_features']} features "
+            f"(AUC={res['auc']:.4f}, Sharpe={res['sharpe']:.3f}). Features: {res['features']}"
+        )
+        return 0
+
     asset_class = getattr(args, "asset_class", None)
     if asset_class:
         from berich.training.asset_class import train_asset_class_model
@@ -920,6 +930,11 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subcomm
         default=None,
         help="Train a dedicated advisory model for a non-US asset class (own registry + regime"
         " proxy), force-promoted for serving. Ignores --with-earnings/news/calibrate/meta.",
+    )
+    p_train.add_argument(
+        "--from-hpo",
+        action="store_true",
+        help="Train + promote the US model using the latest HPO study's best features + params.",
     )
     p_train.set_defaults(func=_cmd_train)
 

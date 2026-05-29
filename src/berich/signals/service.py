@@ -126,56 +126,43 @@ def _train_model(
     return LGBMModel().fit(dataset.x, dataset.y, sample_weight=dataset.weight)
 
 
+def _needs_news(cols: list[str]) -> bool:
+    return any(c in NEWS_FEATURE_COLUMNS for c in cols)
+
+
+def _needs_earnings(cols: list[str]) -> bool:
+    return any(c in EARNINGS_FEATURE_COLUMNS for c in cols)
+
+
 def _resolve_model(
     store: OhlcvStore,
     config: Config,
     label_cfg: LabelConfig,
-) -> tuple[Model, bool, bool]:
-    """Return ``(model, with_earnings, with_news)`` — model + which modes it needs.
+) -> tuple[Model, list[str]]:
+    """Return ``(model, feature_columns)`` — the model + the exact columns it consumes.
 
-    Decision tree:
-      - promoted model in the registry → trust its ``feature_columns`` to know
-        which feature families it was trained with. If a model expects news
-        but the cache is stale (empty), log a warning and re-train inline
-        without news so we serve something usable rather than crash.
-      - no promoted model → train a fresh LightGBM inline using whichever
-        feature families have data on disk (v0.1.0 boxes that never ran
-        the new ``berich data`` keep the 22-feature fallback for free).
+    A promoted model is trusted as-is, including an HPO-selected **feature subset** (the
+    columns are selected from the full built feature frame at serve time). The only fallback
+    is when the model needs news features but the news cache is empty — then we retrain a
+    non-news baseline inline rather than feed all-zero columns. With no promoted model, a
+    fresh LightGBM is trained on whatever feature families have data on disk.
     """
     active = load_active(config.models_dir)
     if active is not None:
         model, meta = active
-        meta_has_earnings = all(c in meta.feature_columns for c in EARNINGS_FEATURE_COLUMNS)
-        meta_has_news = all(c in meta.feature_columns for c in NEWS_FEATURE_COLUMNS)
-        expected = feature_columns(earnings=meta_has_earnings, news=meta_has_news)
-        if meta.feature_columns != expected:
-            logger.warning(
-                "active model '%s' feature columns differ from current; retraining baseline",
-                meta.name,
-            )
-        elif meta_has_news and _news_store_if_available(config) is None:
-            # Promoted model expects news features but the cache is empty;
-            # rather than feed it all-zero columns and silently degrade the
-            # signal, drop back to a freshly-trained earnings-or-base model.
+        cols = list(meta.feature_columns)
+        if _needs_news(cols) and _news_store_if_available(config) is None:
             logger.warning(
                 "active model '%s' expects news features but data/news/ is empty; "
-                "falling back to a non-news baseline",
+                "falling back to a freshly-trained baseline",
                 meta.name,
             )
         else:
-            logger.info(
-                "serving promoted model '%s' (%s, earnings=%s, news=%s)",
-                meta.name,
-                meta.framework,
-                meta_has_earnings,
-                meta_has_news,
-            )
-            return model, meta_has_earnings, meta_has_news
+            logger.info("serving promoted model '%s' (%d features)", meta.name, len(cols))
+            return model, cols
 
     earnings_store = _earnings_store_if_available(config)
     news_store = _news_store_if_available(config)
-    with_earnings = earnings_store is not None
-    with_news = news_store is not None
     model = _train_model(
         store,
         config,
@@ -183,7 +170,7 @@ def _resolve_model(
         earnings_store=earnings_store,
         news_store=news_store,
     )
-    return model, with_earnings, with_news
+    return model, feature_columns(earnings=earnings_store is not None, news=news_store is not None)
 
 
 def _load_calibrator(config: Config) -> ProbaCalibrator | None:
@@ -205,7 +192,9 @@ def _load_meta_labeler(config: Config) -> Model | None:
 def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
     """Serve the promoted (or freshly trained) model and emit one signal per ticker."""
     label_cfg = LabelConfig(**config.labeling.model_dump())
-    model, with_earnings, with_news = _resolve_model(store, config, label_cfg)
+    model, feat_cols = _resolve_model(store, config, label_cfg)
+    with_earnings = _needs_earnings(feat_cols)
+    with_news = _needs_news(feat_cols)
     market = store.load(MARKET_TICKER)
     earnings_store = _earnings_store_if_available(config) if with_earnings else None
     news_store = _news_store_if_available(config) if with_news else None
@@ -230,6 +219,7 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
             news=news_df,
             with_earnings=with_earnings,
             with_news=with_news,
+            feature_cols=feat_cols,
             calibrator=calibrator,
             meta_model=meta_model,
         )
@@ -298,6 +288,7 @@ def _signal_for_ticker(
     news: pd.DataFrame | None = None,
     with_earnings: bool = False,
     with_news: bool = False,
+    feature_cols: list[str] | None = None,
     calibrator: ProbaCalibrator | None = None,
     meta_model: Model | None = None,
 ) -> Signal | None:
@@ -314,7 +305,9 @@ def _signal_for_ticker(
     if feats.empty:
         return None
     last_date = feats.index[-1]
-    cols = feature_columns(earnings=with_earnings, news=with_news)
+    cols = feature_cols if feature_cols is not None else feature_columns(
+        earnings=with_earnings, news=with_news
+    )
     x = feats.loc[[last_date], cols]
     raw_proba = float(model.predict_proba(x)[0])
     # Calibrated proba (if a calibrator was fit) drives the decision + sizing.
@@ -410,9 +403,11 @@ def explain_signal(
         return None
 
     label_cfg = LabelConfig(**config.labeling.model_dump())
-    model, with_earnings, with_news = _resolve_model(store, config, label_cfg)
+    model, cols = _resolve_model(store, config, label_cfg)
     if not isinstance(model, LGBMModel):
         return None
+    with_earnings = _needs_earnings(cols)
+    with_news = _needs_news(cols)
 
     market = store.load(MARKET_TICKER)
     earnings_store = _earnings_store_if_available(config) if with_earnings else None
@@ -430,7 +425,6 @@ def explain_signal(
     feats = build_features(df, market=market, earnings=earnings_arg, news=news_arg).dropna()
     if feats.empty:
         return None
-    cols = feature_columns(earnings=with_earnings, news=with_news)
     last_date = feats.index[-1]
     x = feats.loc[[last_date], cols]
     proba = float(model.predict_proba(x)[0])
