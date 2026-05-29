@@ -170,6 +170,25 @@ def refresh_universe_job(config: Config) -> dict[str, int]:
     return {"tickers": len(reports), "warned": warned}
 
 
+def longshort_signals_job(config: Config) -> dict[str, object]:
+    """Generate + persist today's market-neutral long/short basket (paper book)."""
+    from berich.signals import LongShortStore, generate_longshort_book  # noqa: PLC0415
+
+    store = OhlcvStore(config.ohlcv_dir)
+    book = generate_longshort_book(config, store)
+    if book is None or not book.positions:
+        logger.info("longshort_signals: no basket (empty cache or too few names)")
+        return {"positions": 0, "saved": 0}
+    saved = LongShortStore(config.db_path).save(book)
+    logger.info(
+        "longshort_signals: %d positions, gross=%.2f, %d saved",
+        len(book.positions),
+        book.gross_exposure,
+        saved,
+    )
+    return {"positions": len(book.positions), "saved": saved}
+
+
 def _zoo_factory(model_name: str, *, device: str | None = None) -> tuple[str, dict, Callable]:
     """Return ``(framework, hyperparams, factory)`` for a zoo model name."""
     if model_name == "lgbm":

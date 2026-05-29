@@ -303,13 +303,50 @@ PROMOTE_MIN_AUC = 0.55
 PROMOTE_MIN_EVENTS_PEAD = 1000
 
 
-def _cmd_longshort(args: argparse.Namespace) -> int:
-    """Market-neutral long/short cross-sectional training / backtest dispatcher.
+def _cmd_longshort_serve(args: argparse.Namespace) -> int:
+    """`signals` = today's dollar-neutral basket; `equity` = paper-book curve."""
+    from berich.data.store import OhlcvStore
+    from berich.signals import LongShortStore, generate_longshort_book, longshort_equity
 
-    ``backtest`` is read-only (OOS rank-IC + Sharpe-significance report); ``train``
-    additionally saves a ``market_neutral`` artifact and runs it through the
-    Sharpe-significance promotion gate (no buy-&-hold benchmark — see RESULTS.md).
+    config = Config.load(args.config)
+    store = OhlcvStore(config.ohlcv_dir)
+    if args.action == "equity":
+        summary = longshort_equity(config, store)
+        if summary.get("n_baskets", 0) == 0:
+            print("No stored baskets yet. Run `berich longshort signals` first.")  # noqa: T201
+            return 1
+        print(  # noqa: T201
+            f"Paper book: {summary['n_baskets']} baskets  Sharpe={summary['sharpe']:.3f}  "
+            f"total={summary['total_return']:.1%}  maxDD={summary['max_drawdown']:.1%}  "
+            f"avg_gross={summary['avg_gross']:.2f}"
+        )
+        return 0
+
+    book = generate_longshort_book(config, store)
+    if book is None or not book.positions:
+        print("No long/short basket (empty cache or too few names). Run `berich data`.")  # noqa: T201
+        return 1
+    saved = LongShortStore(config.db_path).save(book)
+    print(  # noqa: T201
+        f"\nLong/short basket for {book.date.date()} "
+        f"(gross={book.gross_exposure:.2f}, {saved} saved):\n"
+    )
+    print(f"{'TICKER':<10}{'SIDE':<7}{'WEIGHT':>9}{'SCORE':>10}")  # noqa: T201
+    for p in sorted(book.positions, key=lambda x: x.weight, reverse=True):
+        print(f"{p.ticker:<10}{p.side:<7}{p.weight:>9.4f}{p.score:>10.4f}")  # noqa: T201
+    return 0
+
+
+def _cmd_longshort(args: argparse.Namespace) -> int:
+    """Market-neutral long/short cross-sectional dispatcher.
+
+    ``signals``/``equity`` serve the live basket / paper book; ``backtest`` is read-only
+    (OOS rank-IC + Sharpe-significance); ``train`` saves a ``market_neutral`` artifact and
+    runs it through the Sharpe-significance promotion gate (no buy-&-hold benchmark).
     """
+    if args.action in ("signals", "equity"):
+        return _cmd_longshort_serve(args)
+
     from berich.backtest.longshort import LongShortConfig, run_longshort_backtest
     from berich.data.store import OhlcvStore
     from berich.datasets.cross_sectional import build_panel_dataset
@@ -733,8 +770,9 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subcomm
     )
     p_ls.add_argument(
         "action",
-        choices=["train", "backtest"],
-        help="train = walk-forward + significance-gated promote; backtest = OOS + report only.",
+        choices=["train", "backtest", "signals", "equity"],
+        help="train = walk-forward + significance-gated promote; backtest = OOS report; "
+        "signals = today's basket; equity = paper-book curve.",
     )
     p_ls.add_argument(
         "--universe",

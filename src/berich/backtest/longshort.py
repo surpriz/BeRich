@@ -108,6 +108,42 @@ def build_baskets(
     return pd.DataFrame.from_dict(rows, orient="index").reindex(columns=ret.columns).fillna(0.0)
 
 
+def returns_from_weights(
+    baskets: pd.DataFrame,
+    ret: pd.DataFrame,
+    config: LongShortConfig,
+) -> tuple[pd.Series, float]:
+    """Daily net returns from a (rebalance_date x ticker) weight matrix + a returns matrix.
+
+    Holds weights between rebalances, charges turnover + borrow, applies the vol-target
+    overlay. Shared by the backtester and the paper-book equity replay. Returns
+    ``(net_returns, avg_gross_exposure)``.
+    """
+    if baskets.empty:
+        return pd.Series(dtype=float), 0.0
+    held = baskets.reindex(ret.index).ffill().fillna(0.0)
+    effective = held.shift(1).fillna(0.0)
+
+    gross_ret = (effective * ret).sum(axis=1)
+    turnover = held.diff().abs().sum(axis=1).fillna(held.abs().sum(axis=1))
+    cost = turnover * (config.fee_bps + config.slippage_bps) / 1e4
+    short_gross = effective.clip(upper=0.0).abs().sum(axis=1)
+    borrow = short_gross * config.borrow_bps_annual / TRADING_DAYS / 1e4
+    net_ret = (gross_ret - cost - borrow).loc[baskets.index[0] :].dropna()
+
+    if config.target_vol and config.target_vol > 0:
+        roll_vol = net_ret.rolling(config.vol_lookback).std() * np.sqrt(TRADING_DAYS)
+        scale = roll_vol.apply(
+            lambda v: vol_target_size(float(v), target_vol=config.target_vol, ceiling=3.0)
+        )
+        net_ret = net_ret * scale.shift(1).fillna(1.0)
+
+    net_ret = net_ret.dropna()
+    gross_series = effective.abs().sum(axis=1).loc[net_ret.index]
+    avg_gross = float(gross_series.mean()) if len(net_ret) else 0.0
+    return net_ret, avg_gross
+
+
 def run_longshort_backtest(
     prices_by_ticker: dict[str, pd.DataFrame],
     oof: CrossSectionalOof,
@@ -127,40 +163,20 @@ def run_longshort_backtest(
         empty = pd.Series(dtype=float)
         return LongShortResult(compute_metrics(empty), empty, assess_sharpe(empty), 0.0, 0)
 
-    # Hold weights between rebalances; today's return uses yesterday's held weights.
-    held = baskets.reindex(ret.index).ffill().fillna(0.0)
-    effective = held.shift(1).fillna(0.0)
-
-    gross_ret = (effective * ret).sum(axis=1)
-    turnover = held.diff().abs().sum(axis=1).fillna(held.abs().sum(axis=1))
-    cost = turnover * (config.fee_bps + config.slippage_bps) / 1e4
-    short_gross = effective.clip(upper=0.0).abs().sum(axis=1)
-    borrow = short_gross * config.borrow_bps_annual / TRADING_DAYS / 1e4
-    net_ret = gross_ret - cost - borrow
-
-    # Restrict to the live window (first rebalance onward) before the overlay.
-    net_ret = net_ret.loc[baskets.index[0] :].dropna()
-
-    if config.target_vol and config.target_vol > 0:
-        roll_vol = net_ret.rolling(config.vol_lookback).std() * np.sqrt(TRADING_DAYS)
-        scale = roll_vol.apply(
-            lambda v: vol_target_size(float(v), target_vol=config.target_vol, ceiling=3.0)
-        )
-        scale = scale.shift(1).fillna(1.0)
-        net_ret = net_ret * scale
-
-    net_ret = net_ret.dropna()
-    metrics = compute_metrics(net_ret)
-    significance = assess_sharpe(net_ret, n_trials=n_trials)
-    avg_gross = float(effective.abs().sum(axis=1).loc[net_ret.index].mean())
-
+    net_ret, avg_gross = returns_from_weights(baskets, ret, config)
     return LongShortResult(
-        metrics=metrics,
+        metrics=compute_metrics(net_ret),
         returns=net_ret,
-        significance=significance,
+        significance=assess_sharpe(net_ret, n_trials=n_trials),
         avg_gross_exposure=avg_gross,
         n_rebalances=len(baskets),
     )
 
 
-__all__ = ["LongShortConfig", "LongShortResult", "build_baskets", "run_longshort_backtest"]
+__all__ = [
+    "LongShortConfig",
+    "LongShortResult",
+    "build_baskets",
+    "returns_from_weights",
+    "run_longshort_backtest",
+]

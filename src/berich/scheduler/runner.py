@@ -15,6 +15,7 @@ from apscheduler.triggers.cron import CronTrigger
 from berich.scheduler.jobs import (
     check_drift_job,
     daily_paper_job,
+    longshort_signals_job,
     refresh_universe_job,
     retrain_zoo_job,
     weekend_hpo_job,
@@ -58,6 +59,17 @@ def build_scheduler(config: Config) -> BlockingScheduler:
         CronTrigger(day_of_week="mon-fri", hour=23, minute=30, timezone="Europe/Paris"),
         args=[config],
         id="retrain_zoo",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # Long/short basket generation at 23:45 Paris weekdays — after the nightly retrain,
+    # so the freshest promoted ranker drives today's paper basket.
+    scheduler.add_job(
+        longshort_signals_job,
+        CronTrigger(day_of_week="mon-fri", hour=23, minute=45, timezone="Europe/Paris"),
+        args=[config],
+        id="longshort_signals",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
