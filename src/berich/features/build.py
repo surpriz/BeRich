@@ -203,7 +203,14 @@ def build_features(
     feats["close_sma20_ratio"] = close / sma20 - 1.0
     feats["close_sma50_ratio"] = close / sma50 - 1.0
 
-    feats["volume_z20"] = ind.zscore(volume.astype(float), 20)
+    vol_z = ind.zscore(volume.astype(float), 20)
+    # Some instruments report no volume (FX spot pairs): a flat series makes the rolling
+    # z-score undefined. Treat "no volume data at all" as a neutral 0 so those assets aren't
+    # dropped wholesale; genuine warm-up NaNs on real-volume assets are left to be dropped.
+    vol_clean = volume.dropna()
+    if vol_clean.empty or vol_clean.min() == vol_clean.max():
+        vol_z = vol_z.fillna(0.0)
+    feats["volume_z20"] = vol_z
 
     feats["dist_high_60"] = ind.dist_to_rolling_high(close, high, DIST_LOOKBACK)
     feats["dist_low_60"] = ind.dist_to_rolling_low(close, low, DIST_LOOKBACK)

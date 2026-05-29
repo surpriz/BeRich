@@ -21,7 +21,12 @@ from berich.signals.paper import (
     open_new_trades,
     update_open_trades,
 )
-from berich.signals.service import Signal, explain_signal, generate_signals
+from berich.signals.service import (
+    Signal,
+    explain_signal,
+    generate_multi_asset_signals,
+    generate_signals,
+)
 from berich.signals.store import SignalStore
 
 __all__ = [
@@ -37,6 +42,7 @@ __all__ = [
     "compute_calibration",
     "explain_signal",
     "generate_longshort_book",
+    "generate_multi_asset_signals",
     "generate_signals",
     "get_equity_curve",
     "get_open_positions",

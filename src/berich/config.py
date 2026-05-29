@@ -184,13 +184,19 @@ class Config(BaseModel):
     def all_runtime_tickers(self) -> list[str]:
         """Every ticker the daily scheduler should ingest.
 
-        Union of the legacy ``watchlist`` (mega-cap, the only universe the
-        model was actually trained on) and all populated multi-asset
-        ``universes``. Deduped by upper(ticker), first-occurrence order.
+        Union of the legacy ``watchlist`` (mega-cap, the only universe the model was
+        actually trained on), all populated multi-asset ``universes``, and the per-class
+        regime-proxy tickers (e.g. the dollar index for forex) so the market-context
+        features stay fresh. Deduped by upper(ticker), first-occurrence order.
         """
+        from berich.features.build import market_reference_for  # noqa: PLC0415 — avoid import cycle
+
+        proxies = [
+            market_reference_for(ac) for ac in ASSET_UNIVERSE_NAMES if self.universes.get(ac)
+        ]
         seen: set[str] = set()
         out: list[str] = []
-        for ticker in [*self.watchlist, *self.universes.all_tickers()]:
+        for ticker in [*self.watchlist, *self.universes.all_tickers(), *proxies]:
             upper = ticker.upper()
             if upper in seen:
                 continue

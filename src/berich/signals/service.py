@@ -24,6 +24,7 @@ from berich.features.build import (
     MARKET_TICKER,
     build_features,
     feature_columns,
+    market_reference_for,
 )
 from berich.features.earnings_features import EARNINGS_FEATURE_COLUMNS
 from berich.features.indicators import atr
@@ -235,6 +236,42 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
         if signal is not None:
             signals.append(signal)
     return signals
+
+
+def _base_model(store: OhlcvStore, config: Config, label_cfg: LabelConfig) -> Model:
+    """A base-22-feature LGBM for scoring non-US assets (no earnings/news caches there).
+
+    Reuses the promoted model only if it is base-22; otherwise trains a quick LGBM on the
+    US watchlist. Non-US signals are explicitly advisory/experimental (the UI says so).
+    """
+    active = load_active(config.models_dir)
+    if active is not None and active[1].feature_columns == feature_columns():
+        return active[0]
+    return _train_model(store, config, label_cfg, earnings_store=None, news_store=None)
+
+
+def generate_multi_asset_signals(config: Config, store: OhlcvStore) -> list[Signal]:
+    """Advisory signals for the non-US universes (FR stocks, forex, crypto, commodities).
+
+    Scored with a base-22 model and each class's own regime proxy (BTC for crypto, etc.).
+    Earnings/news are off (no caches). Calibrator/meta filter are US-specific, so not applied.
+    """
+    label_cfg = LabelConfig(**config.labeling.model_dump())
+    model = _base_model(store, config, label_cfg)
+    out: list[Signal] = []
+    for asset_class in ("fr_stocks", "forex", "crypto", "commodities"):
+        tickers = config.universes.get(asset_class)
+        if not tickers:
+            continue
+        market = store.load(market_reference_for(asset_class))
+        for ticker in tickers:
+            df = store.load(ticker)
+            if df is None or df.empty:
+                continue
+            signal = _signal_for_ticker(ticker, df, model, config, label_cfg, market=market)
+            if signal is not None:
+                out.append(signal)
+    return out
 
 
 def _signal_for_ticker(

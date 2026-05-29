@@ -84,11 +84,18 @@ class SignalStore:
         return len(rows)
 
     def latest(self) -> pd.DataFrame:
-        """Return all signals for the most recent date in the table."""
+        """Return the most recent signal *per ticker*, newest-proba first.
+
+        Latest-per-ticker (rather than a single global max date) so multi-asset universes
+        with different trading calendars — crypto trades weekends, equities don't — all
+        surface their freshest signal instead of only whichever class closed most recently.
+        """
         with self._connect() as con:
             return con.execute(
-                "SELECT * FROM signals WHERE date = (SELECT max(date) FROM signals) "
-                "ORDER BY proba DESC"
+                "SELECT * EXCLUDE (rn) FROM ("
+                "  SELECT *, row_number() OVER (PARTITION BY ticker ORDER BY date DESC) AS rn"
+                "  FROM signals"
+                ") WHERE rn = 1 ORDER BY proba DESC"
             ).df()
 
     def history(self, ticker: str) -> pd.DataFrame:

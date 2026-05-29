@@ -139,7 +139,7 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
 
 def _cmd_signals(args: argparse.Namespace) -> int:
     from berich.data.store import OhlcvStore
-    from berich.signals import SignalStore, generate_signals
+    from berich.signals import SignalStore, generate_multi_asset_signals, generate_signals
 
     config = Config.load(args.config)
     store = OhlcvStore(config.ohlcv_dir)
@@ -147,6 +147,8 @@ def _cmd_signals(args: argparse.Namespace) -> int:
     if not signals:
         print("No signals (empty cache?). Run `berich data` first.")  # noqa: T201
         return 1
+    if args.multi_asset:
+        signals = signals + generate_multi_asset_signals(config, store)
 
     saved = SignalStore(config.db_path).save(signals)
     as_of = signals[0].date.date()
@@ -780,6 +782,11 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subcomm
     p_bt.set_defaults(func=_cmd_backtest)
 
     p_sig = sub.add_parser("signals", help="Generate today's signals for the watchlist")
+    p_sig.add_argument(
+        "--multi-asset",
+        action="store_true",
+        help="Also generate advisory signals for FR stocks / forex / crypto / commodities.",
+    )
     p_sig.set_defaults(func=_cmd_signals)
 
     p_drift = sub.add_parser("drift", help="Check feature drift vs the training era")
