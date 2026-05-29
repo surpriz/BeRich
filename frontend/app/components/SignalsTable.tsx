@@ -4,18 +4,28 @@ import { SignalBadge } from "./SignalBadge";
 
 const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function ProbaBar({ p }: { p: number }) {
-  const pct = Math.round(p * 100);
-  const color = p >= 0.55 ? "var(--color-bull)" : p <= 0.3 ? "var(--color-bear)" : "var(--color-neutral)";
+function ProbaBar({ p, calibrated }: { p: number; calibrated?: number | null }) {
+  const shown = calibrated ?? p;
+  const pct = Math.round(shown * 100);
+  const color = shown >= 0.55 ? "var(--color-bull)" : shown <= 0.3 ? "var(--color-bear)" : "var(--color-neutral)";
   return (
     <div className="flex items-center gap-2">
       <div className="h-1.5 w-20 overflow-hidden rounded-full bg-[var(--color-line)]">
         <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
       </div>
-      <span className="tabular text-xs text-[var(--color-muted)]">{p.toFixed(3)}</span>
+      <span className="tabular text-xs text-[var(--color-muted)]" title={calibrated != null ? `raw ${p.toFixed(3)} → calibrated` : undefined}>
+        {shown.toFixed(3)}
+        {calibrated != null && <span className="ml-1 text-[10px] text-[var(--color-faint)]">cal</span>}
+      </span>
     </div>
   );
 }
+
+const SLTP_LABEL: Record<string, string> = {
+  vol_scaled: "vol",
+  quantile: "quantile",
+  atr_fixed: "ATR",
+};
 
 export function SignalsTable({ signals }: { signals: Signal[] }) {
   if (signals.length === 0) {
@@ -36,6 +46,7 @@ export function SignalsTable({ signals }: { signals: Signal[] }) {
             <th className="px-3 py-3 text-right font-medium">Entry</th>
             <th className="px-3 py-3 text-right font-medium">Stop</th>
             <th className="px-3 py-3 text-right font-medium">Target</th>
+            <th className="px-3 py-3 font-medium">SL/TP</th>
             <th className="px-5 py-3 text-right font-medium">Shares</th>
           </tr>
         </thead>
@@ -61,7 +72,7 @@ export function SignalsTable({ signals }: { signals: Signal[] }) {
               </td>
               <td className="px-3 py-3">
                 <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="block">
-                  <ProbaBar p={s.proba} />
+                  <ProbaBar p={s.proba} calibrated={s.proba_calibrated} />
                 </Link>
               </td>
               <td className="tabular px-3 py-3 text-right">
@@ -77,6 +88,18 @@ export function SignalsTable({ signals }: { signals: Signal[] }) {
               <td className="tabular px-3 py-3 text-right text-[var(--color-bull)]/80">
                 <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="block">
                   {fmt(s.take_profit)}
+                </Link>
+              </td>
+              <td className="px-3 py-3">
+                <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="block">
+                  <span className="text-xs text-[var(--color-muted)]">
+                    {SLTP_LABEL[s.sltp_method ?? "atr_fixed"] ?? "ATR"}
+                  </span>
+                  {s.acted === false && (
+                    <span className="ml-1 text-[10px] text-[var(--color-bear)]" title="meta-label veto">
+                      veto
+                    </span>
+                  )}
                 </Link>
               </td>
               <td className="tabular px-5 py-3 text-right font-medium">

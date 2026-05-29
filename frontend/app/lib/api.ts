@@ -15,6 +15,31 @@ export type Signal = {
   take_profit: number;
   size_shares: number;
   notional: number;
+  // Enriched advice fields (nullable for back-compat / older rows).
+  proba_calibrated?: number | null;
+  meta_proba?: number | null;
+  acted?: boolean | null;
+  ret_q10?: number | null;
+  ret_q50?: number | null;
+  ret_q90?: number | null;
+  sigma_horizon?: number | null;
+  sltp_method?: string | null;
+};
+
+export type LongShortLeg = {
+  date: string;
+  ticker: string;
+  side: "LONG" | "SHORT";
+  weight: number;
+  score: number;
+};
+
+export type LongShortEquity = {
+  n_baskets: number;
+  sharpe?: number;
+  total_return?: number;
+  max_drawdown?: number;
+  avg_gross?: number;
 };
 
 export type FeatureDrift = {
@@ -181,6 +206,8 @@ export const api = {
   paperClosed: (limit = 25) => get<PaperClosedTrade[]>(`/paper/closed-trades?limit=${limit}`),
   paperCalibration: () => get<PaperCalibration>("/paper/calibration"),
   universes: () => get<Universes>("/universes"),
+  longshortBasket: () => get<LongShortLeg[]>("/longshort/basket"),
+  longshortEquity: () => get<LongShortEquity>("/longshort/equity"),
   health: () => get<Health>("/health"),
 };
 

@@ -44,7 +44,7 @@ def _require_api_key(x_api_key: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="invalid or missing X-API-Key")
 
 
-def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa: C901
+def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa: C901, PLR0915
     """Build the FastAPI app bound to a config file.
 
     Each endpoint is a tiny inner function; the routes are kept inline (rather than
@@ -115,6 +115,18 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
             "crypto": config.universes.crypto,
             "commodities": config.universes.commodities,
         }
+
+    @router.get("/longshort/basket", dependencies=guard)
+    def longshort_basket() -> list[dict]:
+        from berich.signals import LongShortStore
+
+        return LongShortStore(config.db_path).latest().to_dict(orient="records")
+
+    @router.get("/longshort/equity", dependencies=guard)
+    def longshort_equity_route() -> dict:
+        from berich.signals import longshort_equity
+
+        return longshort_equity(config, store)
 
     @router.get("/prices/{ticker}", dependencies=guard)
     def prices(ticker: str, days: int = Query(default=365, ge=1, le=5000)) -> list[dict]:

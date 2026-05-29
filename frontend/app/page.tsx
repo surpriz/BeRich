@@ -7,6 +7,8 @@ import {
   type AssetClass,
   type Backtest,
   type DriftReport,
+  type LongShortEquity,
+  type LongShortLeg,
   type PaperCalibration,
   type PaperClosedTrade,
   type PaperEquity,
@@ -15,6 +17,7 @@ import {
   type Universes,
 } from "@/app/lib/api";
 import { SignalsTable } from "./components/SignalsTable";
+import { LongShortPanel } from "./components/LongShortPanel";
 import { BacktestPanel } from "./components/BacktestPanel";
 import { CalibrationCard } from "./components/CalibrationCard";
 import { DriftPanel } from "./components/DriftPanel";
@@ -31,6 +34,8 @@ type State = {
   paperClosed?: PaperClosedTrade[];
   paperCalibration?: PaperCalibration;
   universes?: Universes;
+  longshortBasket?: LongShortLeg[];
+  longshortEquity?: LongShortEquity;
   error?: string;
 };
 
@@ -52,6 +57,8 @@ export default function Dashboard() {
           paperClosed,
           paperCalibration,
           universes,
+          longshortBasket,
+          longshortEquity,
         ] = await Promise.all([
           api.signals(),
           api.drift(),
@@ -61,6 +68,8 @@ export default function Dashboard() {
           api.paperClosed(),
           api.paperCalibration(),
           api.universes().catch(() => undefined),
+          api.longshortBasket().catch(() => [] as LongShortLeg[]),
+          api.longshortEquity().catch(() => undefined),
         ]);
         if (alive)
           setS({
@@ -72,6 +81,8 @@ export default function Dashboard() {
             paperClosed,
             paperCalibration,
             universes,
+            longshortBasket,
+            longshortEquity,
           });
       } catch (e) {
         if (alive) setS({ error: e instanceof Error ? e.message : "request failed" });
@@ -147,6 +158,10 @@ export default function Dashboard() {
             />
           ) : (
             <Skeleton h={600} />
+          )}
+
+          {s.longshortBasket !== undefined && (
+            <LongShortPanel basket={s.longshortBasket} equity={s.longshortEquity} />
           )}
 
           <div className="grid gap-8 lg:grid-cols-2">
