@@ -49,5 +49,22 @@
   "how.section.signals": "Signals",
   "how.section.signalsBody": "Daily: BUY if P(win) ≥ 0.55, SELL if ≤ 0.30, NEUTRAL otherwise. Position sizing risks at most 1% of capital to the stop.",
   "how.section.honesty": "Honesty",
-  "how.section.honestyBody": "v0.1.0: the baseline does not beat buy & hold on this universe. Surfaced everywhere as 'advisory only'. No edge claim."
+  "how.section.honestyBody": "v0.1.0: the baseline does not beat buy & hold on this universe. Surfaced everywhere as 'advisory only'. No edge claim.",
+  "view.light": "Simple",
+  "view.expert": "Expert",
+  "light.title": "Your ideas today",
+  "light.subtitle": "A plain-language read of today's signals. Advisory only — not financial advice.",
+  "light.buy": "Worth a look",
+  "light.hold": "Wait / unclear",
+  "light.avoid": "Better to avoid",
+  "light.confidence": "Confidence",
+  "light.entry": "Entry price",
+  "light.stop": "Exit if it falls to (safety stop)",
+  "light.target": "Goal (take-profit)",
+  "light.noIdeas": "No clear opportunity today — the model is staying on the sidelines.",
+  "light.howRead": "How to read this",
+  "light.howReadBody": "Green = the model leans positive, grey = unsure, red = leans negative. These are probabilities, not promises. Prices are indicative.",
+  "light.paper": "Practice portfolio (no real money)",
+  "light.vsMarket": "vs. market",
+  "light.topIdeas": "Top opportunities"
 }

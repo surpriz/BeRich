@@ -49,5 +49,22 @@
   "how.section.signals": "Signaux",
   "how.section.signalsBody": "Quotidien : BUY si P(gain) ≥ 0.55, SELL si ≤ 0.30, NEUTRAL sinon. Le sizing risque au plus 1% du capital jusqu'au stop.",
   "how.section.honesty": "Honnêteté",
-  "how.section.honestyBody": "v0.1.0 : la baseline ne bat pas le buy & hold sur cet univers. Affiché partout comme 'outil indicatif'. Aucune prétention d'edge."
+  "how.section.honestyBody": "v0.1.0 : la baseline ne bat pas le buy & hold sur cet univers. Affiché partout comme 'outil indicatif'. Aucune prétention d'edge.",
+  "view.light": "Simple",
+  "view.expert": "Expert",
+  "light.title": "Vos idées du jour",
+  "light.subtitle": "Une lecture en langage clair des signaux du jour. Outil indicatif — ne constitue pas un conseil financier.",
+  "light.buy": "À regarder",
+  "light.hold": "Attendre / incertain",
+  "light.avoid": "Plutôt à éviter",
+  "light.confidence": "Confiance",
+  "light.entry": "Prix d'entrée",
+  "light.stop": "Sortir si ça descend à (sécurité)",
+  "light.target": "Objectif (prise de bénéfice)",
+  "light.noIdeas": "Aucune opportunité claire aujourd'hui — le modèle reste à l'écart.",
+  "light.howRead": "Comment lire ceci",
+  "light.howReadBody": "Vert = le modèle penche positif, gris = incertain, rouge = penche négatif. Ce sont des probabilités, pas des promesses. Les prix sont indicatifs.",
+  "light.paper": "Portefeuille d'entraînement (sans argent réel)",
+  "light.vsMarket": "vs. marché",
+  "light.topIdeas": "Meilleures opportunités"
 }

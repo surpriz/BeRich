@@ -18,6 +18,7 @@ import {
 } from "@/app/lib/api";
 import { SignalsTable } from "./components/SignalsTable";
 import { LongShortPanel } from "./components/LongShortPanel";
+import { LightView } from "./components/LightView";
 import { BacktestPanel } from "./components/BacktestPanel";
 import { CalibrationCard } from "./components/CalibrationCard";
 import { DriftPanel } from "./components/DriftPanel";
@@ -39,10 +40,24 @@ type State = {
   error?: string;
 };
 
+type ViewMode = "light" | "expert";
+const VIEW_KEY = "berich.viewmode";
+
 export default function Dashboard() {
   const [s, setS] = useState<State>({});
   const [activeUniverse, setActiveUniverse] = useState<AssetClass>("us_stocks");
+  const [view, setViewState] = useState<ViewMode>("light");
   const t = useTranslate();
+
+  useEffect(() => {
+    const stored = typeof window !== "undefined" ? window.localStorage.getItem(VIEW_KEY) : null;
+    if (stored === "light" || stored === "expert") setViewState(stored);
+  }, []);
+
+  const setView = (v: ViewMode) => {
+    setViewState(v);
+    if (typeof window !== "undefined") window.localStorage.setItem(VIEW_KEY, v);
+  };
 
   useEffect(() => {
     let alive = true;
@@ -112,14 +127,31 @@ export default function Dashboard() {
           </h1>
           <p className="mt-1 text-sm text-[var(--color-muted)]">{t("app.tagline")}</p>
         </div>
-        {asOf && (
-          <div className="text-right">
-            <div className="text-[11px] uppercase tracking-widest text-[var(--color-faint)]">
-              {t("app.asOf")}
-            </div>
-            <div className="tabular text-lg">{asOf}</div>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1 rounded-md border border-[var(--color-line)] p-0.5 text-xs">
+            {(["light", "expert"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setView(m)}
+                className={`rounded px-3 py-1 ${
+                  view === m
+                    ? "bg-[var(--color-line)]/[0.18] text-[var(--color-fg)]"
+                    : "text-[var(--color-faint)]"
+                }`}
+              >
+                {t(`view.${m}`)}
+              </button>
+            ))}
           </div>
-        )}
+          {asOf && (
+            <div className="text-right">
+              <div className="text-[11px] uppercase tracking-widest text-[var(--color-faint)]">
+                {t("app.asOf")}
+              </div>
+              <div className="tabular text-lg">{asOf}</div>
+            </div>
+          )}
+        </div>
       </header>
 
       <div className="mb-8 rounded-lg border border-[var(--color-neutral)]/30 bg-[var(--color-neutral)]/[0.06] px-4 py-3 text-sm text-[var(--color-neutral)]">
@@ -146,56 +178,74 @@ export default function Dashboard() {
                 {t("banner.experimental")}
               </div>
             )}
-            <h2 className="mb-3 font-display text-xl font-bold">{t("dashboard.todaySignals")}</h2>
-            {filtered ? <SignalsTable signals={filtered} /> : <Skeleton h={280} />}
+            {view === "light" ? (
+              filtered ? (
+                <LightView signals={filtered} paper={s.paperEquity} />
+              ) : (
+                <Skeleton h={280} />
+              )
+            ) : (
+              <>
+                <h2 className="mb-3 font-display text-xl font-bold">
+                  {t("dashboard.todaySignals")}
+                </h2>
+                {filtered ? <SignalsTable signals={filtered} /> : <Skeleton h={280} />}
+              </>
+            )}
           </section>
 
-          {s.paperEquity && s.paperPositions && s.paperClosed ? (
-            <PaperPanel
-              equity={s.paperEquity}
-              positions={s.paperPositions.positions}
-              closed={s.paperClosed}
-            />
-          ) : (
-            <Skeleton h={600} />
-          )}
-
-          {s.longshortBasket !== undefined && (
-            <LongShortPanel basket={s.longshortBasket} equity={s.longshortEquity} />
-          )}
-
-          <div className="grid gap-8 lg:grid-cols-2">
-            <section>
-              {s.paperCalibration ? (
-                <CalibrationCard calibration={s.paperCalibration} />
+          {view === "expert" && (
+            <>
+              {s.paperEquity && s.paperPositions && s.paperClosed ? (
+                <PaperPanel
+                  equity={s.paperEquity}
+                  positions={s.paperPositions.positions}
+                  closed={s.paperClosed}
+                />
               ) : (
-                <Skeleton h={300} />
+                <Skeleton h={600} />
               )}
-            </section>
-            <section className="card flex flex-col justify-between p-5">
-              <div>
-                <h3 className="font-display text-sm font-bold uppercase tracking-widest text-[var(--color-muted)]">
-                  {t("dashboard.export")}
-                </h3>
-                <p className="mt-2 text-sm text-[var(--color-faint)]">{t("dashboard.exportDesc")}</p>
-              </div>
-              <a
-                href={PAPER_EXPORT_URL}
-                className="mt-4 inline-block self-start rounded-md border border-[var(--color-line)] bg-[var(--color-line)]/[0.04] px-4 py-2 text-sm text-[var(--color-bull)] hover:bg-[var(--color-line)]/[0.10]"
-              >
-                {t("dashboard.downloadCsv")}
-              </a>
-            </section>
-          </div>
 
-          <div className="grid gap-8 lg:grid-cols-5">
-            <section className="lg:col-span-3">
-              {s.backtest ? <BacktestPanel bt={s.backtest} /> : <Skeleton h={460} />}
-            </section>
-            <section className="lg:col-span-2">
-              {s.drift ? <DriftPanel drift={s.drift} /> : <Skeleton h={460} />}
-            </section>
-          </div>
+              {s.longshortBasket !== undefined && (
+                <LongShortPanel basket={s.longshortBasket} equity={s.longshortEquity} />
+              )}
+
+              <div className="grid gap-8 lg:grid-cols-2">
+                <section>
+                  {s.paperCalibration ? (
+                    <CalibrationCard calibration={s.paperCalibration} />
+                  ) : (
+                    <Skeleton h={300} />
+                  )}
+                </section>
+                <section className="card flex flex-col justify-between p-5">
+                  <div>
+                    <h3 className="font-display text-sm font-bold uppercase tracking-widest text-[var(--color-muted)]">
+                      {t("dashboard.export")}
+                    </h3>
+                    <p className="mt-2 text-sm text-[var(--color-faint)]">
+                      {t("dashboard.exportDesc")}
+                    </p>
+                  </div>
+                  <a
+                    href={PAPER_EXPORT_URL}
+                    className="mt-4 inline-block self-start rounded-md border border-[var(--color-line)] bg-[var(--color-line)]/[0.04] px-4 py-2 text-sm text-[var(--color-bull)] hover:bg-[var(--color-line)]/[0.10]"
+                  >
+                    {t("dashboard.downloadCsv")}
+                  </a>
+                </section>
+              </div>
+
+              <div className="grid gap-8 lg:grid-cols-5">
+                <section className="lg:col-span-3">
+                  {s.backtest ? <BacktestPanel bt={s.backtest} /> : <Skeleton h={460} />}
+                </section>
+                <section className="lg:col-span-2">
+                  {s.drift ? <DriftPanel drift={s.drift} /> : <Skeleton h={460} />}
+                </section>
+              </div>
+            </>
+          )}
         </div>
       )}
     </main>
