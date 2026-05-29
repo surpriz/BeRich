@@ -12,6 +12,7 @@ scheduler) doesn't pull torch on the fast paths.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from berich.backtest import BacktestConfig, run_backtest
@@ -30,6 +31,30 @@ if TYPE_CHECKING:
     from berich.models.base import Model
 
 logger = logging.getLogger(__name__)
+
+# Feature-engineering search: the HPO can toggle whole feature families on/off (jointly with
+# model hyperparameters) to find which engineered groups actually help. Names match
+# FEATURE_COLUMNS; any column not in a group (e.g. earnings/news add-ons) is always kept.
+FEATURE_GROUPS: dict[str, list[str]] = {
+    "momentum": ["ret_1", "ret_5", "mom_10", "mom_20", "mom_60", "mom_120"],
+    "oscillators": ["rsi_14", "macd", "macd_signal", "macd_hist"],
+    "volatility": ["atr_pct", "rvol_20"],
+    "trend": ["close_sma20_ratio", "close_sma50_ratio", "dist_high_60", "dist_low_60"],
+    "volume": ["volume_z20"],
+    "calendar": ["month_sin", "month_cos", "days_to_month_end"],
+    "market_regime": ["spy_ret_20", "spy_rvol_20"],
+}
+
+
+def _select_features(trial: optuna.Trial, available: list[str]) -> list[str]:
+    """Trial-driven feature subset: each group is toggled on/off; extras always kept."""
+    grouped = {c for cols in FEATURE_GROUPS.values() for c in cols}
+    chosen: set[str] = set()
+    for group, cols in FEATURE_GROUPS.items():
+        if trial.suggest_categorical(f"feat_{group}", [True, False]):
+            chosen.update(cols)
+    chosen.update(c for c in available if c not in grouped)  # earnings/news add-ons, etc.
+    return [c for c in available if c in chosen]
 
 SUPPORTED_MODELS = ("lgbm", "lstm", "patchtst", "tft")
 
@@ -104,12 +129,24 @@ def objective_for(
     *,
     device: str | None = None,
     entry_threshold: float = 0.5,
+    search_features: bool = True,
 ) -> Callable[[optuna.Trial], float]:
-    """Return an Optuna objective: maximize out-of-sample strategy Sharpe."""
+    """Return an Optuna objective: maximize out-of-sample strategy Sharpe.
+
+    When ``search_features`` is set, the trial also toggles feature families on/off so the
+    search optimizes the feature set jointly with the model hyperparameters.
+    """
 
     def objective(trial: optuna.Trial) -> float:
+        ds = dataset
+        if search_features:
+            cols = _select_features(trial, list(dataset.x.columns))
+            if not cols:
+                return 0.0  # degenerate empty feature set
+            ds = replace(dataset, x=dataset.x[cols])
+            trial.set_user_attr("features", cols)
         factory: Callable[[], Model] = _factory_from_trial(model_name, trial, device=device)
-        oof = oof_predict(dataset, factory, embargo=label_cfg.horizon_days)
+        oof = oof_predict(ds, factory, embargo=label_cfg.horizon_days)
         bt = run_backtest(
             prices,
             oof,
@@ -290,6 +327,28 @@ def run_longshort_hpo(
     return study
 
 
+def best_params_for(config: Config, model_name: str, *, study_prefix: str = "berich-hpo") -> dict:
+    """Best model hyperparameters from the latest HPO study (feature toggles excluded).
+
+    Returns ``{}`` if no study exists yet, so the nightly retrain falls back to defaults.
+    The ``feat_*`` feature-selection keys are dropped — production retrain keeps the full
+    feature set for serving consistency (the search result is logged for inspection).
+    """
+    import optuna  # noqa: PLC0415
+
+    try:
+        study = optuna.load_study(
+            study_name=f"{study_prefix}-{model_name}", storage=f"sqlite:///{config.optuna_db}"
+        )
+        best = study.best_params
+    except (KeyError, ValueError):
+        return {}
+    except Exception:  # noqa: BLE001 — a missing/locked study must never break the retrain
+        logger.warning("could not load HPO study for %s", model_name, exc_info=True)
+        return {}
+    return {k: v for k, v in best.items() if not k.startswith("feat_")}
+
+
 def _log_to_mlflow(model_name: str, study: optuna.Study) -> None:
     try:
         import mlflow  # noqa: PLC0415
@@ -304,8 +363,10 @@ def _log_to_mlflow(model_name: str, study: optuna.Study) -> None:
 
 
 __all__ = [
+    "FEATURE_GROUPS",
     "LONGSHORT_MODELS",
     "SUPPORTED_MODELS",
+    "best_params_for",
     "objective_for",
     "run_hpo",
     "run_longshort_hpo",

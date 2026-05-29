@@ -139,7 +139,12 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
 
 def _cmd_signals(args: argparse.Namespace) -> int:
     from berich.data.store import OhlcvStore
-    from berich.signals import SignalStore, generate_multi_asset_signals, generate_signals
+    from berich.signals import (
+        Signal,
+        SignalStore,
+        generate_multi_asset_signals,
+        generate_signals,
+    )
 
     config = Config.load(args.config)
     store = OhlcvStore(config.ohlcv_dir)
@@ -153,14 +158,19 @@ def _cmd_signals(args: argparse.Namespace) -> int:
     saved = SignalStore(config.db_path).save(signals)
     as_of = signals[0].date.date()
     print(f"\nSignals for {as_of} ({saved} saved to {config.db_path}):\n")  # noqa: T201
+    # Show the calibrated P(win) when present — that's the value the BUY/SELL decision uses.
     header = (
-        f"{'TICKER':<8}{'SIGNAL':<9}{'PROBA':>7}{'ENTRY':>10}"
+        f"{'TICKER':<8}{'SIGNAL':<9}{'P(win)':>7}{'ENTRY':>10}"
         f"{'STOP':>10}{'TARGET':>10}{'SHARES':>8}"
     )
     print(header)  # noqa: T201
-    for s in sorted(signals, key=lambda x: x.proba, reverse=True):
+
+    def _pwin(sig: Signal) -> float:
+        return sig.proba_calibrated if sig.proba_calibrated is not None else sig.proba
+
+    for s in sorted(signals, key=_pwin, reverse=True):
         print(  # noqa: T201
-            f"{s.ticker:<8}{s.signal:<9}{s.proba:>7.3f}{s.entry:>10.2f}"
+            f"{s.ticker:<8}{s.signal:<9}{_pwin(s):>7.3f}{s.entry:>10.2f}"
             f"{s.stop_loss:>10.2f}{s.take_profit:>10.2f}{s.size_shares:>8d}"
         )
     return 0

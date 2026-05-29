@@ -46,7 +46,7 @@ def _dataset_and_prices():
 
 def test_objective_returns_float_with_fixed_trial():
     ds, prices, label_cfg = _dataset_and_prices()
-    objective = objective_for("lgbm", ds, label_cfg, prices)
+    objective = objective_for("lgbm", ds, label_cfg, prices, search_features=False)
     trial = optuna.trial.FixedTrial(
         {
             "n_estimators": 100,
@@ -68,3 +68,14 @@ def test_small_study_optimizes_and_records_attrs():
     study.optimize(objective, n_trials=2)
     assert isinstance(study.best_value, float)
     assert "sharpe" in study.best_trial.user_attrs
+
+
+def test_feature_search_records_selected_features():
+    ds, prices, label_cfg = _dataset_and_prices()
+    objective = objective_for("lgbm", ds, label_cfg, prices, search_features=True)
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=3)
+    # The search toggles feature families and records the chosen subset.
+    feats = study.best_trial.user_attrs.get("features")
+    assert feats is None or isinstance(feats, list)
+    assert any(k.startswith("feat_") for k in study.best_trial.params)

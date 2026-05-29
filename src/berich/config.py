@@ -36,7 +36,8 @@ class LabelingConfig(BaseModel):
 class SignalConfig(BaseModel):
     """Daily signal thresholds and position-sizing parameters."""
 
-    buy_threshold: float = 0.55
+    # On the calibrated win probability; breakeven ~0.33 for the 2:1 triple barrier.
+    buy_threshold: float = 0.40
     sell_threshold: float = 0.30
     capital: float = 10_000.0
     risk_pct: float = 0.01

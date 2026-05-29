@@ -196,26 +196,40 @@ def longshort_signals_job(config: Config) -> dict[str, object]:
     return {"positions": len(book.positions), "saved": saved}
 
 
-def _zoo_factory(model_name: str, *, device: str | None = None) -> tuple[str, dict, Callable]:
-    """Return ``(framework, hyperparams, factory)`` for a zoo model name."""
+def _cfg_kwargs(config_cls: type, params: dict) -> dict:
+    """Keep only the params that are real fields of ``config_cls`` (drops HPO extras)."""
+    from dataclasses import fields  # noqa: PLC0415
+
+    valid = {f.name for f in fields(config_cls)}
+    return {k: v for k, v in params.items() if k in valid}
+
+
+def _zoo_factory(
+    model_name: str, *, device: str | None = None, params: dict | None = None
+) -> tuple[str, dict, Callable]:
+    """Return ``(framework, hyperparams, factory)`` for a zoo model name.
+
+    ``params`` (best from the latest HPO study) overrides the defaults when supplied.
+    """
+    params = params or {}
     if model_name == "lgbm":
         from berich.models import LGBMModel  # noqa: PLC0415
 
-        return "lightgbm", {}, LGBMModel
+        return "lightgbm", params, lambda: LGBMModel(**params)
     if model_name == "patchtst":
         from berich.models import PatchTSTConfig, PatchTSTModel  # noqa: PLC0415
 
-        cfg = PatchTSTConfig(device=device)
+        cfg = PatchTSTConfig(device=device, **_cfg_kwargs(PatchTSTConfig, params))
         return "patchtst", cfg.as_dict(), lambda: PatchTSTModel(cfg)
     if model_name == "lstm":
         from berich.models import LSTMConfig, LSTMModel  # noqa: PLC0415
 
-        cfg = LSTMConfig(device=device)
+        cfg = LSTMConfig(device=device, **_cfg_kwargs(LSTMConfig, params))
         return "lstm", cfg.as_dict(), lambda: LSTMModel(cfg)
     if model_name == "tft":
         from berich.models import TFTConfig, TFTModel  # noqa: PLC0415
 
-        cfg = TFTConfig(device=device)
+        cfg = TFTConfig(device=device, **_cfg_kwargs(TFTConfig, params))
         return "tft", cfg.as_dict(), lambda: TFTModel(cfg)
     msg = f"unknown zoo model '{model_name}'"
     raise ValueError(msg)
@@ -231,13 +245,16 @@ def retrain_zoo_job(config: Config, *, date_str: str | None = None) -> dict[str,
     """
     from berich.models import promote  # noqa: PLC0415
     from berich.training.deep import baseline_sharpe, train_deep_model  # noqa: PLC0415
+    from berich.training.hpo import best_params_for  # noqa: PLC0415
 
     base = baseline_sharpe(config)
     day = date_str or datetime.now(UTC).date().isoformat()
 
     results = []
     for model_name in config.zoo.enabled_models:
-        framework, hyperparams, factory = _zoo_factory(model_name)
+        # Use the best hyperparameters from the latest HPO study (weekend search), if any.
+        params = best_params_for(config, model_name)
+        framework, hyperparams, factory = _zoo_factory(model_name, params=params)
         name = f"{model_name}-{day}"
         res = train_deep_model(
             config,
