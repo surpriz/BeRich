@@ -75,7 +75,15 @@ def compute_metrics(
     equity = equity_curve(daily_returns)
     total = float(equity.iloc[-1] - 1.0) if not equity.empty else 0.0
     years = len(daily_returns) / TRADING_DAYS if len(daily_returns) else np.nan
-    cagr = float((1.0 + total) ** (1.0 / years) - 1.0) if years and years > 0 else 0.0
+    end_equity = 1.0 + total
+    # A non-positive end equity (e.g. the 2020 negative-crude episode poisoning a futures
+    # series) makes the fractional power complex — clamp to a total loss instead of crashing.
+    if years and years > 0 and end_equity > 0:
+        cagr = float(end_equity ** (1.0 / years) - 1.0)
+    elif end_equity <= 0:
+        cagr = -1.0
+    else:
+        cagr = 0.0
 
     trades = trade_returns or []
     win_rate = float(np.mean([t > 0 for t in trades])) if trades else 0.0

@@ -250,19 +250,31 @@ def _base_model(store: OhlcvStore, config: Config, label_cfg: LabelConfig) -> Mo
     return _train_model(store, config, label_cfg, earnings_store=None, news_store=None)
 
 
+def _class_model(config: Config, asset_class: str, fallback: Model) -> Model:
+    """Dedicated promoted model for an asset class if present, else the US fallback."""
+    active = load_active(config.models_dir_for(asset_class))
+    if active is not None and active[1].feature_columns == feature_columns():
+        logger.info("serving dedicated %s model '%s'", asset_class, active[1].name)
+        return active[0]
+    return fallback
+
+
 def generate_multi_asset_signals(config: Config, store: OhlcvStore) -> list[Signal]:
     """Advisory signals for the non-US universes (FR stocks, forex, crypto, commodities).
 
-    Scored with a base-22 model and each class's own regime proxy (BTC for crypto, etc.).
-    Earnings/news are off (no caches). Calibrator/meta filter are US-specific, so not applied.
+    Uses the **dedicated** per-class model when one has been promoted
+    (``data/models/<class>/``), otherwise falls back to a base-22 US model. Each class uses
+    its own regime proxy (BTC for crypto, the dollar index for forex, …). Earnings/news are
+    off (no caches); the US calibrator/meta filter are not applied to these experimental assets.
     """
     label_cfg = LabelConfig(**config.labeling.model_dump())
-    model = _base_model(store, config, label_cfg)
+    fallback = _base_model(store, config, label_cfg)
     out: list[Signal] = []
     for asset_class in ("fr_stocks", "forex", "crypto", "commodities"):
         tickers = config.universes.get(asset_class)
         if not tickers:
             continue
+        model = _class_model(config, asset_class, fallback)
         market = store.load(market_reference_for(asset_class))
         for ticker in tickers:
             df = store.load(ticker)
