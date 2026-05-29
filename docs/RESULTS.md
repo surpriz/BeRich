@@ -725,3 +725,36 @@ None are started. The current v0.2.0+ infrastructure (data layer with
 OHLCV + earnings + news + multi-universe, walk-forward backtest with
 realistic costs, registry guard, paper book, production deployment) is
 the platform on which any of these would sit.
+
+---
+
+## Phase 10 — GPU model zoo, market-neutral long/short, adaptive advice (v0.5.0)
+
+Infrastructure pivot per the prior verdict ("change the problem, not the algorithm").
+All results below are walk-forward OOS with realistic fees + slippage; none clears the
+guard yet, but each is an honest data point on the new platform.
+
+**GPU zoo on US daily long-only (binary triple-barrier, mega watchlist):**
+- LightGBM baseline: AUC ≈ 0.515, Sharpe ≈ 0.398.
+- PatchTST (transformer, pure torch, GPU, 12 epochs): **AUC 0.524, Sharpe 0.492** — beats
+  the LGBM baseline on both, still below buy & hold (Sharpe 1.149). Not promoted.
+- Confirms the 9-phase verdict holds for deeper architectures: better models, no edge over
+  passive equity on this problem.
+
+**Crypto (long-only triple-barrier, BTC/ETH/SOL, BTC as regime proxy):**
+- OOS **AUC 0.5397** — the highest single-name daily AUC in the project, above the ~0.51
+  US-equity ceiling. Strategy Sharpe 0.257 vs crypto B&H 0.918 (bull-market dominated),
+  but max DD -33% vs -88%. Directional signal is real and stronger than US equities.
+
+**Market-neutral long/short (cross-sectional, 274 tickers, dollar-neutral, H=5):**
+- Base 22 single-name features + LGBM ranker: rank-IC ≈ 0, Sharpe -0.04 → gate refuses.
+- **+ within-date cross-sectional features (`*_xs`)**: rank-IC still ≈ 0 but Sharpe
+  **-0.04 → +0.35** (total +28.7%), DSR 0.29, p 0.17. A real improvement from the relative
+  features + inverse-vol construction; not yet statistically significant (DSR < 0.95).
+
+**Verdict:** the platform now supports the recommended pivots end-to-end — GPU zoo
+(LSTM/PatchTST/ensemble + Optuna HPO, dual-GPU, nightly retrain), market-neutral long/short
+(rank-IC OOF, dollar-neutral backtest, deflated-Sharpe gate), crypto, adaptive SL/TP,
+calibration, and meta-labeling. No combination clears the (adapted) guard yet; the deep
+rankers + HPO on the full long/short panel and the crypto zoo are the open GPU search the
+nightly/weekend jobs now automate.
