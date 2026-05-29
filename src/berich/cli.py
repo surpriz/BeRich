@@ -356,17 +356,24 @@ def _cmd_longshort(args: argparse.Namespace) -> int:
         LSTMRanker,
         ModelMetadata,
         PatchTSTRanker,
+        TFTRanker,
         promote,
         save_model,
     )
     from berich.training.cross_sectional import oof_predict_cross_sectional
 
-    ranker_factories = {"lgbm": LGBMRanker, "patchtst": PatchTSTRanker, "lstm": LSTMRanker}
+    ranker_factories = {
+        "lgbm": LGBMRanker,
+        "patchtst": PatchTSTRanker,
+        "lstm": LSTMRanker,
+        "tft": TFTRanker,
+    }
     ranker_factory = ranker_factories[args.model]
     framework_for = {
         "lgbm": "lightgbm-ranker",
         "patchtst": "patchtst-ranker",
         "lstm": "lstm-ranker",
+        "tft": "tft-ranker",
     }
 
     config = Config.load(args.config)
@@ -811,9 +818,9 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subcomm
     )
     p_ls.add_argument(
         "--model",
-        choices=["lgbm", "patchtst", "lstm"],
+        choices=["lgbm", "patchtst", "lstm", "tft"],
         default="lgbm",
-        help="Ranker model (lgbm = CPU baseline; patchtst/lstm = GPU deep rankers).",
+        help="Ranker model (lgbm = CPU baseline; patchtst/lstm/tft = GPU deep rankers).",
     )
     p_ls.add_argument("--name", default="longshort-ranker")
     p_ls.add_argument(

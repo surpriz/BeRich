@@ -5,7 +5,14 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from berich.models import LSTMConfig, LSTMModel, PatchTSTConfig, PatchTSTModel
+from berich.models import (
+    LSTMConfig,
+    LSTMModel,
+    PatchTSTConfig,
+    PatchTSTModel,
+    TFTConfig,
+    TFTModel,
+)
 from berich.models.base import Model
 
 
@@ -52,6 +59,18 @@ def test_patchtst_is_model_and_predicts_in_range():
         device="cpu",
     )
     model = PatchTSTModel(cfg).fit(x, y, tickers=tickers)
+    assert isinstance(model, Model)
+    proba = model.predict_proba(x, tickers=tickers)
+    assert proba.shape == (len(x),)
+    assert np.all((proba >= 0.0) & (proba <= 1.0))
+
+
+def test_tft_is_model_and_predicts_in_range():
+    x, y, tickers = _panel()
+    cfg = TFTConfig(
+        lookback=20, d_model=16, n_heads=2, num_layers=1, epochs=3, batch_size=32, device="cpu"
+    )
+    model = TFTModel(cfg).fit(x, y, tickers=tickers)
     assert isinstance(model, Model)
     proba = model.predict_proba(x, tickers=tickers)
     assert proba.shape == (len(x),)

@@ -28,7 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Train the model zoo / run HPO")
     p.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
     p.add_argument(
-        "--model", default="zoo", choices=["lgbm", "lstm", "patchtst", "ensemble", "zoo"]
+        "--model", default="zoo", choices=["lgbm", "lstm", "patchtst", "tft", "ensemble", "zoo"]
     )
     p.add_argument("--hpo", action="store_true", help="Run Optuna search instead of a single fit")
     p.add_argument("--trials", type=int, default=20)

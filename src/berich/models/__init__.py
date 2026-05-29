@@ -15,7 +15,8 @@ from berich.models.registry import (
     promote,
     save_model,
 )
-from berich.models.sequence_ranker import LSTMRanker, PatchTSTRanker
+from berich.models.sequence_ranker import LSTMRanker, PatchTSTRanker, TFTRanker
+from berich.models.tft import TFTConfig, TFTModel
 
 __all__ = [
     "LGBMModel",
@@ -30,6 +31,9 @@ __all__ = [
     "PatchTSTModel",
     "PatchTSTRanker",
     "StackingEnsemble",
+    "TFTConfig",
+    "TFTModel",
+    "TFTRanker",
     "list_models",
     "load_active",
     "load_model",

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_MODELS = ("lgbm", "lstm", "patchtst")
+SUPPORTED_MODELS = ("lgbm", "lstm", "patchtst", "tft")
 
 
 def _factory_from_trial(
@@ -78,6 +78,20 @@ def _factory_from_trial(
             device=device,
         )
         return lambda: PatchTSTModel(cfg)
+    if model_name == "tft":
+        from berich.models import TFTConfig, TFTModel  # noqa: PLC0415
+
+        cfg = TFTConfig(
+            lookback=trial.suggest_int("lookback", 24, 80, step=8),
+            d_model=trial.suggest_categorical("d_model", [32, 64, 128]),
+            n_heads=trial.suggest_categorical("n_heads", [2, 4, 8]),
+            num_layers=trial.suggest_int("num_layers", 1, 2),
+            dropout=trial.suggest_float("dropout", 0.0, 0.4),
+            lr=trial.suggest_float("lr", 1e-4, 3e-3, log=True),
+            epochs=trial.suggest_int("epochs", 20, 60, step=10),
+            device=device,
+        )
+        return lambda: TFTModel(cfg)
     msg = f"unknown model '{model_name}' (expected one of {SUPPORTED_MODELS})"
     raise ValueError(msg)
 
@@ -150,7 +164,7 @@ def run_hpo(
     return study
 
 
-LONGSHORT_MODELS = ("lgbm", "patchtst", "lstm")
+LONGSHORT_MODELS = ("lgbm", "patchtst", "lstm", "tft")
 
 
 def _ranker_factory_from_trial(
@@ -191,6 +205,19 @@ def _ranker_factory_from_trial(
             device=device,
         )
         return lambda: LSTMRanker(cfg)
+    if model_name == "tft":
+        from berich.models import TFTConfig, TFTRanker  # noqa: PLC0415
+
+        cfg = TFTConfig(
+            lookback=trial.suggest_int("lookback", 24, 80, step=8),
+            d_model=trial.suggest_categorical("d_model", [32, 64, 128]),
+            n_heads=trial.suggest_categorical("n_heads", [2, 4, 8]),
+            num_layers=trial.suggest_int("num_layers", 1, 2),
+            dropout=trial.suggest_float("dropout", 0.0, 0.4),
+            lr=trial.suggest_float("lr", 1e-4, 3e-3, log=True),
+            device=device,
+        )
+        return lambda: TFTRanker(cfg)
     msg = f"unknown ranker '{model_name}' (expected one of {LONGSHORT_MODELS})"
     raise ValueError(msg)
 

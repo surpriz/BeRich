@@ -205,6 +205,11 @@ def _zoo_factory(model_name: str, *, device: str | None = None) -> tuple[str, di
 
         cfg = LSTMConfig(device=device)
         return "lstm", cfg.as_dict(), lambda: LSTMModel(cfg)
+    if model_name == "tft":
+        from berich.models import TFTConfig, TFTModel  # noqa: PLC0415
+
+        cfg = TFTConfig(device=device)
+        return "tft", cfg.as_dict(), lambda: TFTModel(cfg)
     msg = f"unknown zoo model '{model_name}'"
     raise ValueError(msg)
 

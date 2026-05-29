@@ -15,6 +15,7 @@ from torch import nn
 from berich.models.lstm import LSTMConfig, _LSTMNet
 from berich.models.patchtst import PatchTSTConfig, _PatchTSTNet
 from berich.models.sequence_base import SequenceClassifier
+from berich.models.tft import TFTConfig, _TFTNet
 
 
 class SequenceRegressor(SequenceClassifier):
@@ -65,4 +66,20 @@ class PatchTSTRanker(SequenceRegressor):
         )
 
 
-__all__ = ["LSTMRanker", "PatchTSTRanker", "SequenceRegressor"]
+class TFTRanker(SequenceRegressor):
+    """TFT-style ranker for cross-sectional forward-return prediction."""
+
+    config_cls = TFTConfig
+    cfg: TFTConfig
+
+    def _build_net(self, n_features: int) -> nn.Module:
+        return _TFTNet(
+            n_features=n_features,
+            d_model=self.cfg.d_model,
+            n_heads=self.cfg.n_heads,
+            num_layers=self.cfg.num_layers,
+            dropout=self.cfg.dropout,
+        )
+
+
+__all__ = ["LSTMRanker", "PatchTSTRanker", "SequenceRegressor", "TFTRanker"]
