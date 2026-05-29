@@ -313,3 +313,45 @@ signals:
   sell_threshold: 0.30    # P(win) <= this -> SELL / exit bias
   capital: 10000.0        # account size for sizing
   risk_pct: 0.01          # fraction of capital risked per trade (to the stop)
+
+# Phase polish v2 — multi-asset universes. The model was trained on US
+# stocks only; signals on the other classes are emitted using the same
+# pipeline but flagged "experimental" in the UI. Empty lists are fine —
+# the scheduler simply skips them. yfinance ticker syntax: ``.PA`` for
+# Euronext Paris, ``=X`` for spot FX pairs, ``-USD`` for crypto,
+# ``=F`` for futures contracts (continuous front-month).
+universes:
+  us_stocks:
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMZN
+    - GOOGL
+    - META
+    - JPM
+    - XOM
+    - JNJ
+    - SPY
+  fr_stocks:
+    - AIR.PA       # Airbus
+    - MC.PA        # LVMH
+    - BNP.PA       # BNP Paribas
+    - OR.PA        # L'Oréal
+    - SAN.PA       # Sanofi
+    - TTE.PA       # TotalEnergies
+    - SU.PA        # Schneider Electric
+    - DG.PA        # Vinci
+  forex:
+    - EURUSD=X
+    - GBPUSD=X
+    - USDJPY=X
+    - AUDUSD=X
+    - USDCAD=X
+  crypto:
+    - BTC-USD
+    - ETH-USD
+    - SOL-USD
+  commodities:
+    - GC=F         # gold front-month
+    - CL=F         # WTI crude front-month
+    - SI=F         # silver front-month

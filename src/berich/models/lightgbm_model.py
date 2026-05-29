@@ -64,3 +64,15 @@ class LGBMModel:
     @property
     def feature_importances_(self) -> np.ndarray:
         return np.asarray(self._clf.feature_importances_)
+
+    def feature_contributions(self, x: pd.DataFrame) -> np.ndarray:
+        """Per-sample SHAP-style feature contributions for the positive class.
+
+        Uses LightGBM's native ``predict(pred_contrib=True)`` on the underlying
+        booster — returns ``(n_samples, n_features + 1)`` where the last column
+        is the base value. The signs and magnitudes sum to the logit (not the
+        probability), but rank ordering is what the UI cares about: positive
+        contribution => pushed the proba up for that bar.
+        """
+        booster = self._clf.booster_
+        return np.asarray(booster.predict(x, pred_contrib=True))

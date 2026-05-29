@@ -112,6 +112,28 @@ systemctl restart berich-frontend               # `next build` runs in ExecStart
 `ExecStartPre=/usr/bin/npm run build`), so a restart is enough — no manual
 `npm run build` step. The API/scheduler reload the Python source directly.
 
+### Polish v2 (multi-asset + i18n + ticker drill-down)
+
+Polish v2 added the `/api/signals/{ticker}/explain` and `/api/universes`
+endpoints, the `universes:` block in `config/berich.yaml`, a homemade
+i18n context (EN/FR, default FR, persisted in `localStorage`), per-ticker
+detail pages (`/ticker/<TICKER>`) and a `/how-it-works` walkthrough. No
+new service, no new secret, no new background job — just a backend +
+frontend rebuild:
+
+```bash
+cd /root/BeRich
+git pull
+systemctl restart berich-api berich-frontend
+```
+
+The model is still trained on US stocks only; non-US-stocks universes
+display a banner explicitly flagging their signals as experimental and
+not validated. The scheduler now ingests every ticker in
+`config.all_runtime_tickers()` (legacy `watchlist` ∪ all universes) so
+the dashboard has price + signal history for every symbol you list,
+not just the US ones.
+
 If you change a systemd unit file, `systemctl daemon-reload` first.
 
 ### Rotate the API key

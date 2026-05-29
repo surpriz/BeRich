@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Signal } from "@/app/lib/api";
 import { SignalBadge } from "./SignalBadge";
 
@@ -17,6 +18,13 @@ function ProbaBar({ p }: { p: number }) {
 }
 
 export function SignalsTable({ signals }: { signals: Signal[] }) {
+  if (signals.length === 0) {
+    return (
+      <div className="card p-6 text-sm text-[var(--color-faint)]">
+        No signals for this universe yet — run <code className="tabular">berich signals run</code>.
+      </div>
+    );
+  }
   return (
     <div className="card overflow-hidden">
       <table className="w-full border-collapse text-sm">
@@ -35,21 +43,46 @@ export function SignalsTable({ signals }: { signals: Signal[] }) {
           {signals.map((s, i) => (
             <tr
               key={s.ticker}
-              className="rise border-b border-[var(--color-line)]/50 transition-colors last:border-0 hover:bg-white/[0.02]"
+              className="rise group border-b border-[var(--color-line)]/50 transition-colors last:border-0 hover:bg-white/[0.03]"
               style={{ animationDelay: `${i * 40}ms` }}
             >
-              <td className="px-5 py-3 font-display text-base font-bold">{s.ticker}</td>
-              <td className="px-3 py-3">
-                <SignalBadge signal={s.signal} />
+              <td className="px-5 py-3 font-display text-base font-bold">
+                <Link
+                  href={`/ticker/${encodeURIComponent(s.ticker)}`}
+                  className="block group-hover:text-[var(--color-bull)]"
+                >
+                  {s.ticker}
+                </Link>
               </td>
               <td className="px-3 py-3">
-                <ProbaBar p={s.proba} />
+                <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="block">
+                  <SignalBadge signal={s.signal} />
+                </Link>
               </td>
-              <td className="tabular px-3 py-3 text-right">{fmt(s.entry)}</td>
-              <td className="tabular px-3 py-3 text-right text-[var(--color-bear)]/80">{fmt(s.stop_loss)}</td>
-              <td className="tabular px-3 py-3 text-right text-[var(--color-bull)]/80">{fmt(s.take_profit)}</td>
+              <td className="px-3 py-3">
+                <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="block">
+                  <ProbaBar p={s.proba} />
+                </Link>
+              </td>
+              <td className="tabular px-3 py-3 text-right">
+                <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="block">
+                  {fmt(s.entry)}
+                </Link>
+              </td>
+              <td className="tabular px-3 py-3 text-right text-[var(--color-bear)]/80">
+                <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="block">
+                  {fmt(s.stop_loss)}
+                </Link>
+              </td>
+              <td className="tabular px-3 py-3 text-right text-[var(--color-bull)]/80">
+                <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="block">
+                  {fmt(s.take_profit)}
+                </Link>
+              </td>
               <td className="tabular px-5 py-3 text-right font-medium">
-                {s.size_shares > 0 ? s.size_shares : <span className="text-[var(--color-faint)]">—</span>}
+                <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="block">
+                  {s.size_shares > 0 ? s.size_shares : <span className="text-[var(--color-faint)]">—</span>}
+                </Link>
               </td>
             </tr>
           ))}

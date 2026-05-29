@@ -44,6 +44,52 @@ class SignalConfig(BaseModel):
 
 UNIVERSE_NAMES = ("mega", "mid", "small", "all")
 
+# Phase polish v2 — multi-asset universes. The model was trained on US stocks
+# only; everything below is best-effort signal generation with the same
+# pipeline. The frontend shows an "experimental" banner on non-US universes
+# so users know the validation envelope.
+ASSET_UNIVERSE_NAMES = ("us_stocks", "fr_stocks", "forex", "crypto", "commodities")
+US_STOCKS_UNIVERSE = "us_stocks"
+
+
+class AssetUniverses(BaseModel):
+    """Per-asset-class ticker lists. Empty lists are fine — they're just skipped."""
+
+    us_stocks: list[str] = Field(default_factory=list)
+    fr_stocks: list[str] = Field(default_factory=list)
+    forex: list[str] = Field(default_factory=list)
+    crypto: list[str] = Field(default_factory=list)
+    commodities: list[str] = Field(default_factory=list)
+
+    def get(self, name: str) -> list[str]:
+        """Return the ticker list for ``name`` (raises on unknown universe)."""
+        if name not in ASSET_UNIVERSE_NAMES:
+            msg = f"unknown asset universe '{name}' (expected one of {ASSET_UNIVERSE_NAMES})"
+            raise ValueError(msg)
+        return list(getattr(self, name))
+
+    def all_tickers(self) -> list[str]:
+        """Union of every populated universe, deduped by upper(ticker)."""
+        seen: set[str] = set()
+        out: list[str] = []
+        for name in ASSET_UNIVERSE_NAMES:
+            for ticker in self.get(name):
+                upper = ticker.upper()
+                if upper in seen:
+                    continue
+                seen.add(upper)
+                out.append(ticker)
+        return out
+
+    def asset_class(self, ticker: str) -> str | None:
+        """Reverse-lookup: which universe owns ``ticker``? Returns None if absent."""
+        upper = ticker.upper()
+        for name in ASSET_UNIVERSE_NAMES:
+            for member in self.get(name):
+                if member.upper() == upper:
+                    return name
+        return None
+
 
 class Config(BaseModel):
     """Top-level project configuration."""
@@ -55,6 +101,10 @@ class Config(BaseModel):
     # missing entries as "no extra tickers".
     mid_cap_universe: list[str] = Field(default_factory=list)
     small_cap_universe: list[str] = Field(default_factory=list)
+    # Phase polish v2 — multi-asset. When populated, the union of every
+    # universe is added to the runtime ticker set; ``watchlist`` is kept for
+    # backward compat with the daily-LGBM signals path (US stocks only).
+    universes: AssetUniverses = Field(default_factory=AssetUniverses)
     labeling: LabelingConfig = Field(default_factory=LabelingConfig)
     signals: SignalConfig = Field(default_factory=SignalConfig)
 
@@ -84,6 +134,40 @@ class Config(BaseModel):
             return out
         msg = f"unknown universe '{name}' (expected one of {UNIVERSE_NAMES})"
         raise ValueError(msg)
+
+    def all_runtime_tickers(self) -> list[str]:
+        """Every ticker the daily scheduler should ingest.
+
+        Union of the legacy ``watchlist`` (mega-cap, the only universe the
+        model was actually trained on) and all populated multi-asset
+        ``universes``. Deduped by upper(ticker), first-occurrence order.
+        """
+        seen: set[str] = set()
+        out: list[str] = []
+        for ticker in [*self.watchlist, *self.universes.all_tickers()]:
+            upper = ticker.upper()
+            if upper in seen:
+                continue
+            seen.add(upper)
+            out.append(ticker)
+        return out
+
+    def asset_class_for(self, ticker: str) -> str:
+        """Map ``ticker`` to its asset class label for the dashboard / honesty banner.
+
+        Defaults to ``us_stocks`` for anything in the legacy watchlist
+        (which is what the model was trained on), and falls back to
+        ``"unknown"`` only for tickers we can't classify at all — the
+        frontend treats unknown the same as the multi-asset universes
+        (i.e. shows the experimental banner).
+        """
+        explicit = self.universes.asset_class(ticker)
+        if explicit is not None:
+            return explicit
+        for member in self.watchlist:
+            if member.upper() == ticker.upper():
+                return US_STOCKS_UNIVERSE
+        return "unknown"
 
     @property
     def ohlcv_dir(self) -> Path:

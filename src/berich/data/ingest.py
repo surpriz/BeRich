@@ -105,15 +105,18 @@ def _check_integrity(df: pd.DataFrame) -> list[str]:
 
 
 def update_watchlist(config: Config) -> list[IngestReport]:
-    """Incrementally refresh every ticker in the watchlist; return per-ticker reports.
+    """Refresh every ticker the daily scheduler needs — watchlist + multi-asset universes.
 
-    Backward-compatible serial driver — the watchlist is small (10 tickers) so
-    parallelism would add complexity without measurable speedup. The Phase 6
-    wider-universe driver lives in :func:`update_universe`.
+    The legacy ``watchlist`` (mega-cap, what the model was trained on) is the
+    foundation; the polish-v2 multi-asset ``universes`` block (FR stocks,
+    forex, crypto, commodities) is unioned in for the dashboard's
+    "experimental" views. Tickers absent from any list are simply not
+    refreshed. The Phase 6 wider-universe driver
+    (:func:`update_universe`) still exists for the mid/small-cap probes.
     """
     store = OhlcvStore(config.ohlcv_dir)
     reports: list[IngestReport] = []
-    for ticker in config.watchlist:
+    for ticker in config.all_runtime_tickers():
         report = _update_one(ticker, config, store)
         reports.append(report)
         _log_report(report)

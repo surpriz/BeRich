@@ -116,6 +116,49 @@ export type PaperCalibration = {
   buckets: CalibrationBucket[];
 };
 
+export type PriceBar = {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+export type SignalExplain = {
+  ticker: string;
+  date: string;
+  proba: number;
+  base_value: number;
+  top_features: { feature: string; contribution: number }[];
+  recent_news: {
+    title: string;
+    time_published: string;
+    source: string;
+    url: string;
+    finbert_score: number | null;
+  }[];
+};
+
+export type Universes = {
+  us_stocks: string[];
+  fr_stocks: string[];
+  forex: string[];
+  crypto: string[];
+  commodities: string[];
+};
+
+export type AssetClass = keyof Universes;
+
+export type Health = {
+  status: string;
+  ohlcv_last_refresh: string | null;
+  news_last_refresh: string | null;
+  signals_last_date: string | null;
+  n_signals_today: number;
+  n_open_positions: number;
+};
+
 async function get<T>(path: string): Promise<T> {
   const key = process.env.NEXT_PUBLIC_API_KEY;
   const res = await fetch(`${API_BASE}${path}`, {
@@ -128,12 +171,17 @@ async function get<T>(path: string): Promise<T> {
 
 export const api = {
   signals: () => get<Signal[]>("/signals"),
+  signalHistory: (ticker: string) => get<Signal[]>(`/signals/${ticker}/history`),
+  signalExplain: (ticker: string) => get<SignalExplain>(`/signals/${ticker}/explain`),
+  prices: (ticker: string, days = 365) => get<PriceBar[]>(`/prices/${ticker}?days=${days}`),
   drift: () => get<DriftReport>("/drift"),
   backtest: (threshold = 0.5) => get<Backtest>(`/backtest?threshold=${threshold}`),
   paperPositions: () => get<PaperPositions>("/paper/positions"),
   paperEquity: () => get<PaperEquity>("/paper/equity"),
   paperClosed: (limit = 25) => get<PaperClosedTrade[]>(`/paper/closed-trades?limit=${limit}`),
   paperCalibration: () => get<PaperCalibration>("/paper/calibration"),
+  universes: () => get<Universes>("/universes"),
+  health: () => get<Health>("/health"),
 };
 
 export const PAPER_EXPORT_URL = `${API_BASE}/paper/export.csv`;

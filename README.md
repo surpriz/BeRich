@@ -73,6 +73,17 @@ frontend reads `NEXT_PUBLIC_API_URL` / `NEXT_PUBLIC_API_KEY`.
 Configuration lives in [`config/berich.yaml`](config/berich.yaml): watchlist, fetch
 settings, triple-barrier parameters, and signal thresholds / sizing.
 
+### Multi-asset universes (polish v2)
+
+The dashboard ships with universe tabs (US Stocks · FR Stocks · Forex · Crypto
+· Commodities), per-ticker drill-down pages with candlesticks + SMA overlays +
+SHAP top-5 features + recent news, EN/FR i18n (default FR), and a healthcheck
+footer that flags stale data. Universes are declared in `config/berich.yaml`
+under a `universes:` block; yfinance handles every ticker syntax — `AAPL`,
+`AIR.PA` (Euronext Paris), `EURUSD=X` (forex), `BTC-USD` (crypto), `GC=F`
+(futures). The model itself is still trained on US stocks only, so non-US
+universes carry an explicit "experimental, not validated" banner.
+
 ## Layout
 
 ```

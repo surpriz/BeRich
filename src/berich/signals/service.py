@@ -256,3 +256,94 @@ def _signal_for_ticker(
         size_shares=shares,
         notional=round(notional, 2),
     )
+
+
+def explain_signal(
+    ticker: str,
+    config: Config,
+    store: OhlcvStore,
+    *,
+    top_k: int = 5,
+) -> dict[str, object] | None:
+    """SHAP-style explanation for the most recent signal of ``ticker``.
+
+    Re-runs the same feature build as :func:`generate_signals` so the row
+    sent to the model is identical to what produced the live proba, then
+    asks the LightGBM booster for per-feature contributions. Returns the
+    top ``top_k`` features by absolute contribution + the base value and
+    a short list of the most-recent news headlines (the latter is best-
+    effort — empty list when no news cache exists).
+
+    Returns ``None`` when the ticker isn't in the cache or the resolved
+    model isn't a LightGBM booster (the explain API is LGBM-only by
+    design; other model frameworks expose contributions differently).
+    """
+    df = store.load(ticker)
+    if df is None or df.empty:
+        return None
+
+    label_cfg = LabelConfig(**config.labeling.model_dump())
+    model, with_earnings, with_news = _resolve_model(store, config, label_cfg)
+    if not isinstance(model, LGBMModel):
+        return None
+
+    market = store.load(MARKET_TICKER)
+    earnings_store = _earnings_store_if_available(config) if with_earnings else None
+    news_store = _news_store_if_available(config) if with_news else None
+    earnings_df = earnings_store.load(ticker) if earnings_store is not None else None
+    news_df = news_store.load(ticker) if news_store is not None else None
+
+    earnings_arg = earnings_df if with_earnings else None
+    if with_earnings and earnings_arg is None:
+        earnings_arg = pd.DataFrame()
+    news_arg = news_df if with_news else None
+    if with_news and news_arg is None:
+        news_arg = pd.DataFrame()
+
+    feats = build_features(df, market=market, earnings=earnings_arg, news=news_arg).dropna()
+    if feats.empty:
+        return None
+    cols = feature_columns(earnings=with_earnings, news=with_news)
+    last_date = feats.index[-1]
+    x = feats.loc[[last_date], cols]
+    proba = float(model.predict_proba(x)[0])
+
+    contribs = model.feature_contributions(x)[0]
+    # LightGBM tags ``pred_contrib`` with one extra column at the end for the
+    # base value (the bias of the booster). Split it off before ranking.
+    base_value = float(contribs[-1])
+    feature_contribs = contribs[:-1]
+    ranked = sorted(
+        zip(cols, feature_contribs.tolist(), strict=False),
+        key=lambda kv: abs(kv[1]),
+        reverse=True,
+    )[:top_k]
+
+    recent_news: list[dict[str, object]] = []
+    if news_df is not None and not news_df.empty:
+        tail = (
+            news_df.dropna(subset=["time_published"])
+            .sort_values("time_published", ascending=False)
+            .head(3)
+        )
+        for _, row in tail.iterrows():
+            recent_news.append(
+                {
+                    "title": str(row["title"]) if pd.notna(row["title"]) else "",
+                    "time_published": pd.Timestamp(row["time_published"]).isoformat(),  # ty: ignore[unresolved-attribute]
+                    "source": str(row["source"]) if pd.notna(row["source"]) else "",
+                    "url": str(row["url"]) if pd.notna(row["url"]) else "",
+                    "finbert_score": (
+                        float(row["finbert_score"]) if pd.notna(row["finbert_score"]) else None
+                    ),
+                }
+            )
+
+    return {
+        "ticker": ticker.upper(),
+        "date": pd.Timestamp(last_date).date().isoformat(),  # ty: ignore[unresolved-attribute]
+        "proba": round(proba, 4),
+        "base_value": base_value,
+        "top_features": [{"feature": name, "contribution": float(value)} for name, value in ranked],
+        "recent_news": recent_news,
+    }

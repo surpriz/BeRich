@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   api,
   PAPER_EXPORT_URL,
+  type AssetClass,
   type Backtest,
   type DriftReport,
   type PaperCalibration,
@@ -11,12 +12,15 @@ import {
   type PaperEquity,
   type PaperPositions,
   type Signal,
+  type Universes,
 } from "@/app/lib/api";
 import { SignalsTable } from "./components/SignalsTable";
 import { BacktestPanel } from "./components/BacktestPanel";
 import { CalibrationCard } from "./components/CalibrationCard";
 import { DriftPanel } from "./components/DriftPanel";
 import { PaperPanel } from "./components/PaperPanel";
+import { UniverseTabs } from "./components/UniverseTabs";
+import { useTranslate } from "./lib/i18n";
 
 type State = {
   signals?: Signal[];
@@ -26,11 +30,14 @@ type State = {
   paperPositions?: PaperPositions;
   paperClosed?: PaperClosedTrade[];
   paperCalibration?: PaperCalibration;
+  universes?: Universes;
   error?: string;
 };
 
 export default function Dashboard() {
   const [s, setS] = useState<State>({});
+  const [activeUniverse, setActiveUniverse] = useState<AssetClass>("us_stocks");
+  const t = useTranslate();
 
   useEffect(() => {
     let alive = true;
@@ -44,6 +51,7 @@ export default function Dashboard() {
           paperPositions,
           paperClosed,
           paperCalibration,
+          universes,
         ] = await Promise.all([
           api.signals(),
           api.drift(),
@@ -52,6 +60,7 @@ export default function Dashboard() {
           api.paperPositions(),
           api.paperClosed(),
           api.paperCalibration(),
+          api.universes().catch(() => undefined),
         ]);
         if (alive)
           setS({
@@ -62,6 +71,7 @@ export default function Dashboard() {
             paperPositions,
             paperClosed,
             paperCalibration,
+            universes,
           });
       } catch (e) {
         if (alive) setS({ error: e instanceof Error ? e.message : "request failed" });
@@ -72,7 +82,15 @@ export default function Dashboard() {
     };
   }, []);
 
-  const asOf = s.signals?.[0]?.date;
+  const filtered = useMemo(() => {
+    if (!s.signals) return undefined;
+    if (!s.universes) return s.signals;
+    const allowed = new Set(s.universes[activeUniverse]);
+    return s.signals.filter((sig) => allowed.has(sig.ticker));
+  }, [s.signals, s.universes, activeUniverse]);
+
+  const asOf = filtered?.[0]?.date ?? s.signals?.[0]?.date;
+  const showExperimental = activeUniverse !== "us_stocks";
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-12">
@@ -81,34 +99,44 @@ export default function Dashboard() {
           <h1 className="font-display text-5xl font-extrabold tracking-tight">
             Be<span className="text-[var(--color-bull)]">Rich</span>
           </h1>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">
-            Swing-trade signals · trend-probability model · walk-forward validated
-          </p>
+          <p className="mt-1 text-sm text-[var(--color-muted)]">{t("app.tagline")}</p>
         </div>
         {asOf && (
           <div className="text-right">
-            <div className="text-[11px] uppercase tracking-widest text-[var(--color-faint)]">As of</div>
+            <div className="text-[11px] uppercase tracking-widest text-[var(--color-faint)]">
+              {t("app.asOf")}
+            </div>
             <div className="tabular text-lg">{asOf}</div>
           </div>
         )}
       </header>
 
-      {/* Honest disclaimer: v0.1.0 baseline does not beat buy & hold (see docs/RESULTS.md). */}
       <div className="mb-8 rounded-lg border border-[var(--color-neutral)]/30 bg-[var(--color-neutral)]/[0.06] px-4 py-3 text-sm text-[var(--color-neutral)]">
-        Advisory only — the current model does not beat buy &amp; hold. Not financial advice.
+        {t("banner.advisory")}
       </div>
 
       {s.error && (
         <div className="card p-6 text-[var(--color-bear)]">
-          Could not reach the API ({s.error}). Start it with <code className="tabular">berich serve</code>.
+          {t("error.api")} ({s.error}). {t("error.startServe")}{" "}
+          <code className="tabular">berich serve</code>.
         </div>
       )}
 
       {!s.error && (
         <div className="flex flex-col gap-8">
           <section>
-            <h2 className="mb-3 font-display text-xl font-bold">Today&apos;s signals</h2>
-            {s.signals ? <SignalsTable signals={s.signals} /> : <Skeleton h={280} />}
+            <UniverseTabs
+              universes={s.universes}
+              active={activeUniverse}
+              onChange={setActiveUniverse}
+            />
+            {showExperimental && (
+              <div className="mb-4 rounded-lg border border-[var(--color-neutral)]/30 bg-[var(--color-neutral)]/[0.06] px-4 py-3 text-sm text-[var(--color-neutral)]">
+                {t("banner.experimental")}
+              </div>
+            )}
+            <h2 className="mb-3 font-display text-xl font-bold">{t("dashboard.todaySignals")}</h2>
+            {filtered ? <SignalsTable signals={filtered} /> : <Skeleton h={280} />}
           </section>
 
           {s.paperEquity && s.paperPositions && s.paperClosed ? (
@@ -132,24 +160,26 @@ export default function Dashboard() {
             <section className="card flex flex-col justify-between p-5">
               <div>
                 <h3 className="font-display text-sm font-bold uppercase tracking-widest text-[var(--color-muted)]">
-                  Export
+                  {t("dashboard.export")}
                 </h3>
-                <p className="mt-2 text-sm text-[var(--color-faint)]">
-                  Download the full paper-trade history as CSV for external analysis.
-                </p>
+                <p className="mt-2 text-sm text-[var(--color-faint)]">{t("dashboard.exportDesc")}</p>
               </div>
               <a
                 href={PAPER_EXPORT_URL}
                 className="mt-4 inline-block self-start rounded-md border border-[var(--color-line)] bg-[var(--color-line)]/[0.04] px-4 py-2 text-sm text-[var(--color-bull)] hover:bg-[var(--color-line)]/[0.10]"
               >
-                Download paper_trades.csv →
+                {t("dashboard.downloadCsv")}
               </a>
             </section>
           </div>
 
           <div className="grid gap-8 lg:grid-cols-5">
-            <section className="lg:col-span-3">{s.backtest ? <BacktestPanel bt={s.backtest} /> : <Skeleton h={460} />}</section>
-            <section className="lg:col-span-2">{s.drift ? <DriftPanel drift={s.drift} /> : <Skeleton h={460} />}</section>
+            <section className="lg:col-span-3">
+              {s.backtest ? <BacktestPanel bt={s.backtest} /> : <Skeleton h={460} />}
+            </section>
+            <section className="lg:col-span-2">
+              {s.drift ? <DriftPanel drift={s.drift} /> : <Skeleton h={460} />}
+            </section>
           </div>
         </div>
       )}

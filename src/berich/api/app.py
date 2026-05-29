@@ -30,6 +30,7 @@ from berich.data.store import OhlcvStore
 from berich.signals import (
     SignalStore,
     compute_calibration,
+    explain_signal,
     get_equity_curve,
     get_open_positions,
     get_paper_metrics,
@@ -94,6 +95,26 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
     @router.get("/signals/{ticker}/history", dependencies=guard)
     def signal_history(ticker: str) -> list[dict]:
         return signal_store.history(ticker.upper()).to_dict(orient="records")
+
+    @router.get("/signals/{ticker}/explain", dependencies=guard)
+    def signal_explain(ticker: str) -> dict:
+        result = explain_signal(ticker.upper(), config, store)
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no explainable signal for {ticker} (cache or model framework mismatch)",
+            )
+        return result
+
+    @router.get("/universes", dependencies=guard)
+    def universes() -> dict[str, list[str]]:
+        return {
+            "us_stocks": config.universes.us_stocks,
+            "fr_stocks": config.universes.fr_stocks,
+            "forex": config.universes.forex,
+            "crypto": config.universes.crypto,
+            "commodities": config.universes.commodities,
+        }
 
     @router.get("/prices/{ticker}", dependencies=guard)
     def prices(ticker: str, days: int = Query(default=365, ge=1, le=5000)) -> list[dict]:
