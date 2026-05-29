@@ -21,11 +21,14 @@ if TYPE_CHECKING:
 def build_scheduler(config: Config) -> BlockingScheduler:
     """Create a scheduler with the daily-signal and weekly-drift jobs registered."""
     scheduler = BlockingScheduler(timezone="America/New_York")
-    # 17:30 ET on weekdays — comfortably after the 16:00 close and data settle.
+    # 22:30 Europe/Paris on weekdays — 30 min after the 16:00 ET close (22:00 Paris
+    # year-round, since both zones observe DST), so OHLCV bars are settled daily
+    # closes, not intraday snapshots. The trigger timezone is pinned explicitly
+    # because the deployed scheduler does not honor the BlockingScheduler default.
     # The daily job chains: refresh OHLCV → generate signals → roll paper book.
     scheduler.add_job(
         daily_paper_job,
-        CronTrigger(day_of_week="mon-fri", hour=17, minute=30),
+        CronTrigger(day_of_week="mon-fri", hour=22, minute=30, timezone="Europe/Paris"),
         args=[config],
         id="daily_paper",
         replace_existing=True,
