@@ -151,6 +151,25 @@ def _try_finbert_score(config: Config) -> int:
     return total
 
 
+def refresh_universe_job(config: Config) -> dict[str, int]:
+    """Refresh the wider long/short universe (mid/small-caps) the daily chain misses.
+
+    ``daily_paper_job`` only refreshes the mega watchlist + multi-asset universes
+    (``all_runtime_tickers``). The cross-sectional long/short model ranks the full
+    ``longshort.universe`` (≈274 tickers), so those bars must be kept fresh too. Uses the
+    parallel, liquidity-gated :func:`update_universe`; incremental fetch makes re-runs cheap.
+    """
+    from berich.data import update_universe  # noqa: PLC0415
+
+    tickers = config.tickers_for_universe(config.longshort.universe)
+    if not tickers:
+        return {"tickers": 0, "warned": 0}
+    reports = update_universe(config, tickers)
+    warned = sum(1 for r in reports if not r.ok)
+    logger.info("refresh_universe: %d tickers refreshed, %d warned", len(reports), warned)
+    return {"tickers": len(reports), "warned": warned}
+
+
 def _zoo_factory(model_name: str, *, device: str | None = None) -> tuple[str, dict, Callable]:
     """Return ``(framework, hyperparams, factory)`` for a zoo model name."""
     if model_name == "lgbm":

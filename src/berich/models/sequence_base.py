@@ -108,6 +108,10 @@ class SequenceClassifier:
     """
 
     config_cls: type[SequenceConfig] = SequenceConfig
+    # Classifiers use BCE + sigmoid and log AUC; regressors (rankers) override these.
+    is_classifier: bool = True
+    # Score emitted for tickers with no training history (0.5 proba / 0.0 score).
+    neutral_fallback: float = 0.5
 
     def __init__(self, config: SequenceConfig | None = None, **overrides: Any) -> None:
         cfg = config or self.config_cls()
@@ -131,6 +135,14 @@ class SequenceClassifier:
     def _build_net(self, n_features: int) -> nn.Module:
         """Return the network mapping (batch, lookback, n_features) -> (batch,) logits."""
         raise NotImplementedError
+
+    def _criterion(self) -> nn.Module:
+        """Training loss. BCE-with-logits for classifiers; MSE for regressors."""
+        return nn.BCEWithLogitsLoss()
+
+    def _output_transform(self, logits: torch.Tensor) -> torch.Tensor:
+        """Map raw network outputs to predictions. Sigmoid for classifiers."""
+        return torch.sigmoid(logits)
 
     # ------------------------------------------------------------------ fit ----
 
@@ -184,8 +196,7 @@ class SequenceClassifier:
         y_val = np.concatenate(val_y)
 
         self.net = self._build_net(self._n_features).to(self.device)
-        # BCEWithLogits is more numerically stable than sigmoid + BCE for binary heads.
-        criterion = nn.BCEWithLogitsLoss()
+        criterion = self._criterion()
         optimizer = torch.optim.Adam(self.net.parameters(), lr=self.cfg.lr)
 
         self._train_loop(x_tr, y_tr, x_val, y_val, criterion, optimizer)
@@ -231,8 +242,8 @@ class SequenceClassifier:
             with torch.no_grad():
                 val_logits = self.net(x_val_t)
                 val_loss = float(criterion(val_logits, y_val_t).item())
-                val_proba = torch.sigmoid(val_logits).cpu().numpy()
-            val_auc = _safe_auc(y_val, val_proba)
+                val_out = self._output_transform(val_logits).cpu().numpy()
+            val_auc = _safe_auc(y_val, val_out) if self.is_classifier else float("nan")
             logger.info(
                 "epoch %d/%d  train_loss=%.4f  val_loss=%.4f  val_auc=%.4f",
                 epoch + 1,
@@ -273,7 +284,7 @@ class SequenceClassifier:
 
         # Position-indexed output so duplicate dates across tickers in the panel
         # are handled correctly (label-based .loc would broadcast wrongly).
-        out = np.full(len(x), 0.5, dtype=float)
+        out = np.full(len(x), self.neutral_fallback, dtype=float)
         self.net.eval()
 
         for ticker, pos in _ticker_groups(len(x), tickers):
@@ -303,7 +314,7 @@ class SequenceClassifier:
             chunk = seqs[start : start + self.cfg.batch_size]
             x_t = torch.from_numpy(chunk).to(self.device)
             logits = self.net(x_t)
-            out.append(torch.sigmoid(logits).cpu().numpy())
+            out.append(self._output_transform(logits).cpu().numpy())
         return np.concatenate(out) if out else np.empty(0)
 
     # ------------------------------------------------------------- diagnostics ----

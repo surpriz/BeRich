@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from berich.datasets.cross_sectional import build_panel_dataset
+from berich.datasets.cross_sectional import XS_FEATURE_COLUMNS, build_panel_dataset
 from berich.labeling.cross_sectional import CrossSectionalLabelConfig, forward_return_labels
 from berich.models import LGBMRanker
 from berich.models.base import Model
@@ -61,6 +61,39 @@ def test_panel_target_is_cross_sectionally_standardized():
     # Each date's target is mean-zero (z-score within date).
     per_date_mean = panel.y.groupby(panel.dates).mean().abs()
     assert per_date_mean.max() < 1e-6
+
+
+def test_cross_sectional_features_appended_and_centered():
+    store = _store(10)
+    cfg = CrossSectionalLabelConfig(horizon_days=5, beta_window=20)
+    panel = build_panel_dataset(
+        store,
+        [f"T{i:02d}" for i in range(10)],
+        cfg,
+        market_ticker="SPY",
+        min_names_per_date=5,
+        cross_sectional=True,
+    )
+    for col in XS_FEATURE_COLUMNS:
+        assert col in panel.x.columns
+    # Within-date z-scored relative features are mean-zero per date.
+    xs = panel.x["mom_20_xs"]
+    per_date_mean = xs.groupby(panel.dates).mean().abs()
+    assert per_date_mean.max() < 1e-6
+
+
+def test_cross_sectional_can_be_disabled():
+    store = _store(10)
+    cfg = CrossSectionalLabelConfig(horizon_days=5, beta_window=20)
+    panel = build_panel_dataset(
+        store,
+        [f"T{i:02d}" for i in range(10)],
+        cfg,
+        market_ticker="SPY",
+        min_names_per_date=5,
+        cross_sectional=False,
+    )
+    assert not any(c.endswith("_xs") for c in panel.x.columns)
 
 
 def test_thin_dates_dropped():

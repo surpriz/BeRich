@@ -150,6 +150,119 @@ def run_hpo(
     return study
 
 
+LONGSHORT_MODELS = ("lgbm", "patchtst", "lstm")
+
+
+def _ranker_factory_from_trial(
+    model_name: str, trial: optuna.Trial, *, device: str | None
+) -> Callable[[], Model]:
+    """Build a cross-sectional ranker factory from a trial's hyperparameters."""
+    if model_name == "lgbm":
+        from berich.models import LGBMRanker  # noqa: PLC0415
+
+        params = {
+            "n_estimators": trial.suggest_int("n_estimators", 100, 600, step=50),
+            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
+            "num_leaves": trial.suggest_int("num_leaves", 15, 63),
+            "min_child_samples": trial.suggest_int("min_child_samples", 20, 120),
+        }
+        return lambda: LGBMRanker(**params)
+    if model_name == "patchtst":
+        from berich.models import PatchTSTConfig, PatchTSTRanker  # noqa: PLC0415
+
+        cfg = PatchTSTConfig(
+            lookback=trial.suggest_int("lookback", 24, 80, step=8),
+            d_model=trial.suggest_categorical("d_model", [32, 64, 128]),
+            num_layers=trial.suggest_int("num_layers", 1, 4),
+            dropout=trial.suggest_float("dropout", 0.0, 0.4),
+            lr=trial.suggest_float("lr", 1e-4, 3e-3, log=True),
+            device=device,
+        )
+        return lambda: PatchTSTRanker(cfg)
+    if model_name == "lstm":
+        from berich.models import LSTMConfig, LSTMRanker  # noqa: PLC0415
+
+        cfg = LSTMConfig(
+            lookback=trial.suggest_int("lookback", 20, 80, step=10),
+            hidden=trial.suggest_categorical("hidden", [32, 64, 128]),
+            num_layers=trial.suggest_int("num_layers", 1, 3),
+            dropout=trial.suggest_float("dropout", 0.0, 0.4),
+            lr=trial.suggest_float("lr", 1e-4, 3e-3, log=True),
+            device=device,
+        )
+        return lambda: LSTMRanker(cfg)
+    msg = f"unknown ranker '{model_name}' (expected one of {LONGSHORT_MODELS})"
+    raise ValueError(msg)
+
+
+def run_longshort_hpo(
+    config: Config,
+    model_name: str,
+    *,
+    n_trials: int = 20,
+    device: str | None = None,
+) -> optuna.Study:
+    """Optuna search for the long/short ranker, maximizing out-of-sample net Sharpe."""
+    import optuna  # noqa: PLC0415
+
+    from berich.backtest.longshort import LongShortConfig, run_longshort_backtest  # noqa: PLC0415
+    from berich.datasets.cross_sectional import build_panel_dataset  # noqa: PLC0415
+    from berich.labeling.cross_sectional import CrossSectionalLabelConfig  # noqa: PLC0415
+    from berich.training.cross_sectional import oof_predict_cross_sectional  # noqa: PLC0415
+
+    ls = config.longshort
+    store = OhlcvStore(config.ohlcv_dir)
+    tickers = config.tickers_for_universe(ls.universe)
+    label_cfg = CrossSectionalLabelConfig(
+        horizon_days=ls.horizon_days,
+        beta_window=ls.beta_window,
+        residualize=ls.residualize,
+        standardize="rank" if ls.standardize == "rank" else "zscore",
+    )
+    panel = build_panel_dataset(
+        store,
+        tickers,
+        label_cfg,
+        market_ticker=ls.market_ticker,
+        min_names_per_date=ls.min_names_per_date,
+        cross_sectional=ls.cross_sectional_features,
+    )
+    prices = {t: df for t in tickers if (df := store.load(t)) is not None}
+    bt_cfg = LongShortConfig(
+        top_decile=ls.top_decile,
+        bottom_decile=ls.bottom_decile,
+        weighting=ls.weighting,
+        rebalance_days=ls.rebalance_days,
+        gross_leverage=ls.gross_leverage,
+        target_vol=ls.target_vol,
+        vol_lookback=ls.vol_lookback,
+        fee_bps=ls.fee_bps,
+        slippage_bps=ls.slippage_bps,
+        borrow_bps_annual=ls.borrow_bps_annual,
+        min_names=ls.min_names_per_date,
+    )
+
+    def objective(trial: optuna.Trial) -> float:
+        factory = _ranker_factory_from_trial(model_name, trial, device=device)
+        oof = oof_predict_cross_sectional(panel, factory, embargo=ls.horizon_days)
+        res = run_longshort_backtest(prices, oof, bt_cfg, n_trials=ls.n_trials)
+        trial.set_user_attr("rank_ic", oof.rank_ic)
+        trial.set_user_attr("sharpe", res.significance.sharpe)
+        return res.significance.sharpe
+
+    storage = f"sqlite:///{config.optuna_db}"
+    config.optuna_db.parent.mkdir(parents=True, exist_ok=True)
+    study = optuna.create_study(
+        direction="maximize",
+        storage=storage,
+        study_name=f"berich-longshort-{model_name}",
+        load_if_exists=True,
+    )
+    study.optimize(objective, n_trials=n_trials)
+    logger.info("longshort HPO %s best Sharpe=%.3f", model_name, study.best_value)
+    return study
+
+
 def _log_to_mlflow(model_name: str, study: optuna.Study) -> None:
     try:
         import mlflow  # noqa: PLC0415
@@ -163,4 +276,10 @@ def _log_to_mlflow(model_name: str, study: optuna.Study) -> None:
         logger.debug("MLflow logging of HPO summary failed", exc_info=True)
 
 
-__all__ = ["SUPPORTED_MODELS", "objective_for", "run_hpo"]
+__all__ = [
+    "LONGSHORT_MODELS",
+    "SUPPORTED_MODELS",
+    "objective_for",
+    "run_hpo",
+    "run_longshort_hpo",
+]

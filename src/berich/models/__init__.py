@@ -15,17 +15,20 @@ from berich.models.registry import (
     promote,
     save_model,
 )
+from berich.models.sequence_ranker import LSTMRanker, PatchTSTRanker
 
 __all__ = [
     "LGBMModel",
     "LGBMRanker",
     "LSTMConfig",
     "LSTMModel",
+    "LSTMRanker",
     "MetaLabeler",
     "Model",
     "ModelMetadata",
     "PatchTSTConfig",
     "PatchTSTModel",
+    "PatchTSTRanker",
     "StackingEnsemble",
     "list_models",
     "load_active",

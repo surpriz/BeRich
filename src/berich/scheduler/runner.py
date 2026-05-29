@@ -15,6 +15,7 @@ from apscheduler.triggers.cron import CronTrigger
 from berich.scheduler.jobs import (
     check_drift_job,
     daily_paper_job,
+    refresh_universe_job,
     retrain_zoo_job,
     weekend_hpo_job,
 )
@@ -37,6 +38,17 @@ def build_scheduler(config: Config) -> BlockingScheduler:
         args=[config],
         id="daily_paper",
         replace_existing=True,
+    )
+    # Wider long/short universe refresh at 22:45 Paris weekdays — after daily_paper (22:30),
+    # before the nightly retrain (23:30) so the cross-sectional panel trains on fresh bars.
+    scheduler.add_job(
+        refresh_universe_job,
+        CronTrigger(day_of_week="mon-fri", hour=22, minute=45, timezone="Europe/Paris"),
+        args=[config],
+        id="refresh_universe",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
     # Nightly zoo retrain at 23:30 Paris on weekdays — after daily_paper (22:30) has
     # refreshed OHLCV, so candidates train on fresh data. max_instances/coalesce keep a

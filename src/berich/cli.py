@@ -313,11 +313,24 @@ def _cmd_longshort(args: argparse.Namespace) -> int:
     from berich.backtest.longshort import LongShortConfig, run_longshort_backtest
     from berich.data.store import OhlcvStore
     from berich.datasets.cross_sectional import build_panel_dataset
-    from berich.features.build import FEATURE_COLUMNS
     from berich.labeling.cross_sectional import CrossSectionalLabelConfig
-    from berich.models import ModelMetadata, promote, save_model
-    from berich.models.lightgbm_ranker import LGBMRanker
+    from berich.models import (
+        LGBMRanker,
+        LSTMRanker,
+        ModelMetadata,
+        PatchTSTRanker,
+        promote,
+        save_model,
+    )
     from berich.training.cross_sectional import oof_predict_cross_sectional
+
+    ranker_factories = {"lgbm": LGBMRanker, "patchtst": PatchTSTRanker, "lstm": LSTMRanker}
+    ranker_factory = ranker_factories[args.model]
+    framework_for = {
+        "lgbm": "lightgbm-ranker",
+        "patchtst": "patchtst-ranker",
+        "lstm": "lstm-ranker",
+    }
 
     config = Config.load(args.config)
     ls = config.longshort
@@ -337,13 +350,14 @@ def _cmd_longshort(args: argparse.Namespace) -> int:
         label_cfg,
         market_ticker=ls.market_ticker,
         min_names_per_date=ls.min_names_per_date,
+        cross_sectional=ls.cross_sectional_features,
     )
     if not len(panel):
         print("Empty panel — too few names per date or no cached OHLCV. Run `berich data`.")  # noqa: T201
         return 1
     print(f"  panel rows={len(panel)} dates={panel.dates.nunique()}")  # noqa: T201
 
-    oof = oof_predict_cross_sectional(panel, LGBMRanker, embargo=ls.horizon_days)
+    oof = oof_predict_cross_sectional(panel, ranker_factory, embargo=ls.horizon_days)
     prices = {t: df for t in tickers if (df := store.load(t)) is not None}
     bt_cfg = LongShortConfig(
         top_decile=ls.top_decile,
@@ -373,12 +387,14 @@ def _cmd_longshort(args: argparse.Namespace) -> int:
         return 0
 
     registry_dir = config.models_dir_for("longshort")
-    final = LGBMRanker().fit(panel.x, panel.y, sample_weight=panel.weight, tickers=panel.tickers)
+    final = ranker_factory().fit(
+        panel.x, panel.y, sample_weight=panel.weight, tickers=panel.tickers
+    )
     metrics = {**sig.as_dict(), "rank_ic": oof.rank_ic, "ic_t_stat": oof.ic_t_stat}
     meta = ModelMetadata(
         name=args.name,
-        framework="lightgbm-ranker",
-        feature_columns=list(FEATURE_COLUMNS),
+        framework=framework_for[args.model],
+        feature_columns=list(panel.x.columns),
         metrics=metrics,
         beats_buy_hold=False,  # not applicable — market-neutral gate is Sharpe-significance
         strategy_type="market_neutral",
@@ -725,6 +741,12 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subcomm
         choices=["mega", "mid", "small", "all"],
         default=None,
         help="Override the configured longshort universe (default: config value, 'all').",
+    )
+    p_ls.add_argument(
+        "--model",
+        choices=["lgbm", "patchtst", "lstm"],
+        default="lgbm",
+        help="Ranker model (lgbm = CPU baseline; patchtst/lstm = GPU deep rankers).",
     )
     p_ls.add_argument("--name", default="longshort-ranker")
     p_ls.add_argument(

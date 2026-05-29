@@ -62,6 +62,7 @@ class LongShortConfigModel(BaseModel):
     residualize: bool = True
     standardize: str = "zscore"  # "zscore" | "rank"
     min_names_per_date: int = 20
+    cross_sectional_features: bool = True  # append within-date relative (*_xs) features
     # Portfolio
     top_decile: float = 0.1
     bottom_decile: float = 0.1

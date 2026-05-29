@@ -38,12 +38,37 @@ class PanelDataset:
         return len(self.x)
 
 
+# Base features whose *cross-sectional* (within-date) z-score carries ranking information
+# a single-name model can't see. Causal: each uses only same-date feature values, which are
+# themselves computed from data <= t. The "_xs" suffix marks the cross-sectional transform.
+XS_FEATURE_BASES = (
+    "mom_20",
+    "mom_60",
+    "mom_120",
+    "rsi_14",
+    "rvol_20",
+    "close_sma50_ratio",
+    "dist_high_60",
+    "dist_low_60",
+)
+XS_FEATURE_COLUMNS = [f"{b}_xs" for b in XS_FEATURE_BASES]
+
+
 def _standardize(resid: pd.Series, dates: pd.DatetimeIndex, method: str) -> pd.Series:
     """Standardize the residual within each date (z-score or rank percentile)."""
     grouped = resid.groupby(dates)
     if method == "rank":
         return grouped.transform(lambda s: s.rank(pct=True) - 0.5)
     return grouped.transform(lambda s: (s - s.mean()) / s.std(ddof=0))
+
+
+def _add_cross_sectional_features(panel: pd.DataFrame) -> pd.DataFrame:
+    """Append within-date z-scored versions of XS_FEATURE_BASES to the panel."""
+    grouped = panel.groupby(level=0)
+    for base in XS_FEATURE_BASES:
+        z = grouped[base].transform(lambda s: (s - s.mean()) / s.std(ddof=0))
+        panel[f"{base}_xs"] = z.fillna(0.0)  # single-name dates -> neutral 0
+    return panel
 
 
 def build_panel_dataset(
@@ -53,11 +78,14 @@ def build_panel_dataset(
     *,
     market_ticker: str = "SPY",
     min_names_per_date: int = 20,
+    cross_sectional: bool = True,
 ) -> PanelDataset:
     """Build a date-sorted cross-sectional panel with a within-date standardized target.
 
     Tickers absent from the cache are skipped. Dates with fewer than
-    ``min_names_per_date`` names (too thin to rank into deciles) are dropped.
+    ``min_names_per_date`` names (too thin to rank into deciles) are dropped. When
+    ``cross_sectional`` is set, within-date z-scored relative features (``*_xs``) are
+    appended — the actual lever for cross-sectional ranking skill.
     """
     market = store.load(market_ticker)
 
@@ -100,6 +128,10 @@ def build_panel_dataset(
     y = y[keep]
     dates = pd.DatetimeIndex(panel.index)
 
+    if cross_sectional:
+        panel = _add_cross_sectional_features(panel)
+        cols = cols + XS_FEATURE_COLUMNS
+
     return PanelDataset(
         x=panel[cols],
         y=pd.Series(y.to_numpy(), index=panel.index, name="y"),
@@ -109,4 +141,4 @@ def build_panel_dataset(
     )
 
 
-__all__ = ["PanelDataset", "build_panel_dataset"]
+__all__ = ["XS_FEATURE_COLUMNS", "PanelDataset", "build_panel_dataset"]
