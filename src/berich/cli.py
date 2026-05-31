@@ -94,6 +94,7 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
         EarningsStore(config.earnings_dir) if (args.with_earnings and can_use_extras) else None
     )
     news_store = NewsStore(config.news_dir) if (args.with_news and can_use_extras) else None
+    with_micro = getattr(args, "with_micro", False)
     dataset = build_dataset(
         store,
         tickers,
@@ -101,12 +102,15 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
         market_ticker=market_ticker,
         earnings_store=earnings_store,
         news_store=news_store,
+        micro=with_micro,
     )
     bits = ["22"]
     if earnings_store is not None:
         bits.append("earnings")
     if news_store is not None:
         bits.append("news")
+    if with_micro:
+        bits.append("micro")
     feat_mode = " + ".join(bits)
     print(  # noqa: T201
         f"Dataset: {len(dataset)} samples, P(win)={dataset.y.mean():.3f}, "
@@ -801,6 +805,11 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subcomm
         default="mega",
         help="Which universe to backtest (Phase 6). The benchmark buy & hold"
         " uses the same universe as the strategy for a fair comparison.",
+    )
+    p_bt.add_argument(
+        "--with-micro",
+        action="store_true",
+        help="Include the microstructure / liquidity feature family (Phase 11).",
     )
     p_bt.add_argument(
         "--volume-slippage",

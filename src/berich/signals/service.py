@@ -28,6 +28,7 @@ from berich.features.build import (
 )
 from berich.features.earnings_features import EARNINGS_FEATURE_COLUMNS
 from berich.features.indicators import atr
+from berich.features.microstructure import MICRO_FEATURE_COLUMNS
 from berich.features.news_features import NEWS_FEATURE_COLUMNS
 from berich.features.volatility import forecast_vol
 from berich.labeling.triple_barrier import LabelConfig, adaptive_barriers
@@ -132,6 +133,10 @@ def _needs_news(cols: list[str]) -> bool:
 
 def _needs_earnings(cols: list[str]) -> bool:
     return any(c in EARNINGS_FEATURE_COLUMNS for c in cols)
+
+
+def _needs_micro(cols: list[str]) -> bool:
+    return any(c in MICRO_FEATURE_COLUMNS for c in cols)
 
 
 def _resolve_model(
@@ -301,12 +306,17 @@ def _signal_for_ticker(
     news_arg = news if with_news else None
     if with_news and news_arg is None:
         news_arg = pd.DataFrame()
-    feats = build_features(df, market=market, earnings=earnings_arg, news=news_arg).dropna()
+    with_micro = feature_cols is not None and _needs_micro(feature_cols)
+    feats = build_features(
+        df, market=market, earnings=earnings_arg, news=news_arg, micro=with_micro
+    ).dropna()
     if feats.empty:
         return None
     last_date = feats.index[-1]
-    cols = feature_cols if feature_cols is not None else feature_columns(
-        earnings=with_earnings, news=with_news
+    cols = (
+        feature_cols
+        if feature_cols is not None
+        else feature_columns(earnings=with_earnings, news=with_news)
     )
     x = feats.loc[[last_date], cols]
     raw_proba = float(model.predict_proba(x)[0])
@@ -408,6 +418,7 @@ def explain_signal(
         return None
     with_earnings = _needs_earnings(cols)
     with_news = _needs_news(cols)
+    with_micro = _needs_micro(cols)
 
     market = store.load(MARKET_TICKER)
     earnings_store = _earnings_store_if_available(config) if with_earnings else None
@@ -422,7 +433,9 @@ def explain_signal(
     if with_news and news_arg is None:
         news_arg = pd.DataFrame()
 
-    feats = build_features(df, market=market, earnings=earnings_arg, news=news_arg).dropna()
+    feats = build_features(
+        df, market=market, earnings=earnings_arg, news=news_arg, micro=with_micro
+    ).dropna()
     if feats.empty:
         return None
     last_date = feats.index[-1]

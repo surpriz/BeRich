@@ -43,6 +43,14 @@ FEATURE_GROUPS: dict[str, list[str]] = {
     "volume": ["volume_z20"],
     "calendar": ["month_sin", "month_cos", "days_to_month_end"],
     "market_regime": ["spy_ret_20", "spy_rvol_20"],
+    "microstructure": [
+        "clv",
+        "gap_open",
+        "hl_range",
+        "parkinson_10",
+        "amihud_20",
+        "roll_spread_20",
+    ],
 }
 
 
@@ -55,6 +63,7 @@ def _select_features(trial: optuna.Trial, available: list[str]) -> list[str]:
             chosen.update(cols)
     chosen.update(c for c in available if c not in grouped)  # earnings/news add-ons, etc.
     return [c for c in available if c in chosen]
+
 
 SUPPORTED_MODELS = ("lgbm", "lstm", "patchtst", "tft")
 
@@ -186,7 +195,7 @@ def run_hpo(
 
     store = OhlcvStore(config.ohlcv_dir)
     label_cfg = LabelConfig(**config.labeling.model_dump())
-    dataset = build_dataset(store, config.watchlist, label_cfg)
+    dataset = build_dataset(store, config.watchlist, label_cfg, micro=True)
     prices = {t: df for t in config.watchlist if (df := store.load(t)) is not None}
 
     storage = f"sqlite:///{config.optuna_db}"
@@ -392,7 +401,7 @@ def apply_hpo_best(
 
     store = OhlcvStore(config.ohlcv_dir)
     label_cfg = LabelConfig(**config.labeling.model_dump())
-    dataset = build_dataset(store, config.watchlist, label_cfg)
+    dataset = build_dataset(store, config.watchlist, label_cfg, micro=True)
     if features:
         dataset = replace(dataset, x=dataset.x[list(features)])
 
@@ -420,7 +429,9 @@ def apply_hpo_best(
     promote(name, registry_dir=config.models_dir, force=True)
     logger.info(
         "applied HPO best '%s': %d features, Sharpe=%.3f",
-        name, len(dataset.x.columns), bt.strategy.sharpe,
+        name,
+        len(dataset.x.columns),
+        bt.strategy.sharpe,
     )
     return {
         "name": name,

@@ -758,3 +758,27 @@ guard yet, but each is an honest data point on the new platform.
 calibration, and meta-labeling. No combination clears the (adapted) guard yet; the deep
 rankers + HPO on the full long/short panel and the crypto zoo are the open GPU search the
 nightly/weekend jobs now automate.
+
+---
+
+## Phase 11 — Microstructure feature family (v0.5.1)
+
+A genuinely new feature *source* (not the OHLCV momentum/macro hunt the guardrails close):
+liquidity / effective-spread / intraday-position proxies, all causal from daily OHLCV —
+`clv` (close location value), `gap_open`, `hl_range`, `parkinson_10`, `amihud_20`
+(illiquidity), `roll_spread_20` (Roll effective spread). Added as an optional feature group
+(`feature_columns(micro=True)`, `berich backtest --with-micro`) and a toggleable group in the
+HPO feature search.
+
+**Result (US mega watchlist, walk-forward OOS AUC):**
+- base 22 features: AUC 0.5143
+- base + microstructure (28): AUC 0.5251
+- honest AUC-objective HPO (params + feature-family search): **AUC 0.5364**, and the search
+  **independently selected the microstructure group** (alongside momentum + calendar). The
+  deployed `lgbm-hpo` model uses all six microstructure features.
+
+This is the largest legitimate discrimination gain from features since the early phases, from
+a principled new source the honest search chose on its own. It still does **not** beat buy &
+hold on Sharpe (the guard continues to refuse promotion of an edge claim) — but +0.022 AUC
+from a new feature family is the most encouraging feature-side signal to date, and motivates
+the next data sources (point-in-time fundamentals; intraday/microstructure from finer bars).

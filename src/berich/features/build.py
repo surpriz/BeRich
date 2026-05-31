@@ -21,6 +21,10 @@ from berich.features.earnings_features import (
     EARNINGS_FEATURE_COLUMNS,
     build_earnings_features,
 )
+from berich.features.microstructure import (
+    MICRO_FEATURE_COLUMNS,
+    build_micro_features,
+)
 from berich.features.news_features import (
     NEWS_FEATURE_COLUMNS,
     build_news_features,
@@ -95,21 +99,26 @@ FEATURE_COLUMNS: list[str] = [
 ]
 
 
-def feature_columns(*, earnings: bool = False, news: bool = False) -> list[str]:
+def feature_columns(
+    *, earnings: bool = False, news: bool = False, micro: bool = False
+) -> list[str]:
     """Canonical ordered feature list.
 
     Returns the 22-column base set; ``earnings`` appends the six
     :mod:`~berich.features.earnings_features` columns, ``news`` appends the
-    seven :mod:`~berich.features.news_features` columns (in that order).
-    Callers (training, scaling, serving) must use the same flags end-to-end —
-    the model registry's metadata records which mode each artifact was trained
-    with so serving stays in sync.
+    seven :mod:`~berich.features.news_features` columns, ``micro`` appends the
+    :mod:`~berich.features.microstructure` columns (in that order). Callers
+    (training, scaling, serving) must use the same flags end-to-end — the model
+    registry's metadata records which mode each artifact was trained with so
+    serving stays in sync.
     """
     out = list(FEATURE_COLUMNS)
     if earnings:
         out.extend(EARNINGS_FEATURE_COLUMNS)
     if news:
         out.extend(NEWS_FEATURE_COLUMNS)
+    if micro:
+        out.extend(MICRO_FEATURE_COLUMNS)
     return out
 
 
@@ -164,6 +173,7 @@ def build_features(
     market: pd.DataFrame | None = None,
     earnings: pd.DataFrame | None = None,
     news: pd.DataFrame | None = None,
+    micro: bool = False,
 ) -> pd.DataFrame:
     """Compute the canonical feature matrix from an OHLCV frame.
 
@@ -233,6 +243,8 @@ def build_features(
         extras.append(build_earnings_features(pd.DatetimeIndex(df.index), earnings))
     if news is not None:
         extras.append(build_news_features(pd.DatetimeIndex(df.index), news, close=close))
+    if micro:
+        extras.append(build_micro_features(df).replace([np.inf, -np.inf], np.nan))
     if not extras:
         return base
     return pd.concat([base, *extras], axis=1)

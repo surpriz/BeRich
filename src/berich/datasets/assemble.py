@@ -50,14 +50,15 @@ def build_ticker_dataset(
     market: pd.DataFrame | None = None,
     earnings: pd.DataFrame | None = None,
     news: pd.DataFrame | None = None,
+    micro: bool = False,
 ) -> SupervisedDataset:
     """Build a supervised dataset for a single OHLCV frame."""
-    feats = build_features(df, market=market, earnings=earnings, news=news)
+    feats = build_features(df, market=market, earnings=earnings, news=news, micro=micro)
     labels = triple_barrier_labels(df, label_config)
 
     joined = feats.join(labels[["label", "sample_weight"]]).dropna()
     y = (joined["label"] == 1).astype(int)
-    cols = feature_columns(earnings=earnings is not None, news=news is not None)
+    cols = feature_columns(earnings=earnings is not None, news=news is not None, micro=micro)
     return SupervisedDataset(
         x=joined[cols],
         y=y,
@@ -75,6 +76,7 @@ def build_dataset(
     market_ticker: str = MARKET_TICKER,
     earnings_store: EarningsStore | None = None,
     news_store: NewsStore | None = None,
+    micro: bool = False,
 ) -> SupervisedDataset:
     """Build a combined dataset across tickers, sorted by date then ticker.
 
@@ -113,6 +115,7 @@ def build_dataset(
             market=market,
             earnings=_earnings_for(t) if use_earnings else None,
             news=_news_for(t) if use_news else None,
+            micro=micro,
         )
         for t in tickers
         if (df := store.load(t)) is not None and not df.empty
@@ -120,7 +123,11 @@ def build_dataset(
     if not parts:
         empty_idx = pd.DatetimeIndex([])
         return SupervisedDataset(
-            x=pd.DataFrame(columns=pd.Index(feature_columns(earnings=use_earnings, news=use_news))),
+            x=pd.DataFrame(
+                columns=pd.Index(
+                    feature_columns(earnings=use_earnings, news=use_news, micro=micro)
+                )
+            ),
             y=pd.Series(dtype=int),
             weight=pd.Series(dtype=float),
             dates=empty_idx,
