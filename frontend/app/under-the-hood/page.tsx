@@ -324,6 +324,83 @@ const CONTENT: Record<Locale, Section[]> = {
   ],
 };
 
+type Stage = { title: string; sub?: string; chips?: string[]; note?: string };
+
+const DIAGRAM: Record<Locale, Stage[]> = {
+  fr: [
+    { title: "Données", chips: ["OHLCV (prix)", "Résultats", "News → FinBERT", "Fondamentaux"] },
+    { title: "Feature engineering", sub: "22 de base + microstructure + familles optionnelles — toutes causales" },
+    { title: "Labellisation triple-barrière", sub: "P(gain) — objectif +2×ATR / stop −1×ATR · point mort ~33 %" },
+    {
+      title: "Entraînement walk-forward — zoo de modèles",
+      sub: "LightGBM · LSTM · PatchTST · TFT · ensemble · modèles par classe d'actif",
+      note: "⟵ HPO (Optuna : objectif AUC / rank-IC + recherche de features) règle params et features",
+    },
+    { title: "Guard rule", sub: "bat la baseline ET le buy & hold ? → promotion · sinon on garde l'ancien" },
+    { title: "Calibration + filtre méta", sub: "probabilité honnête + filtre de précision optionnel" },
+    {
+      title: "Signaux",
+      sub: "stop-loss & take-profit adaptatifs à la volatilité · sizing à 1 % de risque",
+      chips: ["ACHAT ≥ 0,40", "NEUTRE", "VENTE ≤ 0,30"],
+    },
+    { title: "Tableau de bord + portefeuille papier" },
+  ],
+  en: [
+    { title: "Data", chips: ["OHLCV (prices)", "Earnings", "News → FinBERT", "Fundamentals"] },
+    { title: "Feature engineering", sub: "base 22 + microstructure + optional families — all causal" },
+    { title: "Triple-barrier labeling", sub: "P(win) — target +2×ATR / stop −1×ATR · breakeven ~33%" },
+    {
+      title: "Walk-forward training — model zoo",
+      sub: "LightGBM · LSTM · PatchTST · TFT · ensemble · per-asset-class models",
+      note: "⟵ HPO (Optuna: AUC / rank-IC objective + feature search) tunes params and features",
+    },
+    { title: "Guard rule", sub: "beats baseline AND buy & hold? → promote · else keep the previous one" },
+    { title: "Calibration + meta filter", sub: "honest probability + optional precision filter" },
+    {
+      title: "Signals",
+      sub: "volatility-adaptive stop-loss & take-profit · sized to 1% risk",
+      chips: ["BUY ≥ 0.40", "NEUTRAL", "SELL ≤ 0.30"],
+    },
+    { title: "Dashboard + paper book" },
+  ],
+};
+
+function PipelineDiagram({ locale }: { locale: Locale }) {
+  const stages = DIAGRAM[locale];
+  return (
+    <div className="card my-8 p-6">
+      <div className="flex flex-col items-center gap-0">
+        {stages.map((s, i) => (
+          <div key={s.title} className="flex w-full flex-col items-center">
+            <div className="w-full max-w-xl rounded-lg border border-[var(--color-line)] bg-white/[0.02] px-4 py-3 text-center">
+              <div className="font-display text-sm font-bold">{s.title}</div>
+              {s.sub && <div className="mt-1 text-xs text-[var(--color-muted)]">{s.sub}</div>}
+              {s.chips && (
+                <div className="mt-2 flex flex-wrap justify-center gap-1.5">
+                  {s.chips.map((c) => (
+                    <span
+                      key={c}
+                      className="rounded border border-[var(--color-line)] bg-[var(--color-line)]/[0.06] px-2 py-0.5 text-[11px] text-[var(--color-muted)]"
+                    >
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {s.note && (
+                <div className="mt-1 text-[11px] italic text-[var(--color-faint)]">{s.note}</div>
+              )}
+            </div>
+            {i < stages.length - 1 && (
+              <span className="py-1 text-lg leading-none text-[var(--color-faint)]">↓</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function renderBlock(b: Block, i: number) {
   if (b.kind === "p") {
     return (
@@ -382,6 +459,8 @@ export default function UnderTheHood() {
       </Link>
       <h1 className="font-display text-4xl font-extrabold tracking-tight">{t("hood.title")}</h1>
       <p className="mt-3 text-base text-[var(--color-muted)]">{t("hood.intro")}</p>
+
+      <PipelineDiagram locale={locale} />
 
       <nav className="card my-8 p-5">
         <div className="mb-2 text-xs uppercase tracking-widest text-[var(--color-faint)]">
