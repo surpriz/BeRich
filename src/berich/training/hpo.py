@@ -130,11 +130,14 @@ def objective_for(
     device: str | None = None,
     entry_threshold: float = 0.5,
     search_features: bool = True,
+    metric: str = "auc",
 ) -> Callable[[optuna.Trial], float]:
-    """Return an Optuna objective: maximize out-of-sample strategy Sharpe.
+    """Return an Optuna objective.
 
-    When ``search_features`` is set, the trial also toggles feature families on/off so the
-    search optimizes the feature set jointly with the model hyperparameters.
+    ``metric="auc"`` (default) maximizes out-of-sample **AUC** — the genuine ranking-skill
+    metric, robust to the selection bias that chasing the best-of-N backtest Sharpe induces.
+    ``metric="sharpe"`` keeps the old (selection-prone) objective. When ``search_features`` is
+    set, the trial also toggles feature families on/off, optimizing the feature set jointly.
     """
 
     def objective(trial: optuna.Trial) -> float:
@@ -160,7 +163,7 @@ def objective_for(
         )
         trial.set_user_attr("oos_auc", oof.auc)
         trial.set_user_attr("sharpe", bt.strategy.sharpe)
-        return bt.strategy.sharpe
+        return oof.auc if metric == "auc" else bt.strategy.sharpe
 
     return objective
 
@@ -172,11 +175,12 @@ def run_hpo(
     n_trials: int = 20,
     device: str | None = None,
     study_name: str | None = None,
+    metric: str = "auc",
 ) -> optuna.Study:
-    """Run an Optuna study for one model and log the summary to MLflow.
+    """Run an Optuna study for one model (objective = OOS AUC by default) and log to MLflow.
 
-    Uses the project's SQLite RDB so concurrent GPU workers can share the study
-    (``load_if_exists=True``). Returns the completed study (``best_params`` / ``best_value``).
+    The study name embeds the metric so AUC-objective trials never mix with old Sharpe ones.
+    Uses the project's SQLite RDB so concurrent GPU workers share the study (load_if_exists).
     """
     import optuna  # noqa: PLC0415
 
@@ -186,16 +190,16 @@ def run_hpo(
     prices = {t: df for t in config.watchlist if (df := store.load(t)) is not None}
 
     storage = f"sqlite:///{config.optuna_db}"
-    name = study_name or f"berich-hpo-{model_name}"
+    name = study_name or f"berich-hpo-{model_name}-{metric}"
     config.optuna_db.parent.mkdir(parents=True, exist_ok=True)
     study = optuna.create_study(
         direction="maximize", storage=storage, study_name=name, load_if_exists=True
     )
-    objective = objective_for(model_name, dataset, label_cfg, prices, device=device)
+    objective = objective_for(model_name, dataset, label_cfg, prices, device=device, metric=metric)
     study.optimize(objective, n_trials=n_trials)
 
     logger.info(
-        "HPO %s best Sharpe=%.3f params=%s", model_name, study.best_value, study.best_params
+        "HPO %s best %s=%.4f params=%s", model_name, metric, study.best_value, study.best_params
     )
     _log_to_mlflow(model_name, study)
     return study
@@ -265,8 +269,14 @@ def run_longshort_hpo(
     *,
     n_trials: int = 20,
     device: str | None = None,
+    metric: str = "rank_ic",
 ) -> optuna.Study:
-    """Optuna search for the long/short ranker, maximizing out-of-sample net Sharpe."""
+    """Optuna search for the long/short ranker.
+
+    ``metric="rank_ic"`` (default) maximizes the mean per-date rank information coefficient —
+    the genuine cross-sectional ranking skill, robust to the selection bias that chasing the
+    best-of-N portfolio Sharpe induces. ``metric="sharpe"`` keeps the old objective.
+    """
     import optuna  # noqa: PLC0415
 
     from berich.backtest.longshort import LongShortConfig, run_longshort_backtest  # noqa: PLC0415
@@ -310,8 +320,12 @@ def run_longshort_hpo(
         factory = _ranker_factory_from_trial(model_name, trial, device=device)
         oof = oof_predict_cross_sectional(panel, factory, embargo=ls.horizon_days)
         res = run_longshort_backtest(prices, oof, bt_cfg, n_trials=ls.n_trials)
-        trial.set_user_attr("rank_ic", oof.rank_ic)
+        rank_ic = oof.rank_ic
+        trial.set_user_attr("rank_ic", rank_ic)
         trial.set_user_attr("sharpe", res.significance.sharpe)
+        # rank_ic can be NaN on degenerate panels — treat as the worst score.
+        if metric == "rank_ic":
+            return rank_ic if rank_ic == rank_ic else -1.0  # noqa: PLR0124 — NaN check
         return res.significance.sharpe
 
     storage = f"sqlite:///{config.optuna_db}"
@@ -319,15 +333,17 @@ def run_longshort_hpo(
     study = optuna.create_study(
         direction="maximize",
         storage=storage,
-        study_name=f"berich-longshort-{model_name}",
+        study_name=f"berich-longshort-{model_name}-{metric}",
         load_if_exists=True,
     )
     study.optimize(objective, n_trials=n_trials)
-    logger.info("longshort HPO %s best Sharpe=%.3f", model_name, study.best_value)
+    logger.info("longshort HPO %s best %s=%.4f", model_name, metric, study.best_value)
     return study
 
 
-def best_params_for(config: Config, model_name: str, *, study_prefix: str = "berich-hpo") -> dict:
+def best_params_for(
+    config: Config, model_name: str, *, study_prefix: str = "berich-hpo", metric: str = "auc"
+) -> dict:
     """Best model hyperparameters from the latest HPO study (feature toggles excluded).
 
     Returns ``{}`` if no study exists yet, so the nightly retrain falls back to defaults.
@@ -338,7 +354,8 @@ def best_params_for(config: Config, model_name: str, *, study_prefix: str = "ber
 
     try:
         study = optuna.load_study(
-            study_name=f"{study_prefix}-{model_name}", storage=f"sqlite:///{config.optuna_db}"
+            study_name=f"{study_prefix}-{model_name}-{metric}",
+            storage=f"sqlite:///{config.optuna_db}",
         )
         best = study.best_params
     except (KeyError, ValueError):
@@ -349,7 +366,9 @@ def best_params_for(config: Config, model_name: str, *, study_prefix: str = "ber
     return {k: v for k, v in best.items() if not k.startswith("feat_")}
 
 
-def apply_hpo_best(config: Config, model_name: str = "lgbm") -> dict[str, object]:
+def apply_hpo_best(
+    config: Config, model_name: str = "lgbm", *, metric: str = "auc"
+) -> dict[str, object]:
     """Train + promote the final US model using the HPO study's best params *and features*.
 
     Reads the best trial, trains a LightGBM on its selected feature subset with its tuned
@@ -365,7 +384,7 @@ def apply_hpo_best(config: Config, model_name: str = "lgbm") -> dict[str, object
         msg = "apply_hpo_best currently supports only the lgbm model"
         raise ValueError(msg)
     study = optuna.load_study(
-        study_name=f"berich-hpo-{model_name}", storage=f"sqlite:///{config.optuna_db}"
+        study_name=f"berich-hpo-{model_name}-{metric}", storage=f"sqlite:///{config.optuna_db}"
     )
     best = study.best_trial
     params = {k: v for k, v in best.params.items() if not k.startswith("feat_")}
