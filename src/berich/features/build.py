@@ -21,6 +21,10 @@ from berich.features.earnings_features import (
     EARNINGS_FEATURE_COLUMNS,
     build_earnings_features,
 )
+from berich.features.fundamental_features import (
+    FUNDAMENTAL_FEATURE_COLUMNS,
+    build_fundamental_features,
+)
 from berich.features.microstructure import (
     MICRO_FEATURE_COLUMNS,
     build_micro_features,
@@ -100,7 +104,11 @@ FEATURE_COLUMNS: list[str] = [
 
 
 def feature_columns(
-    *, earnings: bool = False, news: bool = False, micro: bool = False
+    *,
+    earnings: bool = False,
+    news: bool = False,
+    micro: bool = False,
+    fundamentals: bool = False,
 ) -> list[str]:
     """Canonical ordered feature list.
 
@@ -119,6 +127,8 @@ def feature_columns(
         out.extend(NEWS_FEATURE_COLUMNS)
     if micro:
         out.extend(MICRO_FEATURE_COLUMNS)
+    if fundamentals:
+        out.extend(FUNDAMENTAL_FEATURE_COLUMNS)
     return out
 
 
@@ -174,6 +184,7 @@ def build_features(
     earnings: pd.DataFrame | None = None,
     news: pd.DataFrame | None = None,
     micro: bool = False,
+    fundamentals: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Compute the canonical feature matrix from an OHLCV frame.
 
@@ -245,6 +256,8 @@ def build_features(
         extras.append(build_news_features(pd.DatetimeIndex(df.index), news, close=close))
     if micro:
         extras.append(build_micro_features(df).replace([np.inf, -np.inf], np.nan))
+    if fundamentals is not None:
+        extras.append(build_fundamental_features(pd.DatetimeIndex(df.index), fundamentals))
     if not extras:
         return base
     return pd.concat([base, *extras], axis=1)

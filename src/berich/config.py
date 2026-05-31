@@ -264,6 +264,11 @@ class Config(BaseModel):
         """Per-ticker news cache (Phase 5b). Empty by default until populated."""
         return self.data_dir / "news"
 
+    @property
+    def fundamentals_dir(self) -> Path:
+        """Per-ticker quarterly fundamentals cache (Phase 11b). Empty until populated."""
+        return self.data_dir / "fundamentals"
+
     @classmethod
     def load(cls, path: Path | str = DEFAULT_CONFIG_PATH) -> Config:
         """Load and validate configuration from a YAML file."""

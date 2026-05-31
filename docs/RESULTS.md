@@ -782,3 +782,21 @@ a principled new source the honest search chose on its own. It still does **not*
 hold on Sharpe (the guard continues to refuse promotion of an edge claim) — but +0.022 AUC
 from a new feature family is the most encouraging feature-side signal to date, and motivates
 the next data sources (point-in-time fundamentals; intraday/microstructure from finer bars).
+
+---
+
+## Phase 11b — Point-in-time fundamentals (v0.5.2) — inconclusive (data depth)
+
+Added a correct, no-lookahead fundamentals pipeline: `data/fundamentals.py` caches quarterly
+statement line-items (revenue, net income, assets, equity, debt) per ticker; `features/
+fundamental_features.py` derives net margin, ROE, debt/equity, and YoY revenue growth, each
+made visible only after a conservative ~75-day filing lag (period-end + lag, forward-filled)
+so a bar never sees a quarter before it was filed. Threaded as an optional family
+(`feature_columns(fundamentals=True)`, `berich backtest --with-fundamentals`).
+
+**Result: inconclusive — yfinance serves only ~5–7 recent quarters.** Over the 2010–2026
+walk-forward the features are neutral-0 for ~90% of the panel, so OOS AUC is unchanged
+(0.5143 -> 0.5143). The lever cannot be validated historically with this data depth. The
+pipeline is causally correct and forward-looking: it will enrich live signals and future
+backtests as history accrues, and is ready to plug into a deeper (paid) fundamentals source.
+Not promoted into the active model (no evidence of benefit). Causality is unit-tested.

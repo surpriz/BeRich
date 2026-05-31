@@ -24,6 +24,7 @@ from berich.labeling.triple_barrier import LabelConfig, triple_barrier_labels
 
 if TYPE_CHECKING:
     from berich.data.earnings import EarningsStore
+    from berich.data.fundamentals import FundamentalsStore
     from berich.data.news import NewsStore
     from berich.data.store import OhlcvStore
 
@@ -51,14 +52,22 @@ def build_ticker_dataset(
     earnings: pd.DataFrame | None = None,
     news: pd.DataFrame | None = None,
     micro: bool = False,
+    fundamentals: pd.DataFrame | None = None,
 ) -> SupervisedDataset:
     """Build a supervised dataset for a single OHLCV frame."""
-    feats = build_features(df, market=market, earnings=earnings, news=news, micro=micro)
+    feats = build_features(
+        df, market=market, earnings=earnings, news=news, micro=micro, fundamentals=fundamentals
+    )
     labels = triple_barrier_labels(df, label_config)
 
     joined = feats.join(labels[["label", "sample_weight"]]).dropna()
     y = (joined["label"] == 1).astype(int)
-    cols = feature_columns(earnings=earnings is not None, news=news is not None, micro=micro)
+    cols = feature_columns(
+        earnings=earnings is not None,
+        news=news is not None,
+        micro=micro,
+        fundamentals=fundamentals is not None,
+    )
     return SupervisedDataset(
         x=joined[cols],
         y=y,
@@ -77,6 +86,7 @@ def build_dataset(
     earnings_store: EarningsStore | None = None,
     news_store: NewsStore | None = None,
     micro: bool = False,
+    fundamentals_store: FundamentalsStore | None = None,
 ) -> SupervisedDataset:
     """Build a combined dataset across tickers, sorted by date then ticker.
 
@@ -94,6 +104,7 @@ def build_dataset(
     market = store.load(market_ticker)
     use_earnings = earnings_store is not None
     use_news = news_store is not None
+    use_fundamentals = fundamentals_store is not None
 
     def _earnings_for(ticker: str) -> pd.DataFrame | None:
         if earnings_store is None:
@@ -107,6 +118,12 @@ def build_dataset(
         loaded = news_store.load(ticker)
         return loaded if loaded is not None else pd.DataFrame()
 
+    def _fundamentals_for(ticker: str) -> pd.DataFrame | None:
+        if fundamentals_store is None:
+            return None
+        loaded = fundamentals_store.load(ticker)
+        return loaded if loaded is not None else pd.DataFrame()
+
     parts = [
         build_ticker_dataset(
             df,
@@ -116,6 +133,7 @@ def build_dataset(
             earnings=_earnings_for(t) if use_earnings else None,
             news=_news_for(t) if use_news else None,
             micro=micro,
+            fundamentals=_fundamentals_for(t) if use_fundamentals else None,
         )
         for t in tickers
         if (df := store.load(t)) is not None and not df.empty
@@ -125,7 +143,12 @@ def build_dataset(
         return SupervisedDataset(
             x=pd.DataFrame(
                 columns=pd.Index(
-                    feature_columns(earnings=use_earnings, news=use_news, micro=micro)
+                    feature_columns(
+                        earnings=use_earnings,
+                        news=use_news,
+                        micro=micro,
+                        fundamentals=use_fundamentals,
+                    )
                 )
             ),
             y=pd.Series(dtype=int),

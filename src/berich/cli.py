@@ -63,7 +63,7 @@ def _cmd_data(args: argparse.Namespace) -> int:
 def _cmd_backtest(args: argparse.Namespace) -> int:
     # Imported lazily so `berich data` doesn't pay for lightgbm/sklearn import time.
     from berich.backtest import BacktestConfig, run_backtest
-    from berich.data import EarningsStore, NewsStore
+    from berich.data import EarningsStore, FundamentalsStore, NewsStore
     from berich.data.store import OhlcvStore
     from berich.datasets import build_dataset
     from berich.features.build import MARKET_TICKER, market_reference_for
@@ -95,6 +95,11 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
     )
     news_store = NewsStore(config.news_dir) if (args.with_news and can_use_extras) else None
     with_micro = getattr(args, "with_micro", False)
+    fundamentals_store = (
+        FundamentalsStore(config.fundamentals_dir)
+        if (getattr(args, "with_fundamentals", False) and can_use_extras)
+        else None
+    )
     dataset = build_dataset(
         store,
         tickers,
@@ -103,6 +108,7 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
         earnings_store=earnings_store,
         news_store=news_store,
         micro=with_micro,
+        fundamentals_store=fundamentals_store,
     )
     bits = ["22"]
     if earnings_store is not None:
@@ -111,6 +117,8 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
         bits.append("news")
     if with_micro:
         bits.append("micro")
+    if fundamentals_store is not None:
+        bits.append("fundamentals")
     feat_mode = " + ".join(bits)
     print(  # noqa: T201
         f"Dataset: {len(dataset)} samples, P(win)={dataset.y.mean():.3f}, "
@@ -810,6 +818,11 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subcomm
         "--with-micro",
         action="store_true",
         help="Include the microstructure / liquidity feature family (Phase 11).",
+    )
+    p_bt.add_argument(
+        "--with-fundamentals",
+        action="store_true",
+        help="Include point-in-time fundamental ratios (Phase 11b; mega only, shallow history).",
     )
     p_bt.add_argument(
         "--volume-slippage",
