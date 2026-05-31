@@ -2,7 +2,7 @@
   "app.tagline": "Swing-trade signals · trend-probability model · walk-forward validated",
   "app.asOf": "As of",
   "banner.advisory": "Advisory only — the current model does not beat buy & hold. Not financial advice.",
-  "banner.experimental": "Model trained on US stocks only. Signals on this universe are experimental, not validated.",
+  "banner.experimental": "Signals served by a model dedicated to this asset class, but advisory only: not validated — no model beats buy & hold, and with less scrutiny than the US universe.",
   "dashboard.todaySignals": "Today's signals",
   "dashboard.export": "Export",
   "dashboard.exportDesc": "Download the full paper-trade history as CSV for external analysis.",
