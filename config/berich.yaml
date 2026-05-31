@@ -312,7 +312,10 @@ signals:
   # Thresholds on the (calibrated) win probability. The triple barrier is 2:1 (target
   # 2·ATR vs stop 1·ATR), so breakeven is ~0.33, not 0.50 — a BUY needs the calibrated
   # P(win) comfortably above breakeven, hence 0.45 rather than the old over-confident 0.55.
-  buy_threshold: 0.40     # calibrated P(win) >= this -> BUY (clear of the ~0.33 breakeven)
+  # Calibrated P(win) clusters near the ~0.32 base rate; breakeven on the 2:1 barrier is
+  # ~0.33. 0.35 sits just above breakeven (still positive expectancy) and is reachable on
+  # the calibrated scale, so the tool actually emits BUYs instead of staying permanently NEUTRAL.
+  buy_threshold: 0.35     # calibrated P(win) >= this -> BUY
   sell_threshold: 0.30    # calibrated P(win) <= this -> SELL / exit bias (negative expectancy)
   capital: 10000.0        # account size for sizing
   risk_pct: 0.01          # fraction of capital risked per trade (to the stop)

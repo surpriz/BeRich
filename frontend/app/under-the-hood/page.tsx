@@ -145,11 +145,11 @@ const CONTENT: Record<Locale, Section[]> = {
       blocks: [
         { kind: "p", text: "Pour chaque actif, le tableau de bord montre une probabilité de gain calibrée P(win) et un verdict :" },
         { kind: "table", head: ["P(win) calibrée", "Signal", "Sens"], rows: [
-          ["≥ 0,40", "ACHAT (BUY)", "nettement au-dessus du point mort (~0,33) → espérance positive"],
-          ["entre 0,30 et 0,40", "NEUTRE", "pas d'edge clair — ni achat ni vente franc"],
+          ["≥ 0,35", "ACHAT (BUY)", "nettement au-dessus du point mort (~0,33) → espérance positive"],
+          ["entre 0,30 et 0,35", "NEUTRE", "pas d'edge clair — ni achat ni vente franc"],
           ["≤ 0,30", "VENTE (SELL)", "sous le point mort → espérance négative"],
         ] },
-        { kind: "p", text: "Point crucial : NEUTRE ne veut PAS dire « vends ». Cela signifie « pas de signal franc ». Le seuil d'achat (0,40) tient compte du payoff 2:1 (point mort ~0,33)." },
+        { kind: "p", text: "Point crucial : NEUTRE ne veut PAS dire « vends ». Cela signifie « pas de signal franc ». Le seuil d'achat (0,35) tient compte du payoff 2:1 (point mort ~0,33)." },
         { kind: "ul", items: [
           "Prix d'entrée : la dernière clôture.",
           "Stop-loss (où couper la perte) : entrée − 1×ATR × facteur de volatilité. Le facteur élargit le stop quand le marché est agité, le resserre quand il est calme (SL/TP adaptatifs). Quand un modèle distributionnel est disponible, le stop peut aussi venir du quantile bas (q10) du rendement prévu.",
@@ -300,11 +300,11 @@ const CONTENT: Record<Locale, Section[]> = {
       blocks: [
         { kind: "p", text: "For each asset the dashboard shows a calibrated win probability P(win) and a verdict:" },
         { kind: "table", head: ["Calibrated P(win)", "Signal", "Meaning"], rows: [
-          ["≥ 0.40", "BUY", "clearly above breakeven (~0.33) → positive expectancy"],
-          ["between 0.30 and 0.40", "NEUTRAL", "no clear edge — neither a buy nor a sell"],
+          ["≥ 0.35", "BUY", "clearly above breakeven (~0.33) → positive expectancy"],
+          ["between 0.30 and 0.35", "NEUTRAL", "no clear edge — neither a buy nor a sell"],
           ["≤ 0.30", "SELL", "below breakeven → negative expectancy"],
         ] },
-        { kind: "p", text: "Crucial: NEUTRAL does NOT mean 'sell'. It means 'no clear signal'. The buy threshold (0.40) accounts for the 2:1 payoff (breakeven ~0.33)." },
+        { kind: "p", text: "Crucial: NEUTRAL does NOT mean 'sell'. It means 'no clear signal'. The buy threshold (0.35) accounts for the 2:1 payoff (breakeven ~0.33)." },
         { kind: "ul", items: [
           "Entry price: the last close.",
           "Stop-loss (where to cut the loss): entry − 1×ATR × volatility factor. The factor widens the stop when the market is turbulent, tightens it when calm (adaptive SL/TP). When a distributional model is available, the stop can also come from the low quantile (q10) of the predicted return.",
@@ -341,7 +341,7 @@ const DIAGRAM: Record<Locale, Stage[]> = {
     {
       title: "Signaux",
       sub: "stop-loss & take-profit adaptatifs à la volatilité · sizing à 1 % de risque",
-      chips: ["ACHAT ≥ 0,40", "NEUTRE", "VENTE ≤ 0,30"],
+      chips: ["ACHAT ≥ 0,35", "NEUTRE", "VENTE ≤ 0,30"],
     },
     { title: "Tableau de bord + portefeuille papier" },
   ],
@@ -359,7 +359,7 @@ const DIAGRAM: Record<Locale, Stage[]> = {
     {
       title: "Signals",
       sub: "volatility-adaptive stop-loss & take-profit · sized to 1% risk",
-      chips: ["BUY ≥ 0.40", "NEUTRAL", "SELL ≤ 0.30"],
+      chips: ["BUY ≥ 0.35", "NEUTRAL", "SELL ≤ 0.30"],
     },
     { title: "Dashboard + paper book" },
   ],
