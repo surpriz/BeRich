@@ -102,6 +102,7 @@
   "training.hpoCount": "avec HPO par actif",
   "training.horizon": "Horizon",
   "training.daysShort": "j",
+  "training.bothSidesNote": "Modèles long et short tous deux validés — des edges distincts sur les hausses et les baisses. Le signal du jour ne choisit qu'un seul côté (ou neutre), jamais les deux à la fois.",
   "training.noHpoBanner": "Aucune recherche d'hyperparamètres par actif n'a encore tourné — les modèles promus utilisent les paramètres par défaut (régularisés). Le sweep profond du week-end (ou `berich hpo --ticker ...`) remplit les études Optuna par actif.",
   "training.hpo": "HPO",
   "training.trials": "essais",

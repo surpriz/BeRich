@@ -378,6 +378,7 @@ def ticker_nightly_refresh_job(config: Config) -> dict[str, int]:
         "promoted": promoted,
         "skipped": skipped,
         "failed": failed,
+        "signals_refreshed": refresh_signals(config) if refreshed else 0,
     }
     logger.info("ticker_nightly_refresh: %s", summary)
     return summary
@@ -428,6 +429,27 @@ def _pending_hpo_targets(config: Config) -> list[tuple[str, str]]:
     ]
 
 
+def refresh_signals(config: Config) -> int:
+    """Regenerate + persist today's signals so the dashboard matches the current model set.
+
+    Drops the stored table first so assets no longer optimized disappear (rather than lingering
+    via the (date, ticker) upsert). Returns the number of signals written. Called after any job
+    that mutates models, so /signals never drifts from /training. Best-effort: never raises.
+    """
+    import duckdb  # noqa: PLC0415
+
+    try:
+        store = OhlcvStore(config.ohlcv_dir)
+        sigs = generate_signals(config, store)
+        with duckdb.connect(str(config.db_path)) as con:
+            con.execute("DELETE FROM signals")
+        SignalStore(config.db_path).save(sigs)
+    except Exception:  # noqa: BLE001 — a refresh failure must not abort the calling job
+        logger.warning("refresh_signals failed", exc_info=True)
+        return 0
+    return len(sigs)
+
+
 def ticker_hpo_queue_job(config: Config, *, max_assets: int = 1) -> dict[str, object]:
     """Sequential first-HPO queue: optimize the next ``max_assets`` un-searched ticker x sides.
 
@@ -449,11 +471,14 @@ def ticker_hpo_queue_job(config: Config, *, max_assets: int = 1) -> dict[str, ob
         except Exception:  # noqa: BLE001 — one bad asset must not stall the queue
             logger.warning("ticker_hpo_queue: %s/%s failed", ticker, side, exc_info=True)
             failed += 1
+    # Keep /signals in lock-step with the model set we just changed.
+    refreshed = refresh_signals(config) if processed else 0
     summary: dict[str, object] = {
         "processed": processed,
         "promoted": promoted,
         "failed": failed,
         "remaining": max(0, len(pending) - len(processed) - failed),
+        "signals_refreshed": refreshed,
     }
     logger.info("ticker_hpo_queue: %s", summary)
     return summary

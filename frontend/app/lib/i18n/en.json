@@ -102,6 +102,7 @@
   "training.hpoCount": "with per-asset HPO",
   "training.horizon": "Horizon",
   "training.daysShort": "d",
+  "training.bothSidesNote": "Long and short models both validated — separate edges on up vs down moves. The daily signal still picks only one side (or neutral), never both at once.",
   "training.noHpoBanner": "No per-asset hyperparameter search has run yet — promoted models use regularized default parameters. The deep weekend sweep (or `berich hpo --ticker ...`) populates per-asset Optuna studies.",
   "training.hpo": "HPO",
   "training.trials": "trials",

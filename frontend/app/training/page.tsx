@@ -166,6 +166,11 @@ export default function TrainingPage() {
                       <Link href={`/ticker/${encodeURIComponent(g.ticker)}`} className="font-medium hover:text-[var(--color-bull)]">
                         {g.ticker}
                       </Link>
+                      {g.long?.status === "promoted" && g.short?.status === "promoted" && (
+                        <span className="mt-1 block max-w-[12rem] text-[10px] leading-tight text-[var(--color-faint)]">
+                          {t("training.bothSidesNote")}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-xs text-[var(--color-muted)]">{g.asset_class}</td>
                     <td className="px-4 py-3"><SideCell s={g.long} t={t} /></td>
