@@ -108,10 +108,10 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
 
     @router.get("/training", dependencies=guard)
     def training() -> list[dict]:
-        """Per-asset training/optimization inventory (status, winner, metrics, HPO trials)."""
+        """Per-asset inventory — only assets we've optimized (HPO run), like the signals page."""
         from berich.training.status import training_status
 
-        return training_status(config)
+        return training_status(config, optimized_only=True)
 
     @router.get("/ops", dependencies=guard)
     def ops() -> dict:

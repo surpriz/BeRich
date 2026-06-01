@@ -36,6 +36,27 @@ def test_never_trained_when_no_artifacts(tmp_path):
     assert all(r["hpo_trials"] == 0 for r in rows)
 
 
+def test_optimized_only_filters_to_assets_with_hpo(tmp_path):
+    import optuna  # noqa: PLC0415
+
+    from berich.training.hpo import ticker_study_name  # noqa: PLC0415
+
+    cfg = _cfg(tmp_path)
+    # Give AAA an HPO study (1 trial); EURUSD has none.
+    study = optuna.create_study(
+        study_name=ticker_study_name("AAA", "lgbm", "long"),
+        storage=f"sqlite:///{cfg.optuna_db}",
+        direction="maximize",
+        load_if_exists=True,
+    )
+    study.add_trial(optuna.trial.create_trial(value=0.6, params={}, distributions={}))
+
+    full = training_status(cfg)
+    opt = training_status(cfg, optimized_only=True)
+    assert {r["ticker"] for r in full} == {"AAA", "EURUSD=X"}
+    assert {r["ticker"] for r in opt} == {"AAA"}  # only the HPO'd asset
+
+
 def test_promoted_and_advisory_are_reported(tmp_path):
     cfg = _cfg(tmp_path)
     # AAA long: promoted (beats buy & hold).

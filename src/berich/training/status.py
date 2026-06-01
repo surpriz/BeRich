@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from berich.config import safe_ticker_slug
 from berich.models.registry import ACTIVE_POINTER, META_FILE, ModelMetadata
@@ -146,14 +146,24 @@ def _fill_from_meta(
         entry["trained_at"] = meta.created_at
 
 
-def training_status(config: Config) -> list[dict[str, object]]:
-    """Per-(ticker, side) training inventory across every configured tradeable asset."""
+def training_status(config: Config, *, optimized_only: bool = False) -> list[dict[str, object]]:
+    """Per-(ticker, side) training inventory across every configured tradeable asset.
+
+    ``optimized_only`` keeps only assets that have had their per-asset HPO run (an Optuna
+    study with >=1 trial on either side) — the set the dashboard's /training tab shows, so it
+    never lists assets we haven't actually worked on. The default (full scan) backs /ops,
+    which needs the global done/pending counts.
+    """
     counts = _hpo_trial_counts(config.optuna_db)
-    return [
+    rows = [
         _side_entry(config, ticker, side, counts)
         for ticker in config.tradeable_tickers()
         for side in _SIDES
     ]
+    if not optimized_only:
+        return rows
+    optimized = {r["ticker"] for r in rows if cast("int", r["hpo_trials"]) > 0}
+    return [r for r in rows if r["ticker"] in optimized]
 
 
 __all__ = ["training_status"]

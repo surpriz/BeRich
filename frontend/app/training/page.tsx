@@ -47,7 +47,10 @@ function SideCell({ s, t }: { s: TrainingStatus | undefined; t: (k: string) => s
         </span>
       )}
       <span className="text-[11px] text-[var(--color-faint)]">
-        {t("training.hpo")}: {s.hpo_trials > 0 ? `${s.hpo_trials} ${t("training.trials")}` : t("training.defaultParams")}
+        {t("training.hpo")}:{" "}
+        {s.hpo_trials > 0
+          ? `${s.hpo_trials} ${t("training.trials")} (${t("training.acrossModels")})`
+          : t("training.defaultParams")}
       </span>
     </div>
   );
