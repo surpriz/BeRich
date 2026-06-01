@@ -4,9 +4,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 
 // Global detail level — one switch that drives information density across every
 // page. Mirrors the I18nProvider pattern (SSR-safe localStorage hydration).
-export type Level = "discovery" | "standard" | "expert";
+export type Level = "standard" | "expert";
 
-const ORDER: Level[] = ["discovery", "standard", "expert"];
+const ORDER: Level[] = ["standard", "expert"];
 const STORAGE_KEY = "berich.level";
 
 type Ctx = { level: Level; setLevel: (l: Level) => void };
@@ -22,7 +22,9 @@ export function LevelProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const stored = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : null;
-    if (stored === "discovery" || stored === "standard" || stored === "expert") setLevelState(stored);
+    // "discovery" was removed — migrate any persisted value to "standard".
+    if (stored === "expert") setLevelState("expert");
+    else if (stored === "standard" || stored === "discovery") setLevelState("standard");
   }, []);
 
   const setLevel = useCallback((l: Level) => {

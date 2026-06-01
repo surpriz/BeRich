@@ -3,7 +3,7 @@
 import { useLevel, type Level } from "@/app/lib/level";
 import { useTranslate } from "@/app/lib/i18n";
 
-const LEVELS: Level[] = ["discovery", "standard", "expert"];
+const LEVELS: Level[] = ["standard", "expert"];
 
 export function LevelSwitch() {
   const { level, setLevel } = useLevel();

@@ -2,8 +2,8 @@
 
 import { atLeast, useLevel, type Level } from "@/app/lib/level";
 
-// Declarative level gate. `<Show min="standard">` renders children only at that
-// level or above; `<Show max="discovery">` renders only at that level or below.
+// Declarative level gate. `<Show min="expert">` renders children only at that
+// level or above; `<Show max="standard">` renders only at that level or below.
 export function Show({
   min,
   max,

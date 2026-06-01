@@ -18,7 +18,6 @@ import {
 } from "@/app/lib/api";
 import { SignalsTable } from "./components/SignalsTable";
 import { LongShortPanel } from "./components/LongShortPanel";
-import { LightView } from "./components/LightView";
 import { BacktestPanel } from "./components/BacktestPanel";
 import { CalibrationCard } from "./components/CalibrationCard";
 import { DriftPanel } from "./components/DriftPanel";
@@ -156,19 +155,10 @@ export default function Dashboard() {
                 {t("banner.experimental")}
               </div>
             )}
-            <Show max="discovery">
-              {filtered ? (
-                <LightView signals={filtered} paper={s.paperEquity} />
-              ) : (
-                <Skeleton h={280} />
-              )}
-            </Show>
-            <Show min="standard">
-              <h2 className="mb-3 font-display text-xl font-bold">
-                {t("dashboard.todaySignals")}
-              </h2>
-              {filtered ? <SignalsTable signals={filtered} /> : <Skeleton h={280} />}
-            </Show>
+            <h2 className="mb-3 font-display text-xl font-bold">
+              {t("dashboard.todaySignals")}
+            </h2>
+            {filtered ? <SignalsTable signals={filtered} /> : <Skeleton h={280} />}
           </section>
 
           <Show min="standard">
