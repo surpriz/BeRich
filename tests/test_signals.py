@@ -14,6 +14,7 @@ from berich.signals.service import (
     Signal,
     _classify,
     _decide,
+    _price_decimals,
     _size_position,
 )
 from berich.signals.store import SignalStore
@@ -87,6 +88,21 @@ def test_size_position_uses_absolute_distance():
     assert _size_position(entry=100.0, stop=105.0, config=cfg) == _size_position(
         entry=100.0, stop=95.0, config=cfg
     )
+
+
+def test_size_position_capped_at_capital_no_leverage():
+    # A low-priced FX pair with a tiny stop distance would risk-size to tens of thousands
+    # of units; the no-leverage cap keeps notional <= capital.
+    cfg = _config()  # capital 10k, risk 1%
+    shares, notional = _size_position(entry=1.1664, stop=1.1602, config=cfg)
+    assert notional <= cfg.signals.capital
+    assert shares == int(cfg.signals.capital // 1.1664)
+
+
+def test_price_decimals_scales_with_magnitude():
+    assert _price_decimals(212.5) == 2  # equity
+    assert _price_decimals(1.1664) == 4  # FX pair
+    assert _price_decimals(0.42) == 6  # sub-unit (e.g. some crypto/penny)
 
 
 def test_size_position_rejects_nonpositive_stop_distance():

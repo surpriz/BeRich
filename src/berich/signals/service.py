@@ -131,17 +131,36 @@ def _decide(
     return NEUTRAL, "long"
 
 
+def _price_decimals(price: float) -> int:
+    """Decimal places to render a price at, scaled to its magnitude.
+
+    Equities (~$10 to $1000) keep 2 decimals; low-priced instruments like FX pairs
+    (~1.17) need 4 so the entry/stop/target don't collapse onto each other when rounded.
+    """
+    p = abs(price)
+    if p >= 100:  # noqa: PLR2004 — magnitude buckets, not magic constants worth naming
+        return 2
+    if p >= 1:
+        return 4
+    return 6
+
+
 def _size_position(entry: float, stop: float, config: Config) -> tuple[int, float]:
     """Risk-based sizing: risk at most ``risk_pct`` of capital to the stop.
 
     Uses the absolute entry-to-stop distance so it works for both longs (stop below
-    entry) and shorts (stop above entry).
+    entry) and shorts (stop above entry). The notional is capped at the account capital
+    (no leverage by default) — without the cap a low-priced instrument (e.g. an FX pair
+    near 1.17 with a tiny ATR stop) sizes to tens of thousands of units worth several
+    times the account.
     """
     stop_distance = abs(entry - stop)
-    if stop_distance <= 0:
+    if stop_distance <= 0 or entry <= 0:
         return 0, 0.0
     risk_amount = config.signals.capital * config.signals.risk_pct
-    shares = math.floor(risk_amount / stop_distance)
+    risk_shares = math.floor(risk_amount / stop_distance)
+    capital_shares = math.floor(config.signals.capital / entry)  # no-leverage cap
+    shares = min(risk_shares, capital_shares)
     return shares, shares * entry
 
 
@@ -335,25 +354,53 @@ def _class_model(config: Config, asset_class: str, fallback: Model) -> Model:
 def generate_multi_asset_signals(config: Config, store: OhlcvStore) -> list[Signal]:
     """Advisory signals for the non-US universes (FR stocks, forex, crypto, commodities).
 
-    Uses the **dedicated** per-class model when one has been promoted
-    (``data/models/<class>/``), otherwise falls back to a base-22 US model. Each class uses
-    its own regime proxy (BTC for crypto, the dollar index for forex, …). Earnings/news are
-    off (no caches); the US calibrator/meta filter are not applied to these experimental assets.
+    Resolution per ticker mirrors the US path: the asset's own promoted **long** model is
+    served when present, else the dedicated per-class model (``data/models/<class>/``), else a
+    base-22 US fallback; the asset's own promoted **short** model is consulted when present so
+    a directional short can be emitted. Each class uses its own regime proxy (BTC for crypto,
+    the dollar index for forex, …). Earnings/news are off (no caches there).
     """
     label_cfg = LabelConfig(**config.labeling.model_dump())
     fallback = _base_model(store, config, label_cfg)
+    base_cols = feature_columns()
     out: list[Signal] = []
     for asset_class in ("fr_stocks", "forex", "crypto", "commodities"):
         tickers = config.universes.get(asset_class)
         if not tickers:
             continue
-        model = _class_model(config, asset_class, fallback)
+        class_model = _class_model(config, asset_class, fallback)
         market = store.load(market_reference_for(asset_class))
         for ticker in tickers:
             df = store.load(ticker)
             if df is None or df.empty:
                 continue
-            signal = _signal_for_ticker(ticker, df, model, config, label_cfg, market=market)
+            # Long: per-ticker winner first, else the per-class/base fallback (base-22 cols).
+            per_long = _ticker_side_model(config, ticker, "long")
+            long_model, long_cols, long_cal = per_long or (class_model, base_cols, None)
+            # Short: per-ticker only — absent => never shorted.
+            per_short = _ticker_side_model(config, ticker, "short")
+            short_model, short_cols, short_cal = per_short or (None, None, None)
+            # Non-US universes have no earnings/news caches; if a per-ticker model was trained
+            # with those families, pass empty frames so the columns exist (neutral defaults)
+            # rather than KeyError-ing on a missing column at serve time.
+            union_cols = [*long_cols, *(short_cols or [])]
+            with_earnings = _needs_earnings(union_cols)
+            with_news = _needs_news(union_cols)
+            signal = _signal_for_ticker(
+                ticker,
+                df,
+                long_model,
+                config,
+                label_cfg,
+                market=market,
+                with_earnings=with_earnings,
+                with_news=with_news,
+                feature_cols=long_cols,
+                calibrator=long_cal,
+                short_model=short_model,
+                short_feature_cols=short_cols,
+                short_calibrator=short_cal,
+            )
             if signal is not None:
                 out.append(signal)
     return out
@@ -479,9 +526,9 @@ def _signal_for_ticker(  # noqa: C901, PLR0915
         ticker=ticker,
         signal=decision,
         proba=round(acted_raw, 4),
-        entry=round(entry, 2),
-        stop_loss=round(stop, 2),
-        take_profit=round(target, 2),
+        entry=round(entry, _price_decimals(entry)),
+        stop_loss=round(stop, _price_decimals(entry)),
+        take_profit=round(target, _price_decimals(entry)),
         size_shares=shares,
         notional=round(notional, 2),
         direction=direction,
