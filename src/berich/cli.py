@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from typing import cast
 
 from berich.config import DEFAULT_CONFIG_PATH, Config
 from berich.data import (
@@ -757,6 +758,26 @@ def _cmd_hpo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_backup(args: argparse.Namespace) -> int:
+    from datetime import UTC, datetime
+
+    from berich.backup import create_backup
+
+    config = Config.load(args.config)
+    res = create_backup(config, timestamp=datetime.now(UTC).isoformat(), keep=args.keep)
+    if res["path"] is None:
+        print("Nothing to back up yet (no studies / models / signals on disk).")  # noqa: T201
+        return 0
+    archived = cast("list[str]", res["archived"])
+    removed = cast("list[str]", res["removed"])
+    size_mb = cast("int", res["size_bytes"]) / 1e6
+    print(  # noqa: T201
+        f"Backup written: {res['path']} ({size_mb:.1f} MB, "
+        f"{len(archived)} members). Rotated {len(removed)} old archive(s)."
+    )
+    return 0
+
+
 def _cmd_models(args: argparse.Namespace) -> int:
     import json
 
@@ -1043,6 +1064,12 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subcomm
 
     p_models = sub.add_parser("models", help="List models in the registry")
     p_models.set_defaults(func=_cmd_models)
+
+    p_backup = sub.add_parser("backup", help="Archive training state (studies, models, signals)")
+    p_backup.add_argument(
+        "--keep", type=int, default=7, help="Number of recent archives to keep (default: 7)"
+    )
+    p_backup.set_defaults(func=_cmd_backup)
 
     return parser
 

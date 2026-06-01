@@ -62,4 +62,5 @@ def test_build_scheduler_registers_jobs():
         "nightly_hpo",
         "weekend_hpo",
         "longshort_signals",
+        "backup",
     }

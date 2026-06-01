@@ -112,7 +112,7 @@ class ZooConfig(BaseModel):
     ticker_tournament_models: list[str] = Field(
         default_factory=lambda: ["lgbm", "lstm", "patchtst", "tft"]
     )
-    ticker_initial_hpo_trials: int = 40  # heavy first sweep, per ticker x model x side
+    ticker_initial_hpo_trials: int = 100  # heavy first sweep, per ticker x model x side
     ticker_nightly_hpo_trials: int = 4  # light nightly top-up into the same per-ticker study
     ticker_sides: list[str] = Field(default_factory=lambda: ["long", "short"])
 

@@ -308,6 +308,13 @@ def retrain_asset_models_job(config: Config) -> dict[str, object]:
     return results
 
 
+def backup_job(config: Config) -> dict[str, object]:
+    """Archive the training state (Optuna studies, models, signals DB) with rotation."""
+    from berich.backup import create_backup  # noqa: PLC0415
+
+    return create_backup(config, timestamp=datetime.now(UTC).isoformat())
+
+
 def _ticker_hpo_task(
     device: str | None,
     config: Config,

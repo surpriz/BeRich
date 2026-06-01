@@ -13,6 +13,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from berich.scheduler.jobs import (
+    backup_job,
     check_drift_job,
     daily_paper_job,
     longshort_signals_job,
@@ -128,6 +129,17 @@ def build_scheduler(config: Config) -> BlockingScheduler:
         CronTrigger(hour="*/2", minute=15, timezone="Europe/Paris"),
         args=[config],
         id="ticker_hpo_queue",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # Daily rotating backup of the training state at 21:00 Paris — before the nightly chain
+    # (22:30+) mutates models/signals, so each archive snapshots the last settled state.
+    scheduler.add_job(
+        backup_job,
+        CronTrigger(hour=21, minute=0, timezone="Europe/Paris"),
+        args=[config],
+        id="backup",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
