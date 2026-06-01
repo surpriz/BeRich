@@ -306,6 +306,13 @@ def open_new_trades(
     # Directional shorts are emitted by the signal service but not yet paper-traded.
     buys = latest[latest["signal"].isin(["LONG", "BUY"])]
     buys = buys[buys["size_shares"] > 0]
+    # Only paper-trade PROMOTED assets — those whose per-asset model cleared the guard. The
+    # book must measure the validated strategy, not advisory (optimized-but-unproven) signals.
+    # Legacy rows predating the column have promoted=NULL; treat missing as not-promoted.
+    if "promoted" in buys.columns:
+        buys = buys[buys["promoted"].fillna(value=False).astype(bool)]
+    else:
+        buys = buys.iloc[0:0]  # no column yet => nothing is known-promoted => open nothing
     if buys.empty:
         return 0
     rows = pd.DataFrame(

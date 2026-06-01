@@ -154,13 +154,14 @@ def build_scheduler(config: Config) -> BlockingScheduler:
         max_instances=1,
         coalesce=True,
     )
-    # Sequential first-HPO queue: every 2h, optimize the NEXT un-searched ticker x side, one at
-    # a time. max_instances=1 means a still-running asset simply blocks the next firing, so two
-    # deep HPO searches never overlap — the gentle, GPU-friendly path to give every asset its
-    # first deep HPO without the Saturday thundering herd. Drops to a no-op once all are done.
+    # Sequential first-HPO queue: fires every 10 min and optimizes the NEXT un-searched
+    # (ticker, side), one at a time. max_instances=1 + coalesce mean a still-running HPO simply
+    # blocks the next firing (no overlap, GPUs never double-booked); as soon as the GPUs are
+    # free the next firing picks up the next asset — so idle time between assets is ≤10 min
+    # instead of up to 2h. Drops to a no-op once every asset has had its first HPO.
     scheduler.add_job(
         ticker_hpo_queue_job,
-        CronTrigger(hour="*/2", minute=15, timezone="Europe/Paris"),
+        CronTrigger(minute="*/10", timezone="Europe/Paris"),
         args=[config],
         id="ticker_hpo_queue",
         replace_existing=True,

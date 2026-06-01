@@ -77,7 +77,15 @@ def _flat(*, level: float, n: int, start_date: str) -> pd.DataFrame:
     )
 
 
-def _signal(date: pd.Timestamp, ticker: str, entry: float, stop: float, target: float) -> Signal:
+def _signal(
+    date: pd.Timestamp,
+    ticker: str,
+    entry: float,
+    stop: float,
+    target: float,
+    *,
+    promoted: bool = True,
+) -> Signal:
     return Signal(
         date=date,
         ticker=ticker,
@@ -88,6 +96,7 @@ def _signal(date: pd.Timestamp, ticker: str, entry: float, stop: float, target: 
         take_profit=target,
         size_shares=10,
         notional=entry * 10,
+        promoted=promoted,
     )
 
 
@@ -103,6 +112,19 @@ def _seed_signal_table(
     store = SignalStore(config.db_path)
     store.save([_signal(date, "AAA", entry=entry, stop=stop, target=target)])
     return store
+
+
+def test_advisory_signal_opens_no_paper_trade(config, ohlcv_store):
+    # A non-promoted (advisory) LONG signal must NOT open a paper trade — the book tracks
+    # only the validated strategy.
+    df = _ramp(start=100.0, end=120.0, n=20, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    sigstore = SignalStore(config.db_path)
+    sigstore.save(
+        [_signal(df.index[0], "AAA", entry=100.0, stop=95.0, target=110.0, promoted=False)]
+    )
+    assert open_new_trades(config, ohlcv_store, sigstore) == 0
+    assert PaperStore(config.db_path).all_trades().empty
 
 
 def test_uptrend_closes_at_target(config, ohlcv_store):
