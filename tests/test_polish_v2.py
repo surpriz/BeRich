@@ -15,6 +15,9 @@ from berich.config import (
     Config,
 )
 from berich.data.store import OhlcvStore
+from berich.datasets.assemble import build_ticker_dataset
+from berich.labeling.triple_barrier import LabelConfig
+from berich.models import LGBMModel, ModelMetadata, promote, save_model
 from berich.signals.service import Signal
 from berich.signals.store import SignalStore
 
@@ -142,6 +145,24 @@ def client_with_data(tmp_path, monkeypatch):
             )
         ]
     )
+
+    # Seed AAPL's own promoted long model so explain has an optimized per-asset model to
+    # explain (serving no longer falls back to a generic global model).
+    cfg_obj = Config(data_dir=data_dir, universes=AssetUniverses(us_stocks=["AAPL"]))
+    ds = build_ticker_dataset(ohlcv, LabelConfig(), ticker="AAPL", market=ohlcv)
+    model = LGBMModel(n_estimators=20).fit(ds.x, ds.y)
+    reg = cfg_obj.model_dir_for_ticker("AAPL", "long")
+    meta = ModelMetadata(
+        name="lgbm-long",
+        framework="lightgbm",
+        feature_columns=list(ds.x.columns),
+        metrics={"auc": 0.6, "sharpe": 1.2, "benchmark_sharpe": 0.3},
+        beats_buy_hold=True,
+        ticker="AAPL",
+        side="long",
+    )
+    save_model(model, meta, registry_dir=reg)
+    promote("lgbm-long", registry_dir=reg)
 
     cfg = {"data_dir": str(data_dir), "watchlist": ["AAPL", "SPY"]}
     cfg_path = tmp_path / "cfg.yaml"

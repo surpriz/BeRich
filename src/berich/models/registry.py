@@ -149,3 +149,22 @@ def load_active(registry_dir: Path) -> tuple[Model, ModelMetadata] | None:
     if not (registry_dir / name / META_FILE).exists():
         return None
     return load_model(name, registry_dir=registry_dir)
+
+
+def load_best(registry_dir: Path) -> tuple[Model, ModelMetadata] | None:
+    """Load the promoted model if any, else the best saved candidate by AUC (advisory).
+
+    The per-ticker tournament saves its best-AUC candidate even when none clears the guard,
+    so an *optimized but advisory* asset can still be served from its own model rather than a
+    generic fallback. Returns ``None`` only when the registry holds no artifact at all. Callers
+    must consult ``meta`` to know whether it's promoted (``beats_buy_hold`` / the active pointer)
+    before treating the signal as anything but advisory.
+    """
+    active = load_active(registry_dir)
+    if active is not None:
+        return active
+    metas = list_models(registry_dir)
+    if not metas:
+        return None
+    best = max(metas, key=lambda m: m.metrics.get("auc", 0.0))
+    return load_model(best.name, registry_dir=registry_dir)

@@ -2,6 +2,8 @@
   "app.tagline": "Signaux swing-trade · modèle de probabilité de tendance · validé walk-forward",
   "app.asOf": "Au",
   "banner.advisory": "Outil indicatif — le modèle actuel ne bat pas le buy & hold. Ce n'est pas un conseil financier.",
+  "philosophy.title": "Ce que signifie P(win).",
+  "philosophy.body": "Le modèle ne prédit pas un prix. P(win) est la probabilité que, si vous entrez aujourd'hui, l'objectif (+2 ATR) soit atteint AVANT le stop (−1 ATR) sous 10 jours de bourse. La stratégie surfe les tendances avec un ratio gain/risque de 2:1 : le seuil de rentabilité est donc ~33%, pas 50% — d'où le seuil d'achat à 0,35. Seuls les actifs déjà optimisés sont affichés.",
   "banner.experimental": "Signaux servis par un modèle dédié à cette classe d'actif, mais en mode indicatif : non validés — aucun modèle ne bat le « acheter et garder », et la validation est moins poussée que sur les actions US.",
   "dashboard.todaySignals": "Signaux du jour",
   "dashboard.export": "Export",

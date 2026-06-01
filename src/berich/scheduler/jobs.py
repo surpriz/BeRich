@@ -24,7 +24,6 @@ from berich.monitoring import feature_drift
 from berich.notifications import send_buy_signals_email
 from berich.signals import (
     SignalStore,
-    generate_multi_asset_signals,
     generate_signals,
     open_new_trades,
     update_open_trades,
@@ -61,15 +60,11 @@ def daily_paper_job(config: Config) -> dict[str, int]:
     news_rows = _try_news_refresh(config)
     finbert_scored = _try_finbert_score(config) if news_rows >= 0 else 0
     store = OhlcvStore(config.ohlcv_dir)
+    # generate_signals now covers every *optimized* asset across all classes, served from each
+    # asset's own model — no generic fallback, no separate multi-asset pass.
     signals = generate_signals(config, store)
     signal_store = SignalStore(config.db_path)
     saved = signal_store.save(signals)
-    # Advisory signals for the non-US universes so the dashboard's multi-asset tabs populate.
-    try:
-        multi = generate_multi_asset_signals(config, store)
-        signal_store.save(multi)
-    except Exception:  # noqa: BLE001 — experimental universes never block the core US chain
-        logger.warning("daily_paper: multi-asset signals failed", exc_info=True)
     opened = open_new_trades(config, store, signal_store)
     closed = update_open_trades(config, store)
     # Email digest only fires when we actually opened paper trades — that filter

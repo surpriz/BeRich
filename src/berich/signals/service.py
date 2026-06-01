@@ -21,9 +21,7 @@ import pandas as pd
 
 from berich.data.earnings import EarningsStore
 from berich.data.news import NewsStore
-from berich.datasets.assemble import build_dataset
 from berich.features.build import (
-    MARKET_TICKER,
     build_features,
     feature_columns,
     market_reference_for,
@@ -34,7 +32,7 @@ from berich.features.microstructure import MICRO_FEATURE_COLUMNS
 from berich.features.news_features import NEWS_FEATURE_COLUMNS
 from berich.features.volatility import forecast_vol
 from berich.labeling.triple_barrier import LabelConfig, adaptive_barriers
-from berich.models import LGBMModel, load_active
+from berich.models import LGBMModel, load_active, load_best
 from berich.models.meta_labeler import PRIMARY_PROBA_COL
 from berich.signals.calibration import ProbaCalibrator, load_calibrator
 
@@ -85,6 +83,9 @@ class Signal:
     ret_q90: float | None = None
     sigma_horizon: float | None = None
     sltp_method: str = "atr_fixed"  # "vol_scaled" | "quantile" | "atr_fixed"
+    # True when the acted side's per-asset model passed the guard (promoted); False = advisory
+    # (served from the asset's own optimized-but-unpromoted candidate, never a generic fallback).
+    promoted: bool = False
 
     def as_row(self) -> dict[str, object]:
         row = asdict(self)
@@ -176,24 +177,6 @@ def _news_store_if_available(config: Config) -> NewsStore | None:
     return store if store.has_any_data() else None
 
 
-def _train_model(
-    store: OhlcvStore,
-    config: Config,
-    label_cfg: LabelConfig,
-    *,
-    earnings_store: EarningsStore | None,
-    news_store: NewsStore | None,
-) -> Model:
-    dataset = build_dataset(
-        store,
-        config.watchlist,
-        label_cfg,
-        earnings_store=earnings_store,
-        news_store=news_store,
-    )
-    return LGBMModel().fit(dataset.x, dataset.y, sample_weight=dataset.weight)
-
-
 def _needs_news(cols: list[str]) -> bool:
     return any(c in NEWS_FEATURE_COLUMNS for c in cols)
 
@@ -206,68 +189,47 @@ def _needs_micro(cols: list[str]) -> bool:
     return any(c in MICRO_FEATURE_COLUMNS for c in cols)
 
 
-def _resolve_model(
-    store: OhlcvStore,
-    config: Config,
-    label_cfg: LabelConfig,
-) -> tuple[Model, list[str]]:
-    """Return ``(model, feature_columns)`` — the model + the exact columns it consumes.
+@dataclass
+class _SideModel:
+    """A per-asset model for one side, plus whether it cleared the guard (promoted)."""
 
-    A promoted model is trusted as-is, including an HPO-selected **feature subset** (the
-    columns are selected from the full built feature frame at serve time). The only fallback
-    is when the model needs news features but the news cache is empty — then we retrain a
-    non-news baseline inline rather than feed all-zero columns. With no promoted model, a
-    fresh LightGBM is trained on whatever feature families have data on disk.
-    """
-    active = load_active(config.models_dir)
-    if active is not None:
-        model, meta = active
-        cols = list(meta.feature_columns)
-        if _needs_news(cols) and _news_store_if_available(config) is None:
-            logger.warning(
-                "active model '%s' expects news features but data/news/ is empty; "
-                "falling back to a freshly-trained baseline",
-                meta.name,
-            )
-        else:
-            logger.info("serving promoted model '%s' (%d features)", meta.name, len(cols))
-            return model, cols
-
-    earnings_store = _earnings_store_if_available(config)
-    news_store = _news_store_if_available(config)
-    model = _train_model(
-        store,
-        config,
-        label_cfg,
-        earnings_store=earnings_store,
-        news_store=news_store,
-    )
-    return model, feature_columns(earnings=earnings_store is not None, news=news_store is not None)
+    model: Model
+    cols: list[str]
+    calibrator: ProbaCalibrator | None
+    promoted: bool
 
 
-def _load_calibrator(config: Config) -> ProbaCalibrator | None:
-    """Load the calibrator saved next to the active model, if any."""
-    active = load_active(config.models_dir)
-    if active is None:
-        return None
-    return load_calibrator(config.models_dir / active[1].name)
-
-
-def _ticker_side_model(
-    config: Config, ticker: str, side: str
-) -> tuple[Model, list[str], ProbaCalibrator | None] | None:
-    """Per-ticker promoted model for one side, with its feature columns + calibrator.
-
-    Returns ``None`` when this ticker has no promoted model for ``side`` (advisory-only
-    or not yet trained) — the caller then falls back (long) or skips the side (short).
+def _ticker_side_model(config: Config, ticker: str, side: str) -> _SideModel | None:
+    """Per-asset model for one side: the promoted winner if any, else the best optimized
+    candidate (advisory). Returns ``None`` only when the asset has no artifact for ``side``
+    at all (not yet optimized). Never falls back to a generic/global model — an asset is served
+    exclusively from its own trained models.
     """
     registry_dir = config.model_dir_for_ticker(ticker, side)
-    active = load_active(registry_dir)
-    if active is None:
+    loaded = load_best(registry_dir)
+    if loaded is None:
         return None
-    model, meta = active
+    model, meta = loaded
     cal = load_calibrator(registry_dir / meta.name)
-    return model, list(meta.feature_columns), cal
+    promoted = load_active(registry_dir) is not None
+    return _SideModel(model, list(meta.feature_columns), cal, promoted)
+
+
+def _optimized_tickers(config: Config) -> list[str]:
+    """Tickers that have had their per-asset HPO run (an Optuna study with >=1 trial).
+
+    The dashboard surfaces only these — assets we've actually worked on/optimized — so it never
+    shows raw, un-tuned fallbacks. As the nightly HPO queue advances, more assets appear here.
+    """
+    from berich.training.status import _hpo_trial_counts, _hpo_trials_for  # noqa: PLC0415
+
+    counts = _hpo_trial_counts(config.optuna_db)
+    sides = config.zoo.ticker_sides
+    return [
+        t
+        for t in config.tradeable_tickers()
+        if any(_hpo_trials_for(counts, t, None, s) > 0 for s in sides)
+    ]
 
 
 def _load_meta_labeler(config: Config) -> Model | None:
@@ -279,28 +241,36 @@ def _load_meta_labeler(config: Config) -> Model | None:
 
 
 def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
-    """Serve the promoted (or freshly trained) model and emit one signal per ticker."""
+    """Emit one signal per **optimized** asset, served only from that asset's own models.
+
+    "Optimized" = the asset has had its per-asset HPO run (see :func:`_optimized_tickers`). An
+    asset with no per-asset model (not yet worked on) produces no signal — the dashboard stays
+    clean and only shows assets we've actually tuned. Each asset is scored with its own long
+    (and, if present, short) model; there is no generic/global fallback.
+    """
     label_cfg = LabelConfig(**config.labeling.model_dump())
-    global_model, global_cols = _resolve_model(store, config, label_cfg)
-    global_cal = _load_calibrator(config)
     meta_model = _load_meta_labeler(config)
-    market = store.load(MARKET_TICKER)
     earnings_store = _earnings_store_if_available(config)
     news_store = _news_store_if_available(config)
+    market_cache: dict[str, pd.DataFrame | None] = {}
 
     signals: list[Signal] = []
-    for ticker in config.watchlist:
+    for ticker in _optimized_tickers(config):
         df = store.load(ticker)
         if df is None or df.empty:
             continue
-        # Long side: this ticker's own promoted model if it has one, else the global fallback.
         per_long = _ticker_side_model(config, ticker, "long")
-        long_model, long_cols, long_cal = per_long or (global_model, global_cols, global_cal)
-        # Short side: per-ticker only — absent => the ticker is never shorted.
+        if per_long is None:
+            continue  # only a short model exists for an asset we'd never go long on; skip long
         per_short = _ticker_side_model(config, ticker, "short")
-        short_model, short_cols, short_cal = per_short or (None, None, None)
 
-        all_cols = [*long_cols, *(short_cols or [])]
+        asset_class = config.asset_class_for(ticker)
+        ref = market_reference_for(asset_class)
+        if ref not in market_cache:
+            market_cache[ref] = store.load(ref)
+        market = market_cache[ref]
+
+        all_cols = [*per_long.cols, *(per_short.cols if per_short else [])]
         with_earnings = _needs_earnings(all_cols)
         with_news = _needs_news(all_cols)
         earnings_df = (
@@ -310,7 +280,7 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
         signal = _signal_for_ticker(
             ticker,
             df,
-            long_model,
+            per_long.model,
             config,
             label_cfg,
             market=market,
@@ -318,92 +288,26 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
             news=news_df,
             with_earnings=with_earnings,
             with_news=with_news,
-            feature_cols=long_cols,
-            calibrator=long_cal,
+            feature_cols=per_long.cols,
+            calibrator=per_long.calibrator,
             meta_model=meta_model,
-            short_model=short_model,
-            short_feature_cols=short_cols,
-            short_calibrator=short_cal,
+            short_model=per_short.model if per_short else None,
+            short_feature_cols=per_short.cols if per_short else None,
+            short_calibrator=per_short.calibrator if per_short else None,
+            long_promoted=per_long.promoted,
+            short_promoted=per_short.promoted if per_short else False,
         )
         if signal is not None:
             signals.append(signal)
     return signals
 
 
-def _base_model(store: OhlcvStore, config: Config, label_cfg: LabelConfig) -> Model:
-    """A base-22-feature LGBM for scoring non-US assets (no earnings/news caches there).
-
-    Reuses the promoted model only if it is base-22; otherwise trains a quick LGBM on the
-    US watchlist. Non-US signals are explicitly advisory/experimental (the UI says so).
-    """
-    active = load_active(config.models_dir)
-    if active is not None and active[1].feature_columns == feature_columns():
-        return active[0]
-    return _train_model(store, config, label_cfg, earnings_store=None, news_store=None)
-
-
-def _class_model(config: Config, asset_class: str, fallback: Model) -> Model:
-    """Dedicated promoted model for an asset class if present, else the US fallback."""
-    active = load_active(config.models_dir_for(asset_class))
-    if active is not None and active[1].feature_columns == feature_columns():
-        logger.info("serving dedicated %s model '%s'", asset_class, active[1].name)
-        return active[0]
-    return fallback
-
-
 def generate_multi_asset_signals(config: Config, store: OhlcvStore) -> list[Signal]:
-    """Advisory signals for the non-US universes (FR stocks, forex, crypto, commodities).
-
-    Resolution per ticker mirrors the US path: the asset's own promoted **long** model is
-    served when present, else the dedicated per-class model (``data/models/<class>/``), else a
-    base-22 US fallback; the asset's own promoted **short** model is consulted when present so
-    a directional short can be emitted. Each class uses its own regime proxy (BTC for crypto,
-    the dollar index for forex, …). Earnings/news are off (no caches there).
+    """Deprecated: non-US assets are now covered by :func:`generate_signals` (optimized-only,
+    served from each asset's own model). Kept as a no-op so older callers don't break.
     """
-    label_cfg = LabelConfig(**config.labeling.model_dump())
-    fallback = _base_model(store, config, label_cfg)
-    base_cols = feature_columns()
-    out: list[Signal] = []
-    for asset_class in ("fr_stocks", "forex", "crypto", "commodities"):
-        tickers = config.universes.get(asset_class)
-        if not tickers:
-            continue
-        class_model = _class_model(config, asset_class, fallback)
-        market = store.load(market_reference_for(asset_class))
-        for ticker in tickers:
-            df = store.load(ticker)
-            if df is None or df.empty:
-                continue
-            # Long: per-ticker winner first, else the per-class/base fallback (base-22 cols).
-            per_long = _ticker_side_model(config, ticker, "long")
-            long_model, long_cols, long_cal = per_long or (class_model, base_cols, None)
-            # Short: per-ticker only — absent => never shorted.
-            per_short = _ticker_side_model(config, ticker, "short")
-            short_model, short_cols, short_cal = per_short or (None, None, None)
-            # Non-US universes have no earnings/news caches; if a per-ticker model was trained
-            # with those families, pass empty frames so the columns exist (neutral defaults)
-            # rather than KeyError-ing on a missing column at serve time.
-            union_cols = [*long_cols, *(short_cols or [])]
-            with_earnings = _needs_earnings(union_cols)
-            with_news = _needs_news(union_cols)
-            signal = _signal_for_ticker(
-                ticker,
-                df,
-                long_model,
-                config,
-                label_cfg,
-                market=market,
-                with_earnings=with_earnings,
-                with_news=with_news,
-                feature_cols=long_cols,
-                calibrator=long_cal,
-                short_model=short_model,
-                short_feature_cols=short_cols,
-                short_calibrator=short_cal,
-            )
-            if signal is not None:
-                out.append(signal)
-    return out
+    _ = (config, store)
+    return []
 
 
 def _signal_for_ticker(  # noqa: C901, PLR0915
@@ -424,6 +328,8 @@ def _signal_for_ticker(  # noqa: C901, PLR0915
     short_model: Model | None = None,
     short_feature_cols: list[str] | None = None,
     short_calibrator: ProbaCalibrator | None = None,
+    long_promoted: bool = False,
+    short_promoted: bool = False,
 ) -> Signal | None:
     # When a feature family is on we always pass an (optionally empty) frame so the
     # column shape stays consistent across tickers — empty frames get the neutral
@@ -520,6 +426,7 @@ def _signal_for_ticker(  # noqa: C901, PLR0915
     acted_raw = raw_short if decision == SHORT and raw_short is not None else raw_long
     acted_cal = p_short if decision == SHORT and p_short is not None else p_long
     acted_used_cal = (short_calibrator if decision == SHORT else calibrator) is not None
+    acted_promoted = short_promoted if decision == SHORT else long_promoted
 
     return Signal(
         date=last_date,
@@ -542,6 +449,7 @@ def _signal_for_ticker(  # noqa: C901, PLR0915
         ret_q90=None if q90 is None else round(q90, 4),
         sigma_horizon=None if sigma_h is None else round(sigma_h, 6),
         sltp_method=sltp_method,
+        promoted=acted_promoted,
     )
 
 
@@ -569,15 +477,17 @@ def explain_signal(
     if df is None or df.empty:
         return None
 
-    label_cfg = LabelConfig(**config.labeling.model_dump())
-    model, cols = _resolve_model(store, config, label_cfg)
-    if not isinstance(model, LGBMModel):
+    # Explain the asset's OWN long model (the one that produced its served signal). Only
+    # optimized assets have one; others (and non-LGBM winners) have no LGBM explanation.
+    per_long = _ticker_side_model(config, ticker, "long")
+    if per_long is None or not isinstance(per_long.model, LGBMModel):
         return None
+    model, cols = per_long.model, per_long.cols
     with_earnings = _needs_earnings(cols)
     with_news = _needs_news(cols)
     with_micro = _needs_micro(cols)
 
-    market = store.load(MARKET_TICKER)
+    market = store.load(market_reference_for(config.asset_class_for(ticker)))
     earnings_store = _earnings_store_if_available(config) if with_earnings else None
     news_store = _news_store_if_available(config) if with_news else None
     earnings_df = earnings_store.load(ticker) if earnings_store is not None else None
@@ -654,35 +564,32 @@ def _explain_directional(
     feats: pd.DataFrame,
     last_date: pd.Timestamp,
     config: Config,
-    global_model: Model,
-    global_cols: list[str],
+    long_model: Model,
+    long_cols: list[str],
 ) -> tuple[str, float | None, float | None]:
     """Compute ``(direction, proba_long, proba_short)`` for the explain payload.
 
-    Uses the same per-ticker side models as :func:`generate_signals`. Best-effort and fully
-    null-guarded: any missing side model simply yields ``None`` for that side.
+    ``long_model``/``long_cols`` are the asset's own long model (already resolved by the
+    caller). The short side is per-ticker-only (absent => never shorted). Best-effort and fully
+    null-guarded so the explain endpoint never fails on a missing/mismatched side model.
     """
-    per_long = _ticker_side_model(config, ticker, "long")
-    long_model, long_cols, long_cal = per_long or (global_model, global_cols, None)
+    long_cal = _ticker_side_model(config, ticker, "long")
+    cal = long_cal.calibrator if long_cal else None
     try:
         xl = feats.loc[[last_date], long_cols]
         raw_long = float(long_model.predict_proba(xl)[0])
-        p_long: float | None = (
-            float(long_cal.transform(np.array([raw_long]))[0]) if long_cal else raw_long
-        )
+        p_long: float | None = float(cal.transform(np.array([raw_long]))[0]) if cal else raw_long
     except (KeyError, ValueError):
         p_long = None
 
     p_short: float | None = None
     per_short = _ticker_side_model(config, ticker, "short")
     if per_short is not None:
-        short_model, short_cols, short_cal = per_short
         try:
-            xs = feats.loc[[last_date], short_cols]
-            raw_short = float(short_model.predict_proba(xs)[0])
-            p_short = (
-                float(short_cal.transform(np.array([raw_short]))[0]) if short_cal else raw_short
-            )
+            xs = feats.loc[[last_date], per_short.cols]
+            raw_short = float(per_short.model.predict_proba(xs)[0])
+            scal = per_short.calibrator
+            p_short = float(scal.transform(np.array([raw_short]))[0]) if scal else raw_short
         except (KeyError, ValueError):
             p_short = None
 

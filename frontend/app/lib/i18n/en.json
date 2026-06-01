@@ -2,6 +2,8 @@
   "app.tagline": "Swing-trade signals · trend-probability model · walk-forward validated",
   "app.asOf": "As of",
   "banner.advisory": "Advisory only — the current model does not beat buy & hold. Not financial advice.",
+  "philosophy.title": "What P(win) means.",
+  "philosophy.body": "The model doesn't predict a price. P(win) is the probability that, if you enter today, the target (+2 ATR) is hit BEFORE the stop (−1 ATR) within 10 trading days. The strategy rides trends with a 2:1 reward/risk, so the break-even hit rate is ~33%, not 50% — that's why the buy threshold sits at 0.35. Only assets we've already optimized are shown.",
   "banner.experimental": "Signals served by a model dedicated to this asset class, but advisory only: not validated — no model beats buy & hold, and with less scrutiny than the US universe.",
   "dashboard.todaySignals": "Today's signals",
   "dashboard.export": "Export",

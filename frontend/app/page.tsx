@@ -154,8 +154,13 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <div className="mb-8 rounded-lg border border-[var(--color-neutral)]/30 bg-[var(--color-neutral)]/[0.06] px-4 py-3 text-sm text-[var(--color-neutral)]">
+      <div className="mb-3 rounded-lg border border-[var(--color-neutral)]/30 bg-[var(--color-neutral)]/[0.06] px-4 py-3 text-sm text-[var(--color-neutral)]">
         {t("banner.advisory")}
+      </div>
+
+      <div className="mb-8 rounded-lg border border-[var(--color-line)] bg-white/[0.02] px-4 py-3 text-sm text-[var(--color-muted)]">
+        <span className="font-semibold text-[var(--color-fg)]">{t("philosophy.title")}</span>{" "}
+        {t("philosophy.body")}
       </div>
 
       {s.error && (
