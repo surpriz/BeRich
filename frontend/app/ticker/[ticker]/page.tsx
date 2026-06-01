@@ -105,7 +105,19 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
                     {latest.direction === "short" ? t("directionShort") : t("directionLong")}
                   </span>
                 )}
-                <span className="tabular">P(win) {latest.proba.toFixed(3)}</span>
+                <span
+                  className="tabular"
+                  title={
+                    latest.proba_calibrated != null
+                      ? `raw ${latest.proba.toFixed(3)} → calibrated`
+                      : undefined
+                  }
+                >
+                  P(win) {(latest.proba_calibrated ?? latest.proba).toFixed(3)}
+                  {latest.proba_calibrated != null && (
+                    <span className="ml-1 text-[10px] text-[var(--color-faint)]">cal</span>
+                  )}
+                </span>
                 {latest.proba_long != null && (
                   <span className="tabular text-[var(--color-bull)]/80">
                     {t("probaLong")} {latest.proba_long.toFixed(3)}

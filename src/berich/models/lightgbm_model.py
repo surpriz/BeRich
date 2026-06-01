@@ -28,6 +28,10 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "min_child_samples": 50,
     "n_jobs": -1,
     "verbosity": -1,
+    # Fixed seed: with stochastic bagging (subsample/colsample < 1) an unseeded fit yields a
+    # different model each run, so the same bar would score a different P(win) on every
+    # refresh. A fixed seed makes training, backtest, and the served signal reproducible.
+    "random_state": 42,
 }
 
 
