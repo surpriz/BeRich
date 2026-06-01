@@ -12,7 +12,12 @@ from berich.data.store import OhlcvStore
 from berich.models import LGBMModel, ModelMetadata
 from berich.models.registry import ACTIVE_POINTER, META_FILE
 from berich.training import tournament as tour
-from berich.training.hpo import best_for_ticker, run_ticker_hpo, ticker_study_name
+from berich.training.hpo import (
+    best_for_ticker,
+    best_horizon_for_ticker,
+    run_ticker_hpo,
+    ticker_study_name,
+)
 from berich.training.tournament import (
     CandidateResult,
     TournamentResult,
@@ -58,7 +63,16 @@ def test_run_ticker_hpo_creates_study_and_best_for_ticker(tmp_path):
     params, features = best_for_ticker(cfg, "AAA", "lgbm", "long")
     assert isinstance(params, dict)
     assert all(not k.startswith("feat_") for k in params)
+    assert "horizon_days" not in params  # horizon is a label/serving param, not a model one
     assert features is None or isinstance(features, list)
+
+
+def test_ticker_hpo_searches_and_records_horizon(tmp_path):
+    cfg = _config_with_ticker(tmp_path)
+    cfg.zoo.ticker_hpo_horizons = [5, 10]  # search over two horizons
+    run_ticker_hpo(cfg, "AAA", "lgbm", "long", n_trials=4)
+    horizon = best_horizon_for_ticker(cfg, "AAA", "lgbm", "long")
+    assert horizon in (5, 10)  # the winning trial recorded one of the searched horizons
 
 
 def test_best_for_ticker_missing_study(tmp_path):

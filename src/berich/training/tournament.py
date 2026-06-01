@@ -31,7 +31,7 @@ from berich.models import ModelMetadata, promote, save_model
 from berich.models.registry import MAX_SHARPE_PVALUE, MIN_DEFLATED_SHARPE
 from berich.signals.calibration import ProbaCalibrator, fit_calibrator, save_calibrator
 from berich.training import oof_predict
-from berich.training.hpo import _ticker_dataset, best_for_ticker
+from berich.training.hpo import _ticker_dataset, best_for_ticker, best_horizon_for_ticker
 
 if TYPE_CHECKING:
     from berich.config import Config
@@ -119,12 +119,18 @@ def train_candidate(
     promoted here — that is the tournament's job once it has picked a winner.
     """
     params, features = best_for_ticker(config, ticker, model_name, side)
-    dataset, prices = _ticker_dataset(config, ticker, side)
+    # Reuse the HPO-chosen triple-barrier horizon so the candidate is trained, backtested AND
+    # later served on the same horizon it was optimized for. None => the configured default.
+    horizon = best_horizon_for_ticker(config, ticker, model_name, side)
+    dataset, prices = _ticker_dataset(config, ticker, side, horizon_days=horizon)
     if features is not None:
         keep = [c for c in features if c in dataset.x.columns]
         dataset = replace(dataset, x=dataset.x[keep])
 
-    label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(update={"direction": side})
+    update: dict[str, object] = {"direction": side}
+    if horizon is not None:
+        update["horizon_days"] = horizon
+    label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(update=update)
 
     def factory() -> Model:
         return _model_from_params(model_name, params, device=device)
@@ -196,6 +202,7 @@ def train_candidate(
         strategy_type="long_only",
         side=cast("Literal['long', 'short']", side),
         ticker=ticker,
+        horizon_days=label_cfg.horizon_days,
         notes=notes,
     )
     candidate = CandidateResult(

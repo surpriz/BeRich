@@ -212,19 +212,21 @@ def _needs_micro(cols: list[str]) -> bool:
 
 @dataclass
 class _SideModel:
-    """A per-asset model for one side, plus whether it cleared the guard (promoted)."""
+    """A per-asset model for one side, plus its guard status and trained horizon."""
 
     model: Model
     cols: list[str]
     calibrator: ProbaCalibrator | None
     promoted: bool
+    horizon_days: int
 
 
 def _ticker_side_model(config: Config, ticker: str, side: str) -> _SideModel | None:
     """Per-asset model for one side: the promoted winner if any, else the best optimized
     candidate (advisory). Returns ``None`` only when the asset has no artifact for ``side``
     at all (not yet optimized). Never falls back to a generic/global model — an asset is served
-    exclusively from its own trained models.
+    exclusively from its own trained models. Carries the model's trained horizon so serving
+    builds its barriers on the same horizon the model learned on.
     """
     registry_dir = config.model_dir_for_ticker(ticker, side)
     loaded = load_best(registry_dir)
@@ -233,7 +235,7 @@ def _ticker_side_model(config: Config, ticker: str, side: str) -> _SideModel | N
     model, meta = loaded
     cal = load_calibrator(registry_dir / meta.name)
     promoted = load_active(registry_dir) is not None
-    return _SideModel(model, list(meta.feature_columns), cal, promoted)
+    return _SideModel(model, list(meta.feature_columns), cal, promoted, meta.horizon_days)
 
 
 def _optimized_tickers(config: Config) -> list[str]:
@@ -317,6 +319,7 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
             short_calibrator=per_short.calibrator if per_short else None,
             long_promoted=per_long.promoted,
             short_promoted=per_short.promoted if per_short else False,
+            horizon_days=per_long.horizon_days,
         )
         if signal is not None:
             signals.append(signal)
@@ -351,7 +354,12 @@ def _signal_for_ticker(  # noqa: C901, PLR0912, PLR0915
     short_calibrator: ProbaCalibrator | None = None,
     long_promoted: bool = False,
     short_promoted: bool = False,
+    horizon_days: int | None = None,
 ) -> Signal | None:
+    # Serve on the model's own trained horizon (the per-asset HPO may have chosen != 10), so
+    # the SL/TP barriers and the vol forecast match what the model learned on.
+    if horizon_days is not None and horizon_days != label_cfg.horizon_days:
+        label_cfg = label_cfg.model_copy(update={"horizon_days": horizon_days})
     # When a feature family is on we always pass an (optionally empty) frame so the
     # column shape stays consistent across tickers — empty frames get the neutral
     # defaults from the feature builder.

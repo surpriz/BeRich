@@ -56,6 +56,11 @@ class ModelMetadata(BaseModel):
     # Defaults keep every pre-existing artifact deserializing as a long single-asset/pooled model.
     side: Literal["long", "short"] = "long"
     ticker: str | None = None
+    # Triple-barrier horizon (trading days) this model was trained on. The per-asset HPO can
+    # search it, so it's recorded here and read back at serve time — the served SL/TP and vol
+    # forecast must use the SAME horizon the model learned on. Defaults to 10 (the historical
+    # global horizon) so every pre-existing artifact deserializes unchanged.
+    horizon_days: int = 10
     notes: str = ""
 
 

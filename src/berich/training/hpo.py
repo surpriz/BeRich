@@ -160,6 +160,8 @@ def objective_for(
     metric: str = "auc",
     direction: str = "long",
     regularized: bool = False,
+    horizon_choices: list[int] | None = None,
+    dataset_builder: Callable[[int], tuple[SupervisedDataset, dict]] | None = None,
 ) -> Callable[[optuna.Trial], float]:
     """Return an Optuna objective.
 
@@ -168,31 +170,45 @@ def objective_for(
     ``metric="sharpe"`` keeps the old (selection-prone) objective. When ``search_features`` is
     set, the trial also toggles feature families on/off, optimizing the feature set jointly.
     ``direction`` is threaded into the inner backtest (``"short"`` for per-ticker short
-    studies); ``regularized`` tightens the model priors for small per-ticker datasets. Both
-    default to the pooled-path behavior so existing callers are unchanged.
+    studies); ``regularized`` tightens the model priors for small per-ticker datasets.
+
+    When ``horizon_choices`` (>1 value) and ``dataset_builder`` are given, the trial also
+    searches the triple-barrier horizon: it rebuilds the dataset/prices/label_cfg for the
+    chosen horizon and records it as ``trial.user_attrs["horizon_days"]``. Without them the
+    horizon is fixed at ``label_cfg.horizon_days`` — the pooled-path behavior, unchanged.
     """
+    builder = dataset_builder
+    horizons = list(horizon_choices) if horizon_choices else []
+    searches_horizon = builder is not None and len(horizons) > 1
 
     def objective(trial: optuna.Trial) -> float:
         ds = dataset
+        lcfg = label_cfg
+        bt_prices = prices
+        if searches_horizon and builder is not None:
+            horizon = int(trial.suggest_categorical("horizon_days", horizons))
+            ds, bt_prices = builder(horizon)
+            lcfg = label_cfg.model_copy(update={"horizon_days": horizon})
+        trial.set_user_attr("horizon_days", lcfg.horizon_days)
         if search_features:
-            cols = _select_features(trial, list(dataset.x.columns))
+            cols = _select_features(trial, list(ds.x.columns))
             if not cols:
                 return 0.0  # degenerate empty feature set
-            ds = replace(dataset, x=dataset.x[cols])
+            ds = replace(ds, x=ds.x[cols])
             trial.set_user_attr("features", cols)
         factory: Callable[[], Model] = _factory_from_trial(
             model_name, trial, device=device, regularized=regularized
         )
-        oof = oof_predict(ds, factory, embargo=label_cfg.horizon_days)
+        oof = oof_predict(ds, factory, embargo=lcfg.horizon_days)
         bt = run_backtest(
-            prices,
+            bt_prices,
             oof,
             BacktestConfig(
                 entry_threshold=entry_threshold,
-                horizon_days=label_cfg.horizon_days,
-                atr_window=label_cfg.atr_window,
-                take_profit_atr=label_cfg.take_profit_atr,
-                stop_loss_atr=label_cfg.stop_loss_atr,
+                horizon_days=lcfg.horizon_days,
+                atr_window=lcfg.atr_window,
+                take_profit_atr=lcfg.take_profit_atr,
+                stop_loss_atr=lcfg.stop_loss_atr,
                 direction=direction,
             ),
         )
@@ -422,11 +438,14 @@ def _ticker_dataset(
     micro: bool = True,
     with_news: bool = True,
     with_earnings: bool = True,
+    horizon_days: int | None = None,
 ) -> tuple[SupervisedDataset, dict]:
     """Build a single-ticker supervised dataset (direction-aware) + its prices dict.
 
     News/earnings columns are included only when their caches actually hold data, so the
     feature search can toggle them; ``side`` flips the triple-barrier into short mode.
+    ``horizon_days`` overrides the config's triple-barrier horizon (used by the HPO horizon
+    search); ``None`` keeps the configured default.
     """
     from berich.data.earnings import EarningsStore  # noqa: PLC0415
     from berich.data.news import NewsStore  # noqa: PLC0415
@@ -453,7 +472,10 @@ def _ticker_dataset(
             loaded = ns.load(ticker)
             news = loaded if loaded is not None else pd.DataFrame()
 
-    label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(update={"direction": side})
+    update: dict[str, object] = {"direction": side}
+    if horizon_days is not None:
+        update["horizon_days"] = horizon_days
+    label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(update=update)
     dataset = build_ticker_dataset(
         df,
         label_cfg,
@@ -486,6 +508,11 @@ def run_ticker_hpo(
 
     label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(update={"direction": side})
     dataset, prices = _ticker_dataset(config, ticker, side)
+    horizons = config.zoo.ticker_hpo_horizons
+
+    def _build_for_horizon(h: int) -> tuple[SupervisedDataset, dict]:
+        return _ticker_dataset(config, ticker, side, horizon_days=h)
+
     objective = objective_for(
         model_name,
         dataset,
@@ -497,6 +524,8 @@ def run_ticker_hpo(
         metric=metric,
         direction=side,
         regularized=True,
+        horizon_choices=horizons,
+        dataset_builder=_build_for_horizon,
     )
 
     config.optuna_db.parent.mkdir(parents=True, exist_ok=True)
@@ -545,9 +574,33 @@ def best_for_ticker(
     except Exception:  # noqa: BLE001 — a missing/locked study must never break the retrain
         logger.warning("could not load per-ticker HPO study for %s/%s", ticker, model_name)
         return {}, None
-    params = {k: v for k, v in best.params.items() if not k.startswith("feat_")}
+    # Drop the feature toggles AND horizon_days — horizon is a label/serving param, not a
+    # model hyperparameter, so it must not be passed to the model constructor.
+    params = {
+        k: v for k, v in best.params.items() if not k.startswith("feat_") and k != "horizon_days"
+    }
     features = best.user_attrs.get("features")
     return params, features
+
+
+def best_horizon_for_ticker(
+    config: Config, ticker: str, model_name: str, side: str = "long", metric: str = "auc"
+) -> int | None:
+    """Triple-barrier horizon chosen by the best HPO trial, or None if no study/horizon search."""
+    import optuna  # noqa: PLC0415
+
+    try:
+        study = optuna.load_study(
+            study_name=ticker_study_name(ticker, model_name, side, metric),
+            storage=f"sqlite:///{config.optuna_db}",
+        )
+        h = study.best_trial.user_attrs.get("horizon_days")
+    except (KeyError, ValueError):
+        return None
+    except Exception:  # noqa: BLE001 — a missing/locked study must never break the retrain
+        logger.warning("could not load horizon for %s/%s", ticker, model_name)
+        return None
+    return int(h) if h is not None else None
 
 
 def apply_hpo_best(

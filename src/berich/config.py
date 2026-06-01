@@ -120,6 +120,9 @@ class ZooConfig(BaseModel):
     ticker_initial_hpo_trials: int = 100  # heavy first sweep, per ticker x model x side
     ticker_nightly_hpo_trials: int = 4  # light nightly top-up into the same per-ticker study
     ticker_sides: list[str] = Field(default_factory=lambda: ["long", "short"])
+    # Triple-barrier horizons (trading days) the per-asset HPO searches over. The winning
+    # horizon is recorded on the model and reused at serve time. Single value => fixed horizon.
+    ticker_hpo_horizons: list[int] = Field(default_factory=lambda: [5, 10, 15, 20])
 
 
 UNIVERSE_NAMES = ("mega", "mid", "small", "all")
