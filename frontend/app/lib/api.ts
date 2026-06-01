@@ -195,6 +195,40 @@ export type TournamentCandidate = {
   n_features: number;
 };
 
+export type OpsGpu = {
+  index: number;
+  name: string;
+  util_pct: number;
+  mem_used_mb: number;
+  mem_total_mb: number;
+  temp_c: number;
+};
+
+export type OpsJob = { id: string; next_run: string | null };
+
+export type OpsHpoRecent = {
+  ticker: string;
+  side: string;
+  status: string;
+  trained_at: string | null;
+  hpo_trials: number;
+};
+
+export type OpsSnapshot = {
+  gpus: OpsGpu[];
+  scheduler: { unit: string; state: string; active_since: string | null };
+  jobs: OpsJob[];
+  hpo: {
+    total: number;
+    hpo_done: number;
+    pending: number;
+    promoted: number;
+    advisory: number;
+    recent: OpsHpoRecent[];
+  };
+  logs: { time: string; message: string }[];
+};
+
 export type TrainingStatus = {
   ticker: string;
   asset_class: string;
@@ -240,6 +274,7 @@ export const api = {
   paperCalibration: () => get<PaperCalibration>("/paper/calibration"),
   universes: () => get<Universes>("/universes"),
   training: () => get<TrainingStatus[]>("/training"),
+  ops: () => get<OpsSnapshot>("/ops"),
   longshortBasket: () => get<LongShortLeg[]>("/longshort/basket"),
   longshortEquity: () => get<LongShortEquity>("/longshort/equity"),
   health: () => get<Health>("/health"),

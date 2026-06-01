@@ -102,5 +102,21 @@
   "training.col.class": "Classe",
   "training.col.long": "Long",
   "training.col.short": "Short",
-  "training.col.lastTrained": "Dernier entraînement"
+  "training.col.lastTrained": "Dernier entraînement",
+  "footer.ops": "Ops",
+  "ops.back": "Retour au tableau de bord",
+  "ops.title": "État de la machine",
+  "ops.intro": "Vue en direct de ce que fait la machine en tâche de fond — charge GPU, jobs planifiés, file d'attente HPO par actif, et logs récents du scheduler. Rafraîchissement automatique toutes les 5 secondes.",
+  "ops.updated": "màj",
+  "ops.gpus": "GPU",
+  "ops.noGpu": "Aucun GPU détecté (nvidia-smi indisponible).",
+  "ops.mem": "Mémoire",
+  "ops.hpo": "File HPO",
+  "ops.hpoDone": "Premiers HPO faits",
+  "ops.promoted": "promus",
+  "ops.pending": "en attente",
+  "ops.recentTrained": "Entraînés récemment",
+  "ops.jobs": "Jobs planifiés",
+  "ops.scheduler": "Scheduler",
+  "ops.logs": "Activité récente"
 }

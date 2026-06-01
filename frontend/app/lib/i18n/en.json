@@ -102,5 +102,21 @@
   "training.col.class": "Class",
   "training.col.long": "Long",
   "training.col.short": "Short",
-  "training.col.lastTrained": "Last trained"
+  "training.col.lastTrained": "Last trained",
+  "footer.ops": "Ops",
+  "ops.back": "Back to dashboard",
+  "ops.title": "Machine status",
+  "ops.intro": "Live view of what the box is doing in the background — GPU load, scheduled jobs, the per-asset HPO queue, and recent scheduler logs. Auto-refreshes every 5 seconds.",
+  "ops.updated": "updated",
+  "ops.gpus": "GPUs",
+  "ops.noGpu": "No GPU detected (nvidia-smi unavailable).",
+  "ops.mem": "Memory",
+  "ops.hpo": "HPO queue",
+  "ops.hpoDone": "First HPO done",
+  "ops.promoted": "promoted",
+  "ops.pending": "pending",
+  "ops.recentTrained": "Recently trained",
+  "ops.jobs": "Scheduled jobs",
+  "ops.scheduler": "Scheduler",
+  "ops.logs": "Recent activity"
 }

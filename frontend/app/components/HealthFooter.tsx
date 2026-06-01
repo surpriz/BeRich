@@ -47,6 +47,9 @@ export function HealthFooter() {
           )}
         </div>
         <div className="flex items-center gap-4">
+          <Link href="/ops" className="hover:text-[var(--color-bull)]">
+            {t("footer.ops")}
+          </Link>
           <Link href="/training" className="hover:text-[var(--color-bull)]">
             {t("footer.training")}
           </Link>

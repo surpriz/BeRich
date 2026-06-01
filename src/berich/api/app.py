@@ -113,6 +113,13 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
 
         return training_status(config)
 
+    @router.get("/ops", dependencies=guard)
+    def ops() -> dict:
+        """Live machine status: GPUs, scheduler jobs, HPO queue progress, recent logs."""
+        from berich.ops import ops_snapshot
+
+        return ops_snapshot(config)
+
     @router.get("/universes", dependencies=guard)
     def universes() -> dict[str, list[str]]:
         return {
