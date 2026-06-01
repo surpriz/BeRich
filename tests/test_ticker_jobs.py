@@ -13,6 +13,7 @@ from berich.data.store import OhlcvStore
 from berich.models import ModelMetadata, save_model
 from berich.models.lightgbm_model import LGBMModel
 from berich.models.registry import promote
+from berich.scheduler import jobs as jobs_mod
 from berich.scheduler.jobs import ticker_initial_sweep_job, ticker_nightly_refresh_job
 from berich.training.tournament import TournamentResult
 
@@ -112,6 +113,30 @@ def test_initial_sweep_runs_every_ticker_side(tmp_path, monkeypatch):
     assert out["swept"] == 1
     assert out["promoted"] == 0
     assert out["failed"] == 0
+    assert calls == [("AAA", "long")]
+
+
+def test_hpo_queue_processes_one_asset_at_a_time(tmp_path, monkeypatch):
+    # Two tradeable tickers, one side each => 2 pending pairs (no optuna.db => none searched yet).
+    store = OhlcvStore(tmp_path / "ohlcv")
+    store.save("AAA", _ohlcv())
+    store.save("BBB", _ohlcv(seed=2))
+    store.save("SPY", _ohlcv(seed=1))
+    cfg = Config(data_dir=tmp_path, universes={"us_stocks": ["AAA", "BBB"]})
+    cfg.zoo.ticker_sides = ["long"]
+    cfg.zoo.ticker_tournament_models = ["lgbm"]
+
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        jobs_mod,
+        "_hpo_and_tournament",
+        lambda config, ticker, side, n_trials: calls.append((ticker, side)) or False,  # noqa: ARG005
+    )
+
+    # max_assets=1 => only the first pending pair is processed; the rest stay queued.
+    out = jobs_mod.ticker_hpo_queue_job(cfg, max_assets=1)
+    assert out["processed"] == ["AAA/long"]
+    assert out["remaining"] == 1
     assert calls == [("AAA", "long")]
 
 

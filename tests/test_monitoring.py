@@ -58,6 +58,7 @@ def test_build_scheduler_registers_jobs():
         "check_drift",
         "ticker_nightly_refresh",
         "ticker_initial_sweep",
+        "ticker_hpo_queue",
         "nightly_hpo",
         "weekend_hpo",
         "longshort_signals",

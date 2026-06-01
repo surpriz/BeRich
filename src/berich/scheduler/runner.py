@@ -18,6 +18,7 @@ from berich.scheduler.jobs import (
     longshort_signals_job,
     nightly_hpo_job,
     refresh_universe_job,
+    ticker_hpo_queue_job,
     ticker_initial_sweep_job,
     ticker_nightly_refresh_job,
     weekend_hpo_job,
@@ -114,6 +115,19 @@ def build_scheduler(config: Config) -> BlockingScheduler:
         CronTrigger(day_of_week="sat", hour=14, minute=0, timezone="Europe/Paris"),
         args=[config],
         id="ticker_initial_sweep",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # Sequential first-HPO queue: every 2h, optimize the NEXT un-searched ticker x side, one at
+    # a time. max_instances=1 means a still-running asset simply blocks the next firing, so two
+    # deep HPO searches never overlap — the gentle, GPU-friendly path to give every asset its
+    # first deep HPO without the Saturday thundering herd. Drops to a no-op once all are done.
+    scheduler.add_job(
+        ticker_hpo_queue_job,
+        CronTrigger(hour="*/2", minute=15, timezone="Europe/Paris"),
+        args=[config],
+        id="ticker_hpo_queue",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
