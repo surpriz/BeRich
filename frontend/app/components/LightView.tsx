@@ -5,8 +5,8 @@ import { useTranslate } from "../lib/i18n";
 const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function verdict(signal: Signal["signal"]): { key: string; color: string } {
-  if (signal === "BUY") return { key: "light.buy", color: "var(--color-bull)" };
-  if (signal === "SELL") return { key: "light.avoid", color: "var(--color-bear)" };
+  if (signal === "BUY" || signal === "LONG") return { key: "light.buy", color: "var(--color-bull)" };
+  if (signal === "SELL" || signal === "SHORT") return { key: "light.avoid", color: "var(--color-bear)" };
   return { key: "light.hold", color: "var(--color-neutral)" };
 }
 
@@ -30,7 +30,7 @@ function IdeaCard({ s }: { s: Signal }) {
   const t = useTranslate();
   const v = verdict(s.signal);
   const p = s.proba_calibrated ?? s.proba;
-  const actionable = s.signal === "BUY";
+  const actionable = s.signal === "BUY" || s.signal === "LONG";
   return (
     <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="card block p-4 transition-colors hover:bg-white/[0.03]">
       <div className="flex items-center justify-between">
@@ -66,7 +66,7 @@ function IdeaCard({ s }: { s: Signal }) {
 export function LightView({ signals, paper }: { signals: Signal[]; paper?: PaperEquity }) {
   const t = useTranslate();
   const ranked = [...signals].sort((a, b) => (b.proba_calibrated ?? b.proba) - (a.proba_calibrated ?? a.proba));
-  const buys = ranked.filter((s) => s.signal === "BUY");
+  const buys = ranked.filter((s) => s.signal === "BUY" || s.signal === "LONG");
   const shown = (buys.length ? buys : ranked).slice(0, 8);
 
   return (

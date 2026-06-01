@@ -4,6 +4,8 @@ import Link from "next/link";
 import type { Signal } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
 import { SignalBadge } from "./SignalBadge";
+import { Show } from "./Show";
+import { Info } from "./Term";
 
 const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -11,14 +13,16 @@ function SideProbas({ s }: { s: Signal }) {
   const { t } = useI18n();
   if (s.proba_long == null && s.proba_short == null) return null;
   return (
-    <div className="mt-1 flex gap-2 text-[10px] text-[var(--color-faint)]">
-      {s.proba_long != null && (
-        <span title={t("probaLong")}>L {s.proba_long.toFixed(2)}</span>
-      )}
-      {s.proba_short != null && (
-        <span title={t("probaShort")}>S {s.proba_short.toFixed(2)}</span>
-      )}
-    </div>
+    <Show min="expert">
+      <div className="mt-1 flex gap-2 text-[10px] text-[var(--color-faint)]">
+        {s.proba_long != null && (
+          <span title={t("probaLong")}>L {s.proba_long.toFixed(2)}</span>
+        )}
+        {s.proba_short != null && (
+          <span title={t("probaShort")}>S {s.proba_short.toFixed(2)}</span>
+        )}
+      </div>
+    </Show>
   );
 }
 
@@ -46,6 +50,7 @@ const SLTP_LABEL: Record<string, string> = {
 };
 
 export function SignalsTable({ signals }: { signals: Signal[] }) {
+  const { t } = useI18n();
   if (signals.length === 0) {
     return (
       <div className="card p-6 text-sm text-[var(--color-faint)]">
@@ -60,11 +65,17 @@ export function SignalsTable({ signals }: { signals: Signal[] }) {
           <tr className="border-b border-[var(--color-line)] text-left text-xs uppercase tracking-widest text-[var(--color-faint)]">
             <th className="px-5 py-3 font-medium">Ticker</th>
             <th className="px-3 py-3 font-medium">Signal</th>
-            <th className="px-3 py-3 font-medium">P(win)</th>
+            <th className="px-3 py-3 font-medium">
+              P(win)
+              <Info id="pwin" />
+            </th>
             <th className="px-3 py-3 text-right font-medium">Entry</th>
             <th className="px-3 py-3 text-right font-medium">Stop</th>
             <th className="px-3 py-3 text-right font-medium">Target</th>
-            <th className="px-3 py-3 font-medium">SL/TP</th>
+            <th className="px-3 py-3 font-medium">
+              SL/TP
+              <Info id="atr" />
+            </th>
             <th className="px-5 py-3 text-right font-medium">Shares</th>
           </tr>
         </thead>
@@ -86,6 +97,13 @@ export function SignalsTable({ signals }: { signals: Signal[] }) {
               <td className="px-3 py-3">
                 <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="block">
                   <SignalBadge signal={s.signal} />
+                  <span
+                    className={`mt-1 block text-[10px] uppercase tracking-wider ${
+                      s.promoted ? "text-[var(--color-bull)]" : "text-[var(--color-faint)]"
+                    }`}
+                  >
+                    {s.promoted ? t("signal.validated") : t("signal.advisory")}
+                  </span>
                 </Link>
               </td>
               <td className="px-3 py-3">
@@ -115,9 +133,11 @@ export function SignalsTable({ signals }: { signals: Signal[] }) {
                     {SLTP_LABEL[s.sltp_method ?? "atr_fixed"] ?? "ATR"}
                   </span>
                   {s.acted === false && (
-                    <span className="ml-1 text-[10px] text-[var(--color-bear)]" title="meta-label veto">
-                      veto
-                    </span>
+                    <Show min="expert">
+                      <span className="ml-1 text-[10px] text-[var(--color-bear)]" title="meta-label veto">
+                        veto
+                      </span>
+                    </Show>
                   )}
                 </Link>
               </td>

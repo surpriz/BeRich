@@ -1,10 +1,14 @@
 import type { DriftReport } from "@/app/lib/api";
+import { Info } from "./Term";
 
 export function DriftPanel({ drift }: { drift: DriftReport }) {
   return (
     <div className="card flex flex-col gap-4 p-5">
       <div className="flex items-baseline justify-between">
-        <h2 className="font-display text-xl font-bold">Feature drift</h2>
+        <h2 className="font-display text-xl font-bold">
+          Feature drift
+          <Info id="drift" />
+        </h2>
         <span
           className={`rounded-md border px-2.5 py-1 text-xs font-semibold ${
             drift.should_retrain
@@ -13,6 +17,13 @@ export function DriftPanel({ drift }: { drift: DriftReport }) {
           }`}
         >
           {drift.n_drifted}/{drift.n_features} drifted · {drift.should_retrain ? "retrain" : "stable"}
+        </span>
+      </div>
+
+      <div className="flex justify-end text-[10px] uppercase tracking-widest text-[var(--color-faint)]">
+        <span>
+          PSI
+          <Info id="psi" />
         </span>
       </div>
 

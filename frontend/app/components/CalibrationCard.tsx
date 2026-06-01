@@ -1,4 +1,5 @@
 import type { PaperCalibration } from "@/app/lib/api";
+import { Info } from "./Term";
 
 // Classic reliability diagram rendered as a compact table + two side-by-side bars
 // per bucket (predicted vs realized). The bars are scaled to 100 % so the gap
@@ -26,6 +27,7 @@ export function CalibrationCard({ calibration }: { calibration: PaperCalibration
       <div className="card p-5">
         <h3 className="font-display text-sm font-bold uppercase tracking-widest text-[var(--color-muted)]">
           Calibration
+          <Info id="calibrated" />
         </h3>
         <p className="mt-2 text-sm text-[var(--color-faint)]">
           No closed paper trades yet — calibration table will populate after the first wins/losses.
@@ -39,6 +41,7 @@ export function CalibrationCard({ calibration }: { calibration: PaperCalibration
       <div className="mb-3 flex items-center justify-between">
         <h3 className="font-display text-sm font-bold uppercase tracking-widest text-[var(--color-muted)]">
           Calibration
+          <Info id="calibrated" />
         </h3>
         <span className="text-xs text-[var(--color-faint)]">
           {calibration.n_with_proba} of {calibration.n_trades_total} closed trades —

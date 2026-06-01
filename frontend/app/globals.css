@@ -81,3 +81,64 @@ body::after {
 .rise {
   animation: rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+
+/* ── Glossary affordances (<Term> / <Info>) — CSS-only hover/focus popover ─── */
+.berich-term {
+  position: relative;
+  border-bottom: 1px dotted var(--color-faint);
+  cursor: help;
+  outline: none;
+}
+.berich-term:focus-visible {
+  border-bottom-color: var(--color-bull);
+}
+.berich-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  margin-left: 0.25rem;
+  border: 1px solid var(--color-line);
+  border-radius: 9999px;
+  border-bottom-style: solid;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--color-muted);
+  vertical-align: middle;
+}
+.berich-tip {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 50;
+  width: max-content;
+  max-width: 18rem;
+  padding: 0.5rem 0.625rem;
+  border-radius: 10px;
+  border: 1px solid var(--color-line);
+  background: linear-gradient(180deg, var(--color-surface-2), var(--color-surface));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--color-ink);
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-2px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  pointer-events: none;
+}
+.berich-term:hover .berich-tip,
+.berich-term:focus-visible .berich-tip,
+.berich-term:focus-within .berich-tip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}

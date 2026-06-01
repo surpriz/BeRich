@@ -1,10 +1,21 @@
 import type { Backtest } from "@/app/lib/api";
 import { EquityChart } from "./EquityChart";
+import { Info } from "./Term";
 
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 const num = (n: number) => n.toFixed(2);
 
-function Stat({ label, strat, bench, format }: { label: string; strat: number; bench: number; format: (n: number) => string }) {
+function Stat({
+  label,
+  strat,
+  bench,
+  format,
+}: {
+  label: React.ReactNode;
+  strat: number;
+  bench: number;
+  format: (n: number) => string;
+}) {
   const better = strat >= bench;
   return (
     <div className="flex flex-col gap-0.5">
@@ -23,7 +34,10 @@ export function BacktestPanel({ bt }: { bt: Backtest }) {
   return (
     <div className="card flex flex-col gap-5 p-5">
       <div className="flex items-baseline justify-between">
-        <h2 className="font-display text-xl font-bold">Walk-forward backtest</h2>
+        <h2 className="font-display text-xl font-bold">
+          Walk-forward backtest
+          <Info id="walk_forward" />
+        </h2>
         <span
           className={`rounded-md border px-2.5 py-1 text-xs font-semibold ${
             bt.beats_buy_hold
@@ -38,7 +52,17 @@ export function BacktestPanel({ bt }: { bt: Backtest }) {
       <EquityChart equity={bt.equity} />
 
       <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
-        <Stat label="Sharpe" strat={s.sharpe} bench={b.sharpe} format={num} />
+        <Stat
+          label={
+            <>
+              Sharpe
+              <Info id="sharpe" />
+            </>
+          }
+          strat={s.sharpe}
+          bench={b.sharpe}
+          format={num}
+        />
         <Stat label="Total return" strat={s.total_return} bench={b.total_return} format={pct} />
         <Stat label="Max drawdown" strat={s.max_drawdown} bench={b.max_drawdown} format={pct} />
         <Stat label="CAGR" strat={s.cagr} bench={b.cagr} format={pct} />

@@ -24,7 +24,9 @@ import { CalibrationCard } from "./components/CalibrationCard";
 import { DriftPanel } from "./components/DriftPanel";
 import { PaperPanel } from "./components/PaperPanel";
 import { UniverseTabs } from "./components/UniverseTabs";
+import { Show } from "./components/Show";
 import { useTranslate } from "./lib/i18n";
+import { useLevel } from "./lib/level";
 
 type State = {
   signals?: Signal[];
@@ -40,24 +42,11 @@ type State = {
   error?: string;
 };
 
-type ViewMode = "light" | "expert";
-const VIEW_KEY = "berich.viewmode";
-
 export default function Dashboard() {
   const [s, setS] = useState<State>({});
   const [activeUniverse, setActiveUniverse] = useState<AssetClass>("us_stocks");
-  const [view, setViewState] = useState<ViewMode>("light");
   const t = useTranslate();
-
-  useEffect(() => {
-    const stored = typeof window !== "undefined" ? window.localStorage.getItem(VIEW_KEY) : null;
-    if (stored === "light" || stored === "expert") setViewState(stored);
-  }, []);
-
-  const setView = (v: ViewMode) => {
-    setViewState(v);
-    if (typeof window !== "undefined") window.localStorage.setItem(VIEW_KEY, v);
-  };
+  const { level } = useLevel();
 
   useEffect(() => {
     let alive = true;
@@ -120,38 +109,22 @@ export default function Dashboard() {
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-12">
-      <header className="mb-10 flex flex-wrap items-end justify-between gap-4">
+      <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-5xl font-extrabold tracking-tight">
             Be<span className="text-[var(--color-bull)]">Rich</span>
           </h1>
           <p className="mt-1 text-sm text-[var(--color-muted)]">{t("app.tagline")}</p>
+          <p className="mt-2 max-w-xl text-xs text-[var(--color-faint)]">{t(`level.hint.${level}`)}</p>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1 rounded-md border border-[var(--color-line)] p-0.5 text-xs">
-            {(["light", "expert"] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => setView(m)}
-                className={`rounded px-3 py-1 ${
-                  view === m
-                    ? "bg-[var(--color-line)]/[0.18] text-[var(--color-fg)]"
-                    : "text-[var(--color-faint)]"
-                }`}
-              >
-                {t(`view.${m}`)}
-              </button>
-            ))}
-          </div>
-          {asOf && (
-            <div className="text-right">
-              <div className="text-[11px] uppercase tracking-widest text-[var(--color-faint)]">
-                {t("app.asOf")}
-              </div>
-              <div className="tabular text-lg">{asOf}</div>
+        {asOf && (
+          <div className="text-right">
+            <div className="text-[11px] uppercase tracking-widest text-[var(--color-faint)]">
+              {t("app.asOf")}
             </div>
-          )}
-        </div>
+            <div className="tabular text-lg">{asOf}</div>
+          </div>
+        )}
       </header>
 
       <div className="mb-3 rounded-lg border border-[var(--color-neutral)]/30 bg-[var(--color-neutral)]/[0.06] px-4 py-3 text-sm text-[var(--color-neutral)]">
@@ -183,74 +156,68 @@ export default function Dashboard() {
                 {t("banner.experimental")}
               </div>
             )}
-            {view === "light" ? (
-              filtered ? (
+            <Show max="discovery">
+              {filtered ? (
                 <LightView signals={filtered} paper={s.paperEquity} />
               ) : (
                 <Skeleton h={280} />
-              )
-            ) : (
-              <>
-                <h2 className="mb-3 font-display text-xl font-bold">
-                  {t("dashboard.todaySignals")}
-                </h2>
-                {filtered ? <SignalsTable signals={filtered} /> : <Skeleton h={280} />}
-              </>
-            )}
+              )}
+            </Show>
+            <Show min="standard">
+              <h2 className="mb-3 font-display text-xl font-bold">
+                {t("dashboard.todaySignals")}
+              </h2>
+              {filtered ? <SignalsTable signals={filtered} /> : <Skeleton h={280} />}
+            </Show>
           </section>
 
-          {view === "expert" && (
-            <>
-              {s.paperEquity && s.paperPositions && s.paperClosed ? (
-                <PaperPanel
-                  equity={s.paperEquity}
-                  positions={s.paperPositions.positions}
-                  closed={s.paperClosed}
-                />
-              ) : (
-                <Skeleton h={600} />
-              )}
+          <Show min="standard">
+            {s.paperEquity && s.paperPositions && s.paperClosed ? (
+              <PaperPanel
+                equity={s.paperEquity}
+                positions={s.paperPositions.positions}
+                closed={s.paperClosed}
+              />
+            ) : (
+              <Skeleton h={600} />
+            )}
 
-              {s.longshortBasket !== undefined && (
-                <LongShortPanel basket={s.longshortBasket} equity={s.longshortEquity} />
-              )}
+            {s.backtest ? <BacktestPanel bt={s.backtest} /> : <Skeleton h={460} />}
+          </Show>
 
-              <div className="grid gap-8 lg:grid-cols-2">
-                <section>
-                  {s.paperCalibration ? (
-                    <CalibrationCard calibration={s.paperCalibration} />
-                  ) : (
-                    <Skeleton h={300} />
-                  )}
-                </section>
-                <section className="card flex flex-col justify-between p-5">
-                  <div>
-                    <h3 className="font-display text-sm font-bold uppercase tracking-widest text-[var(--color-muted)]">
-                      {t("dashboard.export")}
-                    </h3>
-                    <p className="mt-2 text-sm text-[var(--color-faint)]">
-                      {t("dashboard.exportDesc")}
-                    </p>
-                  </div>
-                  <a
-                    href={PAPER_EXPORT_URL}
-                    className="mt-4 inline-block self-start rounded-md border border-[var(--color-line)] bg-[var(--color-line)]/[0.04] px-4 py-2 text-sm text-[var(--color-bull)] hover:bg-[var(--color-line)]/[0.10]"
-                  >
-                    {t("dashboard.downloadCsv")}
-                  </a>
-                </section>
-              </div>
+          <Show min="expert">
+            {s.longshortBasket !== undefined && (
+              <LongShortPanel basket={s.longshortBasket} equity={s.longshortEquity} />
+            )}
 
-              <div className="grid gap-8 lg:grid-cols-5">
-                <section className="lg:col-span-3">
-                  {s.backtest ? <BacktestPanel bt={s.backtest} /> : <Skeleton h={460} />}
-                </section>
-                <section className="lg:col-span-2">
-                  {s.drift ? <DriftPanel drift={s.drift} /> : <Skeleton h={460} />}
-                </section>
-              </div>
-            </>
-          )}
+            <div className="grid gap-8 lg:grid-cols-2">
+              <section>
+                {s.paperCalibration ? (
+                  <CalibrationCard calibration={s.paperCalibration} />
+                ) : (
+                  <Skeleton h={300} />
+                )}
+              </section>
+              <section className="card flex flex-col justify-between p-5">
+                <div>
+                  <h3 className="font-display text-sm font-bold uppercase tracking-widest text-[var(--color-muted)]">
+                    {t("dashboard.export")}
+                  </h3>
+                  <p className="mt-2 text-sm text-[var(--color-faint)]">
+                    {t("dashboard.exportDesc")}
+                  </p>
+                </div>
+                <a
+                  href={PAPER_EXPORT_URL}
+                  className="mt-4 inline-block self-start rounded-md border border-[var(--color-line)] bg-[var(--color-line)]/[0.04] px-4 py-2 text-sm text-[var(--color-bull)] hover:bg-[var(--color-line)]/[0.10]"
+                >
+                  {t("dashboard.downloadCsv")}
+                </a>
+              </section>
+            </div>
+
+            {s.drift ? <DriftPanel drift={s.drift} /> : <Skeleton h={460} />}
+          </Show>
         </div>
       )}
     </main>

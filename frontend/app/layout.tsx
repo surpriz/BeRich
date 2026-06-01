@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import { Bricolage_Grotesque, Hanken_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { I18nProvider } from "./lib/i18n";
+import { LevelProvider } from "./lib/level";
 import { HealthFooter } from "./components/HealthFooter";
+import { TopNav } from "./components/TopNav";
 
 const bricolage = Bricolage_Grotesque({
   subsets: ["latin"],
@@ -30,8 +32,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${bricolage.variable} ${hanken.variable} ${jetbrains.variable}`}>
       <body>
         <I18nProvider>
-          {children}
-          <HealthFooter />
+          <LevelProvider>
+            <TopNav />
+            {children}
+            <HealthFooter />
+          </LevelProvider>
         </I18nProvider>
       </body>
     </html>

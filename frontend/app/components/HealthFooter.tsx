@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type Health } from "@/app/lib/api";
-import { LanguageSelector, useTranslate } from "@/app/lib/i18n";
+import { useTranslate } from "@/app/lib/i18n";
 
 const STALE_DAYS = 2;
 
@@ -47,19 +47,9 @@ export function HealthFooter() {
           )}
         </div>
         <div className="flex items-center gap-4">
-          <Link href="/ops" className="hover:text-[var(--color-bull)]">
-            {t("footer.ops")}
-          </Link>
-          <Link href="/training" className="hover:text-[var(--color-bull)]">
-            {t("footer.training")}
-          </Link>
           <Link href="/under-the-hood" className="hover:text-[var(--color-bull)]">
             {t("footer.underHood")}
           </Link>
-          <Link href="/how-it-works" className="hover:text-[var(--color-bull)]">
-            {t("footer.howItWorks")}
-          </Link>
-          <LanguageSelector />
         </div>
       </div>
     </footer>

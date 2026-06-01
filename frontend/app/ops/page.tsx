@@ -1,9 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type OpsSnapshot } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
+import { Show } from "@/app/components/Show";
+import { Info } from "@/app/components/Term";
 
 const REFRESH_MS = 5000;
 
@@ -58,12 +59,6 @@ export default function OpsPage() {
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
-      <Link
-        href="/"
-        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-bull)]"
-      >
-        ← {t("ops.back")}
-      </Link>
       <div className="flex items-baseline justify-between">
         <h1 className="font-display text-3xl font-bold">{t("ops.title")}</h1>
         <span className="text-xs text-[var(--color-faint)]">
@@ -91,13 +86,15 @@ export default function OpsPage() {
                     <span className="tabular">{g.util_pct}% · {g.temp_c}°C</span>
                   </div>
                   <div className="mt-1"><GpuBar pct={g.util_pct} tone="util" /></div>
-                  <div className="mt-1 flex justify-between text-[11px] text-[var(--color-faint)]">
-                    <span>{t("ops.mem")}</span>
-                    <span className="tabular">
-                      {(g.mem_used_mb / 1024).toFixed(1)} / {(g.mem_total_mb / 1024).toFixed(0)} GB
-                    </span>
-                  </div>
-                  <div className="mt-0.5"><GpuBar pct={(g.mem_used_mb / g.mem_total_mb) * 100} tone="mem" /></div>
+                  <Show min="expert">
+                    <div className="mt-1 flex justify-between text-[11px] text-[var(--color-faint)]">
+                      <span>{t("ops.mem")}</span>
+                      <span className="tabular">
+                        {(g.mem_used_mb / 1024).toFixed(1)} / {(g.mem_total_mb / 1024).toFixed(0)} GB
+                      </span>
+                    </div>
+                    <div className="mt-0.5"><GpuBar pct={(g.mem_used_mb / g.mem_total_mb) * 100} tone="mem" /></div>
+                  </Show>
                 </div>
               ))}
             </div>
@@ -105,7 +102,10 @@ export default function OpsPage() {
 
           {/* HPO progress */}
           <section className="card p-5">
-            <h2 className="font-display text-lg font-bold">{t("ops.hpo")}</h2>
+            <h2 className="font-display text-lg font-bold">
+              {t("ops.hpo")}
+              <Info id="hpo" />
+            </h2>
             <div className="mt-3 text-sm">
               <div className="flex justify-between">
                 <span className="text-[var(--color-muted)]">{t("ops.hpoDone")}</span>
@@ -114,10 +114,13 @@ export default function OpsPage() {
               <div className="mt-1"><GpuBar pct={hpoPct} tone="util" /></div>
               <div className="mt-3 flex gap-4 text-xs text-[var(--color-muted)]">
                 <span className="text-[var(--color-bull)]">{snap.hpo.promoted} {t("ops.promoted")}</span>
-                <span>{snap.hpo.advisory} advisory</span>
-                <span>{snap.hpo.pending} {t("ops.pending")}</span>
+                <Show min="expert">
+                  <span>{snap.hpo.advisory} {t("ops.advisory")}</span>
+                  <span>{snap.hpo.pending} {t("ops.pending")}</span>
+                </Show>
               </div>
               {snap.hpo.recent.length > 0 && (
+                <Show min="standard">
                 <div className="mt-3 border-t border-[var(--color-line)]/50 pt-2">
                   <div className="text-[11px] uppercase tracking-widest text-[var(--color-faint)]">
                     {t("ops.recentTrained")}
@@ -131,11 +134,13 @@ export default function OpsPage() {
                     </div>
                   ))}
                 </div>
+                </Show>
               )}
             </div>
           </section>
 
           {/* Scheduler jobs */}
+          <Show min="standard">
           <section className="card p-5">
             <h2 className="font-display text-lg font-bold">{t("ops.jobs")}</h2>
             <p className="mt-1 text-xs text-[var(--color-faint)]">
@@ -150,8 +155,10 @@ export default function OpsPage() {
               ))}
             </div>
           </section>
+          </Show>
 
           {/* Recent logs */}
+          <Show min="expert">
           <section className="card p-5">
             <h2 className="font-display text-lg font-bold">{t("ops.logs")}</h2>
             <div className="mt-3 max-h-72 space-y-1 overflow-y-auto font-mono text-[11px] leading-relaxed">
@@ -163,6 +170,7 @@ export default function OpsPage() {
               ))}
             </div>
           </section>
+          </Show>
         </div>
       )}
     </main>

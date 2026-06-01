@@ -12,6 +12,8 @@ import {
 } from "@/app/lib/api";
 import { SignalBadge } from "@/app/components/SignalBadge";
 import { TickerChart } from "@/app/components/TickerChart";
+import { Show } from "@/app/components/Show";
+import { Info } from "@/app/components/Term";
 import { useTranslate } from "@/app/lib/i18n";
 
 const ASSET_CLASS_LABEL: Record<AssetClass, string> = {
@@ -105,29 +107,34 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
                     {latest.direction === "short" ? t("directionShort") : t("directionLong")}
                   </span>
                 )}
-                <span
-                  className="tabular"
-                  title={
-                    latest.proba_calibrated != null
-                      ? `raw ${latest.proba.toFixed(3)} → calibrated`
-                      : undefined
-                  }
-                >
-                  P(win) {(latest.proba_calibrated ?? latest.proba).toFixed(3)}
-                  {latest.proba_calibrated != null && (
-                    <span className="ml-1 text-[10px] text-[var(--color-faint)]">cal</span>
+                <Show min="standard">
+                  <span
+                    className="tabular"
+                    title={
+                      latest.proba_calibrated != null
+                        ? `raw ${latest.proba.toFixed(3)} → calibrated`
+                        : undefined
+                    }
+                  >
+                    P(win) {(latest.proba_calibrated ?? latest.proba).toFixed(3)}
+                    {latest.proba_calibrated != null && (
+                      <span className="ml-1 text-[10px] text-[var(--color-faint)]">cal</span>
+                    )}
+                    <Info id="pwin" />
+                  </span>
+                </Show>
+                <Show min="expert">
+                  {latest.proba_long != null && (
+                    <span className="tabular text-[var(--color-bull)]/80">
+                      {t("probaLong")} {latest.proba_long.toFixed(3)}
+                    </span>
                   )}
-                </span>
-                {latest.proba_long != null && (
-                  <span className="tabular text-[var(--color-bull)]/80">
-                    {t("probaLong")} {latest.proba_long.toFixed(3)}
-                  </span>
-                )}
-                {latest.proba_short != null && (
-                  <span className="tabular text-[var(--color-bear)]/80">
-                    {t("probaShort")} {latest.proba_short.toFixed(3)}
-                  </span>
-                )}
+                  {latest.proba_short != null && (
+                    <span className="tabular text-[var(--color-bear)]/80">
+                      {t("probaShort")} {latest.proba_short.toFixed(3)}
+                    </span>
+                  )}
+                </Show>
               </>
             )}
           </div>
@@ -151,6 +158,32 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
         </div>
       )}
 
+      {latest && (latest.ret_q10 != null || latest.sigma_horizon != null) && (
+        <Show min="expert">
+          <div className="mb-6 flex flex-wrap gap-6 rounded-lg border border-[var(--color-line)] bg-white/[0.02] px-4 py-3 text-xs text-[var(--color-muted)]">
+            {latest.ret_q10 != null && latest.ret_q90 != null && (
+              <span>
+                <span className="text-[var(--color-faint)]">
+                  {t("ticker.quantiles")}
+                  <Info id="quantile" />
+                </span>{" "}
+                <span className="tabular">
+                  {(latest.ret_q10 * 100).toFixed(1)}%
+                  {latest.ret_q50 != null && ` · ${(latest.ret_q50 * 100).toFixed(1)}%`} ·{" "}
+                  {(latest.ret_q90 * 100).toFixed(1)}%
+                </span>
+              </span>
+            )}
+            {latest.sigma_horizon != null && (
+              <span>
+                <span className="text-[var(--color-faint)]">{t("ticker.sigma")}</span>{" "}
+                <span className="tabular">{(latest.sigma_horizon * 100).toFixed(2)}%</span>
+              </span>
+            )}
+          </div>
+        </Show>
+      )}
+
       {klass !== "us_stocks" && klass !== "unknown" && (
         <div className="mb-6 rounded-lg border border-[var(--color-neutral)]/30 bg-[var(--color-neutral)]/[0.06] px-4 py-3 text-sm text-[var(--color-neutral)]">
           {t("banner.experimental")}
@@ -171,6 +204,7 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
         )}
       </section>
 
+      <Show min="standard">
       <section className="card mb-8 p-5">
         <h2 className="mb-3 font-display text-lg font-bold">{t("ticker.whySignal")}</h2>
         {explain === undefined && (
@@ -184,6 +218,7 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
             <div>
               <h3 className="mb-2 text-xs uppercase tracking-widest text-[var(--color-faint)]">
                 {t("ticker.topFeatures")}
+                <Info id="shap" />
               </h3>
               <ul className="flex flex-col gap-1.5">
                 {explain.top_features.map((f) => {
@@ -210,6 +245,7 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
                 {t("ticker.baseValue")}: <span className="tabular">{explain.base_value.toFixed(3)}</span>
               </p>
             </div>
+            <Show min="expert">
             <div>
               <h3 className="mb-2 text-xs uppercase tracking-widest text-[var(--color-faint)]">
                 {t("ticker.recentNews")}
@@ -254,9 +290,11 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
                 ))}
               </ul>
             </div>
+            </Show>
           </div>
         )}
       </section>
+      </Show>
 
       <section className="card p-5">
         <h2 className="mb-3 font-display text-lg font-bold">{t("ticker.history")}</h2>
@@ -271,7 +309,12 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
                 <th className="px-2 py-2 font-medium">{t("col.date")}</th>
                 <th className="px-2 py-2 font-medium">{t("col.signal")}</th>
                 <th className="px-2 py-2 font-medium">{t("direction")}</th>
-                <th className="px-2 py-2 font-medium">P(win)</th>
+                <Show min="standard">
+                  <th className="px-2 py-2 font-medium">
+                    P(win)
+                    <Info id="pwin" />
+                  </th>
+                </Show>
                 <th className="px-2 py-2 text-right font-medium">{t("col.entry")}</th>
                 <th className="px-2 py-2 text-right font-medium">{t("col.stop")}</th>
                 <th className="px-2 py-2 text-right font-medium">{t("col.target")}</th>
@@ -294,7 +337,9 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
                         ? t("directionLong")
                         : "—"}
                   </td>
-                  <td className="tabular px-2 py-2">{s.proba.toFixed(3)}</td>
+                  <Show min="standard">
+                    <td className="tabular px-2 py-2">{s.proba.toFixed(3)}</td>
+                  </Show>
                   <td className="tabular px-2 py-2 text-right">{s.entry.toFixed(2)}</td>
                   <td className="tabular px-2 py-2 text-right text-[var(--color-bear)]/80">
                     {s.stop_loss.toFixed(2)}

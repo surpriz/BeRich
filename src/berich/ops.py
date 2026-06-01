@@ -118,9 +118,13 @@ def hpo_progress(config: Config) -> dict[str, object]:
         logger.warning("ops: training_status failed", exc_info=True)
         return {"total": 0, "hpo_done": 0, "pending": 0, "promoted": 0, "advisory": 0}
     total = len(rows)
-    hpo_done = sum(1 for r in rows if cast("int", r.get("hpo_trials", 0)) > 0)
-    promoted = sum(1 for r in rows if r.get("status") == "promoted")
-    advisory = sum(1 for r in rows if r.get("status") == "advisory_only")
+    # The bar is about the per-asset HPO queue, so promoted/advisory are counted *within* the
+    # HPO-done set — never mixing in the legacy assets promoted before HPO existed (which would
+    # make "promoted" and "done" look contradictory). hpo_done = (ticker, side) pairs searched.
+    done_rows = [r for r in rows if cast("int", r.get("hpo_trials", 0)) > 0]
+    hpo_done = len(done_rows)
+    promoted = sum(1 for r in done_rows if r.get("status") == "promoted")
+    advisory = sum(1 for r in done_rows if r.get("status") == "advisory_only")
     # Most-recently-trained few, for "last finished" context.
     trained = [r for r in rows if r.get("trained_at")]
     trained.sort(key=lambda r: str(r.get("trained_at")), reverse=True)

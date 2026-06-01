@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api, type TrainingStatus } from "@/app/lib/api";
+import { api, type TournamentCandidate, type TrainingStatus } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
+import { Show } from "@/app/components/Show";
+import { Info } from "@/app/components/Term";
 
 const STATUS_STYLE: Record<TrainingStatus["status"], string> = {
   promoted: "text-[var(--color-bull)] border-[var(--color-bull)]",
@@ -40,19 +42,62 @@ function SideCell({ s, t }: { s: TrainingStatus | undefined; t: (k: string) => s
         {t(`training.status.${s.status}`)}
       </span>
       {s.winner && <span className="text-xs text-[var(--color-muted)]">{s.winner}</span>}
-      {s.status !== "never_trained" && (
-        <span className="tabular text-[11px] text-[var(--color-faint)]">
-          AUC {fmt(s.metrics.auc)} · Sharpe {fmt(s.metrics.sharpe)}
-          {s.metrics.benchmark_sharpe !== undefined && ` vs ${fmt(s.metrics.benchmark_sharpe)}`}
+      <Show min="standard">
+        {s.status !== "never_trained" && (
+          <span className="tabular text-[11px] text-[var(--color-faint)]">
+            AUC {fmt(s.metrics.auc)} · Sharpe {fmt(s.metrics.sharpe)}
+            {s.metrics.benchmark_sharpe !== undefined && ` vs ${fmt(s.metrics.benchmark_sharpe)}`}
+          </span>
+        )}
+        <span className="text-[11px] text-[var(--color-faint)]">
+          {t("training.hpo")}:{" "}
+          {s.hpo_trials > 0
+            ? `${s.hpo_trials} ${t("training.trials")} (${t("training.acrossModels")})`
+            : t("training.defaultParams")}
         </span>
-      )}
-      <span className="text-[11px] text-[var(--color-faint)]">
-        {t("training.hpo")}:{" "}
-        {s.hpo_trials > 0
-          ? `${s.hpo_trials} ${t("training.trials")} (${t("training.acrossModels")})`
-          : t("training.defaultParams")}
-      </span>
+      </Show>
     </div>
+  );
+}
+
+function CandidatesTable({
+  candidates,
+  t,
+}: {
+  candidates: TournamentCandidate[];
+  t: (k: string) => string;
+}) {
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-left text-[10px] uppercase tracking-widest text-[var(--color-faint)]">
+          <th className="py-1 pr-3">{t("training.cand.model")}</th>
+          <th className="py-1 pr-3">{t("training.cand.framework")}</th>
+          <th className="py-1 pr-3 text-right">{t("training.cand.auc")}</th>
+          <th className="py-1 pr-3 text-right">{t("training.cand.sharpe")}</th>
+          <th className="py-1 pr-3 text-right">{t("training.cand.bench")}</th>
+          <th className="py-1 pr-3 text-right">{t("training.cand.features")}</th>
+          <th className="py-1 text-right">{t("training.cand.guard")}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {candidates.map((c) => (
+          <tr key={`${c.model_name}-${c.framework}`} className="border-t border-[var(--color-line)]/40">
+            <td className="py-1.5 pr-3 text-[var(--color-muted)]">{c.model_name}</td>
+            <td className="py-1.5 pr-3 text-[var(--color-faint)]">{c.framework}</td>
+            <td className="tabular py-1.5 pr-3 text-right">{fmt(c.oos_auc)}</td>
+            <td className="tabular py-1.5 pr-3 text-right">{fmt(c.strategy_sharpe)}</td>
+            <td className="tabular py-1.5 pr-3 text-right text-[var(--color-faint)]">{fmt(c.benchmark_sharpe)}</td>
+            <td className="tabular py-1.5 pr-3 text-right text-[var(--color-faint)]">{c.n_features}</td>
+            <td className="py-1.5 text-right">
+              <span className={c.beats_guard ? "text-[var(--color-bull)]" : "text-[var(--color-faint)]"}>
+                {c.beats_guard ? "✓" : "—"}
+              </span>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -71,20 +116,20 @@ export default function TrainingPage() {
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
-      <Link
-        href="/"
-        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-bull)]"
-      >
-        ← {t("training.back")}
-      </Link>
       <h1 className="font-display text-3xl font-bold">{t("training.title")}</h1>
       <p className="mt-2 max-w-2xl text-sm text-[var(--color-muted)]">{t("training.intro")}</p>
 
       {rows && (
         <div className="mt-4 flex gap-6 text-sm text-[var(--color-muted)]">
           <span>{rows.length} {t("training.entries")}</span>
-          <span className="text-[var(--color-bull)]">{nPromoted} {t("training.promotedCount")}</span>
-          <span>{nHpo} {t("training.hpoCount")}</span>
+          <span className="text-[var(--color-bull)]">
+            {nPromoted} {t("training.promotedCount")}
+            <Info id="promoted" />
+          </span>
+          <span>
+            {nHpo} {t("training.hpoCount")}
+            <Info id="hpo" />
+          </span>
         </div>
       )}
 
@@ -129,6 +174,39 @@ export default function TrainingPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {rows && (
+        <Show min="expert">
+          <section className="mt-10">
+            <h2 className="font-display text-xl font-bold">
+              {t("training.col.candidates")}
+            </h2>
+            <div className="mt-4 flex flex-col gap-4">
+              {grouped
+                .filter((g) => (g.long?.candidates.length ?? 0) + (g.short?.candidates.length ?? 0) > 0)
+                .map((g) => (
+                  <div key={g.ticker} className="card p-5">
+                    <div className="mb-3 font-display text-base font-bold">{g.ticker}</div>
+                    <div className="grid gap-6 lg:grid-cols-2">
+                      {(["long", "short"] as const).map((side) => {
+                        const cands = g[side]?.candidates ?? [];
+                        if (cands.length === 0) return null;
+                        return (
+                          <div key={side}>
+                            <div className="mb-1 text-[11px] uppercase tracking-widest text-[var(--color-faint)]">
+                              {t(`training.col.${side}`)}
+                            </div>
+                            <CandidatesTable candidates={cands} t={t} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </section>
+        </Show>
       )}
     </main>
   );

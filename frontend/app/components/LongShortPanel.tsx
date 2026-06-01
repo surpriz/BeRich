@@ -1,4 +1,5 @@
 import type { LongShortEquity, LongShortLeg } from "@/app/lib/api";
+import { Info } from "./Term";
 
 const fmtW = (n: number) => `${(n * 100).toFixed(2)}%`;
 
@@ -42,6 +43,7 @@ export function LongShortPanel({
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
         <h3 className="font-display text-sm font-bold uppercase tracking-widest text-[var(--color-muted)]">
           Market-neutral long/short basket
+          <Info id="market_neutral" />
         </h3>
         <div className="flex gap-4 text-xs text-[var(--color-faint)]">
           <span>gross {gross.toFixed(2)}</span>
@@ -53,7 +55,7 @@ export function LongShortPanel({
       </div>
       <p className="mb-4 text-xs text-[var(--color-faint)]">
         Dollar-neutral cross-sectional ranking (experimental — gated on a deflated-Sharpe
-        significance test, not buy &amp; hold).
+        <Info id="deflated_sharpe" /> significance test, not buy &amp; hold).
       </p>
       <div className="grid gap-6 md:grid-cols-2">
         {[

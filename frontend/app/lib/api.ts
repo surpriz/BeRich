@@ -29,6 +29,9 @@ export type Signal = {
   ret_q90?: number | null;
   sigma_horizon?: number | null;
   sltp_method?: string | null;
+  // True only when the acted side's per-asset model passed the guard. False/absent = advisory
+  // (optimized but not validated — served from its own model, but no edge claim).
+  promoted?: boolean | null;
 };
 
 export type LongShortLeg = {
