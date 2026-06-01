@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from berich.config import Config, SignalConfig
 from berich.signals.service import (
@@ -14,6 +15,7 @@ from berich.signals.service import (
     Signal,
     _classify,
     _decide,
+    _expected_return,
     _price_decimals,
     _size_position,
 )
@@ -97,6 +99,20 @@ def test_size_position_capped_at_capital_no_leverage():
     shares, notional = _size_position(entry=1.1664, stop=1.1602, config=cfg)
     assert notional <= cfg.signals.capital
     assert shares == int(cfg.signals.capital // 1.1664)
+
+
+def test_expected_return_triple_barrier_expectancy():
+    # Long: entry 100, target 110 (+10% reward), stop 95 (-5% risk), P(win)=0.4.
+    # E = 0.4*0.10 - 0.6*0.05 = 0.04 - 0.03 = +0.01.
+    er = _expected_return(0.4, entry=100.0, stop=95.0, target=110.0)
+    assert er == pytest.approx(0.01)
+
+
+def test_expected_return_direction_agnostic_via_abs():
+    # Short: entry 100, target 90 (reward), stop 105 (risk). Same |distances| as a 10/5 long
+    # scaled, so the abs-based formula yields P(win)*0.10 - P(loss)*0.05.
+    er = _expected_return(0.4, entry=100.0, stop=105.0, target=90.0)
+    assert er == pytest.approx(0.4 * 0.10 - 0.6 * 0.05)
 
 
 def test_price_decimals_scales_with_magnitude():

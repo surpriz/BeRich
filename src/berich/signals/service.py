@@ -86,6 +86,13 @@ class Signal:
     # True when the acted side's per-asset model passed the guard (promoted); False = advisory
     # (served from the asset's own optimized-but-unpromoted candidate, never a generic fallback).
     promoted: bool = False
+    # Expected return of the trade as a fraction of entry, from the triple-barrier expectancy:
+    # P(win)*reward - (1-P(win))*risk. GROSS is the model's raw edge; NET subtracts the default
+    # round-trip cost (config.signals.cost_bps_roundtrip). The UI can recompute net for any
+    # user-supplied cost from gross + the cost line. None on NEUTRAL (no trade).
+    exp_return_gross: float | None = None
+    exp_return_net: float | None = None
+    cost_bps_roundtrip: float | None = None
 
     def as_row(self) -> dict[str, object]:
         row = asdict(self)
@@ -163,6 +170,20 @@ def _size_position(entry: float, stop: float, config: Config) -> tuple[int, floa
     capital_shares = math.floor(config.signals.capital / entry)  # no-leverage cap
     shares = min(risk_shares, capital_shares)
     return shares, shares * entry
+
+
+def _expected_return(p_win: float, entry: float, stop: float, target: float) -> float:
+    """Triple-barrier expectancy as a fraction of entry: P(win)*reward - (1-P(win))*risk.
+
+    Reward and risk are the actual barrier |distances|/entry (so adaptive/vol-scaled barriers
+    are reflected). abs() keeps it direction-agnostic: for a short the barriers are mirrored
+    (target below entry, stop above), but the distances are the same.
+    """
+    if entry <= 0:
+        return 0.0
+    reward = abs(target - entry) / entry
+    risk = abs(stop - entry) / entry
+    return p_win * reward - (1.0 - p_win) * risk
 
 
 def _earnings_store_if_available(config: Config) -> EarningsStore | None:
@@ -310,7 +331,7 @@ def generate_multi_asset_signals(config: Config, store: OhlcvStore) -> list[Sign
     return []
 
 
-def _signal_for_ticker(  # noqa: C901, PLR0915
+def _signal_for_ticker(  # noqa: C901, PLR0912, PLR0915
     ticker: str,
     df: pd.DataFrame,
     model: Model,
@@ -428,6 +449,14 @@ def _signal_for_ticker(  # noqa: C901, PLR0915
     acted_used_cal = (short_calibrator if decision == SHORT else calibrator) is not None
     acted_promoted = short_promoted if decision == SHORT else long_promoted
 
+    # Expected return (gross/net) on the acted side; None for NEUTRAL (no trade taken).
+    exp_gross: float | None = None
+    exp_net: float | None = None
+    cost_bps = config.signals.cost_bps_roundtrip
+    if decision != NEUTRAL:
+        exp_gross = _expected_return(acted_cal, entry, stop, target)
+        exp_net = exp_gross - cost_bps / 1e4
+
     return Signal(
         date=last_date,
         ticker=ticker,
@@ -450,6 +479,9 @@ def _signal_for_ticker(  # noqa: C901, PLR0915
         sigma_horizon=None if sigma_h is None else round(sigma_h, 6),
         sltp_method=sltp_method,
         promoted=acted_promoted,
+        exp_return_gross=None if exp_gross is None else round(exp_gross, 5),
+        exp_return_net=None if exp_net is None else round(exp_net, 5),
+        cost_bps_roundtrip=None if exp_gross is None else cost_bps,
     )
 
 

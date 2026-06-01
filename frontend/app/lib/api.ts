@@ -32,6 +32,12 @@ export type Signal = {
   // True only when the acted side's per-asset model passed the guard. False/absent = advisory
   // (optimized but not validated — served from its own model, but no edge claim).
   promoted?: boolean | null;
+  // Expected return (fraction of entry) from the triple-barrier expectancy: gross = the model's
+  // raw edge, net = gross − the round-trip cost the signal was scored with (cost_bps_roundtrip).
+  // The UI recomputes net for any user cost as gross − userBps/1e4. Null on NEUTRAL.
+  exp_return_gross?: number | null;
+  exp_return_net?: number | null;
+  cost_bps_roundtrip?: number | null;
 };
 
 export type LongShortLeg = {

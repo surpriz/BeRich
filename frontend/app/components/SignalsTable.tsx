@@ -1,11 +1,30 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import type { Signal } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
 import { SignalBadge } from "./SignalBadge";
 import { Show } from "./Show";
 import { Info } from "./Term";
+
+const DEFAULT_COST_BPS = 6;
+
+/** Expected return as a % string, net of a user-supplied round-trip cost (bps). */
+function ExpReturn({ s, costBps }: { s: Signal; costBps: number }) {
+  if (s.exp_return_gross == null) return <span className="text-[var(--color-faint)]">—</span>;
+  const gross = s.exp_return_gross;
+  const net = gross - costBps / 1e4;
+  const pct = (x: number) => `${(x * 100).toFixed(2)}%`;
+  const tone = (x: number) => (x > 0 ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]");
+  return (
+    <span className="tabular text-xs">
+      <span className={tone(gross)}>{pct(gross)}</span>
+      <span className="text-[var(--color-faint)]"> / </span>
+      <span className={tone(net)}>{pct(net)}</span>
+    </span>
+  );
+}
 
 const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -51,6 +70,8 @@ const SLTP_LABEL: Record<string, string> = {
 
 export function SignalsTable({ signals }: { signals: Signal[] }) {
   const { t } = useI18n();
+  const defaultCost = signals.find((s) => s.cost_bps_roundtrip != null)?.cost_bps_roundtrip;
+  const [costBps, setCostBps] = useState<number>(defaultCost ?? DEFAULT_COST_BPS);
   if (signals.length === 0) {
     return (
       <div className="card p-6 text-sm text-[var(--color-faint)]">
@@ -60,6 +81,20 @@ export function SignalsTable({ signals }: { signals: Signal[] }) {
   }
   return (
     <div className="card overflow-hidden">
+      <Show min="expert">
+        <div className="flex items-center gap-2 border-b border-[var(--color-line)] px-5 py-2 text-xs text-[var(--color-muted)]">
+          <span>{t("signal.yourFees")}</span>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={costBps}
+            onChange={(e) => setCostBps(Math.max(0, Number(e.target.value) || 0))}
+            className="tabular w-16 rounded border border-[var(--color-line)] bg-transparent px-2 py-0.5 text-right"
+          />
+          <span className="text-[var(--color-faint)]">{t("signal.bpsRoundtrip")}</span>
+        </div>
+      </Show>
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-[var(--color-line)] text-left text-xs uppercase tracking-widest text-[var(--color-faint)]">
@@ -77,6 +112,10 @@ export function SignalsTable({ signals }: { signals: Signal[] }) {
               <Info id="atr" />
             </th>
             <th className="px-5 py-3 text-right font-medium">Shares</th>
+            <th className="px-5 py-3 text-right font-medium">
+              {t("signal.expReturn")}
+              <Info id="expreturn" />
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -145,6 +184,9 @@ export function SignalsTable({ signals }: { signals: Signal[] }) {
                 <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="block">
                   {s.size_shares > 0 ? s.size_shares : <span className="text-[var(--color-faint)]">—</span>}
                 </Link>
+              </td>
+              <td className="px-5 py-3 text-right">
+                <ExpReturn s={s} costBps={costBps} />
               </td>
             </tr>
           ))}

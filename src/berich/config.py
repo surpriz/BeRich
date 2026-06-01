@@ -62,6 +62,11 @@ class SignalConfig(BaseModel):
     enable_short: bool = True
     capital: float = 10_000.0
     risk_pct: float = 0.01
+    # Round-trip transaction cost (fee + slippage, both sides) in basis points of notional,
+    # used to turn a signal's GROSS expected return into a NET one. This is only the default
+    # assumption shown on the dashboard — the UI lets a user override it for their own broker.
+    # 6 bps ≈ 1 bp fee + 2 bps slippage per side, a realistic mega-cap round trip.
+    cost_bps_roundtrip: float = 6.0
     # Adaptive SL/TP: scale the ATR barriers by a vol forecast (and use a model's return
     # quantiles when available) instead of fixed multiples. On by default — it improves
     # the advice without changing the model.

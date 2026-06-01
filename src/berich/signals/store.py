@@ -48,12 +48,16 @@ _MIGRATIONS = (
     "ALTER TABLE signals ADD COLUMN IF NOT EXISTS proba_long DOUBLE",
     "ALTER TABLE signals ADD COLUMN IF NOT EXISTS proba_short DOUBLE",
     "ALTER TABLE signals ADD COLUMN IF NOT EXISTS promoted BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS exp_return_gross DOUBLE",
+    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS exp_return_net DOUBLE",
+    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS cost_bps_roundtrip DOUBLE",
 )
 
 _INSERT_COLUMNS = (
     "date, ticker, signal, proba, entry, stop_loss, take_profit, size_shares, notional, "
     "proba_calibrated, meta_proba, acted, ret_q10, ret_q50, ret_q90, sigma_horizon, sltp_method, "
-    "direction, proba_long, proba_short, promoted"
+    "direction, proba_long, proba_short, promoted, "
+    "exp_return_gross, exp_return_net, cost_bps_roundtrip"
 )
 
 
