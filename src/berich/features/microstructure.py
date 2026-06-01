@@ -49,7 +49,10 @@ def build_micro_features(df: pd.DataFrame) -> pd.DataFrame:
     ret_1 = close.pct_change(fill_method=None)
     dollar_vol = (close * volume).replace(0.0, np.nan)
     illiq = (ret_1.abs() / dollar_vol).rolling(20, min_periods=20).mean()
-    feats["amihud_20"] = np.log1p(illiq * 1e9)  # log-scale the tiny per-dollar number
+    # Assets without a volume feed (e.g. spot FX, where yfinance reports 0 volume) have no
+    # Amihud signal: neutralize to 0 rather than NaN so the whole row isn't dropped. Volume-
+    # bearing assets only see their warm-up rows filled, which longer features drop anyway.
+    feats["amihud_20"] = np.log1p(illiq * 1e9).fillna(0.0)  # log-scale the tiny per-dollar number
 
     # Roll effective spread: 2*sqrt(-cov(Δp_t, Δp_{t-1})) when the autocovariance is negative
     # (the bid-ask bounce signature); 0 otherwise. Expressed as a fraction of price.
