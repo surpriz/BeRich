@@ -17,8 +17,10 @@ guard. One bad framework never aborts the tournament.
 
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, cast
 
 from berich.backtest import BacktestConfig, run_backtest
@@ -210,6 +212,26 @@ def train_candidate(
     return model, meta, calibrator, candidate
 
 
+def _write_status(config: Config, result: TournamentResult, *, stamp: str) -> None:
+    """Persist a per-(ticker, side) tournament summary for the dashboard's training tab.
+
+    Written next to the per-ticker registry as ``status.json`` so the /api/training scan can
+    report the full candidate slate (not just the saved winner), the verdict, and the run time.
+    """
+    out_dir = config.model_dir_for_ticker(result.ticker, result.side)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "ticker": result.ticker,
+        "side": result.side,
+        "winner": result.winner,
+        "promoted": result.promoted,
+        "advisory_only": result.advisory_only,
+        "trained_at": stamp,
+        "candidates": [asdict(c) for c in result.candidates],
+    }
+    (out_dir / "status.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 def train_ticker_tournament(
     config: Config,
     ticker: str,
@@ -219,13 +241,34 @@ def train_ticker_tournament(
     device: str | None = None,
     calibrate: bool = True,
     force: bool = False,
+    trained_at: str | None = None,
 ) -> TournamentResult:
     """Run every candidate framework for one ticker x side and promote the honest winner.
 
     A winner is the gate-passing candidate with the best strategy Sharpe (long) / deflated
     Sharpe (short); it is saved + promoted into the per-ticker namespace. If none passes, the
-    best-AUC candidate is saved unpromoted (advisory-only). Returns the full verdict.
+    best-AUC candidate is saved unpromoted (advisory-only). Writes a ``status.json`` summary
+    for the dashboard and returns the full verdict.
     """
+    stamp = trained_at or datetime.now(UTC).isoformat()
+    result = _run_tournament(
+        config, ticker, side, models=models, device=device, calibrate=calibrate, force=force
+    )
+    _write_status(config, result, stamp=stamp)
+    return result
+
+
+def _run_tournament(
+    config: Config,
+    ticker: str,
+    side: str = "long",
+    *,
+    models: list[str] | None = None,
+    device: str | None = None,
+    calibrate: bool = True,
+    force: bool = False,
+) -> TournamentResult:
+    """Train + gate the candidate frameworks (no side effects beyond the registry)."""
     model_names = models or config.zoo.ticker_tournament_models
     registry_dir = config.model_dir_for_ticker(ticker, side)
     store = OhlcvStore(config.ohlcv_dir)

@@ -183,6 +183,31 @@ export type Universes = {
 
 export type AssetClass = keyof Universes;
 
+export type TournamentCandidate = {
+  ticker: string;
+  side: string;
+  model_name: string;
+  oos_auc: number;
+  strategy_sharpe: number;
+  benchmark_sharpe: number;
+  beats_guard: boolean;
+  framework: string;
+  n_features: number;
+};
+
+export type TrainingStatus = {
+  ticker: string;
+  asset_class: string;
+  side: "long" | "short";
+  status: "promoted" | "advisory_only" | "never_trained";
+  winner: string | null;
+  framework: string | null;
+  trained_at: string | null;
+  metrics: Record<string, number>;
+  candidates: TournamentCandidate[];
+  hpo_trials: number;
+};
+
 export type Health = {
   status: string;
   ohlcv_last_refresh: string | null;
@@ -214,6 +239,7 @@ export const api = {
   paperClosed: (limit = 25) => get<PaperClosedTrade[]>(`/paper/closed-trades?limit=${limit}`),
   paperCalibration: () => get<PaperCalibration>("/paper/calibration"),
   universes: () => get<Universes>("/universes"),
+  training: () => get<TrainingStatus[]>("/training"),
   longshortBasket: () => get<LongShortLeg[]>("/longshort/basket"),
   longshortEquity: () => get<LongShortEquity>("/longshort/equity"),
   health: () => get<Health>("/health"),
