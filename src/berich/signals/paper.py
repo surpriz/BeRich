@@ -302,7 +302,9 @@ def open_new_trades(
     latest = signal_store.latest()
     if latest.empty:
         return 0
-    buys = latest[latest["signal"] == "BUY"]
+    # Paper book is long-only for now: open a trade for each LONG (or legacy BUY) call.
+    # Directional shorts are emitted by the signal service but not yet paper-traded.
+    buys = latest[latest["signal"].isin(["LONG", "BUY"])]
     buys = buys[buys["size_shares"] > 0]
     if buys.empty:
         return 0

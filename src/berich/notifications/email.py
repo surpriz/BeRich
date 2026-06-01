@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SMTP_PORT = 587  # STARTTLS port — Gmail, Outlook, Fastmail all use it
 DEFAULT_SUBJECT = "BeRich — new BUY signal(s)"
+# Long-side signal values (new "LONG" + legacy "BUY" rows). Kept as a local literal to
+# avoid importing berich.signals.service at module load (it pulls heavy deps).
+_LONG_SIGNAL_VALUES = frozenset({"LONG", "BUY"})
 
 
 @dataclass(frozen=True)
@@ -122,7 +125,7 @@ def send_buy_signals_email(
     caught and logged — the scheduler must keep running even if mail is
     momentarily broken.
     """
-    signals = [s for s in signals if s.signal == "BUY"]
+    signals = [s for s in signals if s.signal in _LONG_SIGNAL_VALUES]
     if not signals:
         return False
     cfg = config or EmailConfig.from_env()

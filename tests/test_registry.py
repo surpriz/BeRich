@@ -98,6 +98,40 @@ def test_market_neutral_refused_on_weak_dsr(tmp_path):
         promote("weak_ls", registry_dir=tmp_path)
 
 
+def _short_meta(name: str, *, sharpe: float, dsr: float, pval: float) -> ModelMetadata:
+    return ModelMetadata(
+        name=name,
+        framework="lightgbm",
+        feature_columns=["a", "b", "c"],
+        metrics={"sharpe": sharpe, "deflated_sharpe": dsr, "sharpe_pvalue": pval},
+        side="short",
+        ticker="AAPL",
+    )
+
+
+def test_short_promotes_on_significant_sharpe(tmp_path):
+    # A short has no buy-&-hold benchmark: it gates on a positive, significant Sharpe vs cash.
+    save_model(
+        _trained_model(),
+        _short_meta("aapl_s", sharpe=1.1, dsr=0.97, pval=0.02),
+        registry_dir=tmp_path,
+    )
+    promote("aapl_s", registry_dir=tmp_path)  # beats_buy_hold is False but the short gate is Sharpe
+    active = load_active(tmp_path)
+    assert active is not None and active[1].name == "aapl_s"
+    assert active[1].side == "short"
+
+
+def test_short_refused_on_nonpositive_sharpe(tmp_path):
+    save_model(
+        _trained_model(),
+        _short_meta("aapl_bad", sharpe=-0.2, dsr=0.99, pval=0.01),
+        registry_dir=tmp_path,
+    )
+    with pytest.raises(ValueError, match="Sharpe is not positive"):
+        promote("aapl_bad", registry_dir=tmp_path)
+
+
 def test_legacy_metadata_without_strategy_type_defaults_long_only(tmp_path):
     # An artifact written before strategy_type existed must still load and gate as long-only.
     save_model(_trained_model(), _meta("legacy", beats=True), registry_dir=tmp_path)

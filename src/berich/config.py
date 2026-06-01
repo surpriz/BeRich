@@ -9,11 +9,20 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
 
 DEFAULT_CONFIG_PATH = Path("config/berich.yaml")
+
+
+def safe_ticker_slug(ticker: str) -> str:
+    """Filesystem-safe slug for a ticker (``EURUSD=X`` -> ``EURUSD_X``, ``GC=F`` -> ``GC_F``).
+
+    Keeps ``.`` and ``-`` (valid in paths) so ``MC.PA`` / ``BTC-USD`` stay readable.
+    """
+    return ticker.upper().replace("=", "_").replace("/", "_")
 
 
 class DataConfig(BaseModel):
@@ -31,6 +40,10 @@ class LabelingConfig(BaseModel):
     atr_window: int = 14
     take_profit_atr: float = 2.0
     stop_loss_atr: float = 1.0
+    # Trade side the barriers describe. "long" = profit above / stop below entry (the
+    # historical default); "short" mirrors them. Per-asset short models build their
+    # dataset with a LabelConfig carrying direction="short".
+    direction: Literal["long", "short"] = "long"
 
 
 class SignalConfig(BaseModel):
@@ -40,6 +53,13 @@ class SignalConfig(BaseModel):
     # just above breakeven and reachable on the calibrated scale (which clusters near 0.32).
     buy_threshold: float = 0.35
     sell_threshold: float = 0.30
+    # Mirror of buy_threshold for the short side: a SHORT is emitted when the short
+    # model's calibrated P(win) >= short_threshold (and beats the long side's edge).
+    short_threshold: float = 0.35
+    # Kill-switch for directional shorts at serve time (e.g. to suppress shorts on FX,
+    # where "short EURUSD" is just long USDEUR). Per-ticker short models are still
+    # only consulted when a promoted short artifact exists.
+    enable_short: bool = True
     capital: float = 10_000.0
     risk_pct: float = 0.01
     # Adaptive SL/TP: scale the ATR barriers by a vol forecast (and use a model's return
@@ -87,6 +107,14 @@ class ZooConfig(BaseModel):
     gpu_ids: list[int] | None = None  # None = all visible GPUs
     hpo_trials: int = 20  # weekend (deep) search
     nightly_hpo_trials: int = 6  # light nightly search that accumulates into the same study
+    # Per-ticker tournament (each asset trained/optimized uniquely). The deep sweep is a
+    # heavy one-time/weekend job; the nightly refresh is light (a few trials + re-fit winners).
+    ticker_tournament_models: list[str] = Field(
+        default_factory=lambda: ["lgbm", "lstm", "patchtst", "tft"]
+    )
+    ticker_initial_hpo_trials: int = 40  # heavy first sweep, per ticker x model x side
+    ticker_nightly_hpo_trials: int = 4  # light nightly top-up into the same per-ticker study
+    ticker_sides: list[str] = Field(default_factory=lambda: ["long", "short"])
 
 
 UNIVERSE_NAMES = ("mega", "mid", "small", "all")
@@ -254,6 +282,22 @@ class Config(BaseModel):
         if asset_class in ("us_stocks", "mega", ""):
             return self.models_dir
         return self.models_dir / asset_class
+
+    def model_dir_for_ticker(self, ticker: str, side: str = "long") -> Path:
+        """Per-ticker registry namespace: ``data/models/tickers/<SLUG>/<side>/``.
+
+        Each asset gets its own uniquely-trained/optimized model per side. The
+        ``tickers/`` subtree never collides with the legacy root artifacts or the
+        per-class subdirectories (``crypto/``, ``forex/`` …), so migration is additive.
+        """
+        if side not in ("long", "short"):
+            msg = f"unknown side '{side}' (expected 'long' or 'short')"
+            raise ValueError(msg)
+        return self.models_dir / "tickers" / safe_ticker_slug(ticker) / side
+
+    def tradeable_tickers(self) -> list[str]:
+        """Every configured asset eligible for a per-ticker model (union of universes)."""
+        return self.universes.all_tickers()
 
     @property
     def earnings_dir(self) -> Path:

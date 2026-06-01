@@ -71,6 +71,7 @@ def test_rankers_run_in_cross_sectional_oof():
     panel = build_panel_dataset(
         store, [f"T{i:02d}" for i in range(10)], cfg, market_ticker="SPY", min_names_per_date=5
     )
+
     def factory():
         return LSTMRanker(LSTMConfig(lookback=10, hidden=8, num_layers=1, epochs=2, device="cpu"))
 

@@ -605,7 +605,30 @@ def _cmd_schedule(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_train_tournament(args: argparse.Namespace) -> int:
+    """Per-ticker tournament branch of `berich train --tournament`."""
+    from berich.training.tournament import train_ticker_tournament
+
+    config = Config.load(args.config)
+    tickers = config.tradeable_tickers() if args.all_tickers else [args.ticker]
+    if not tickers or tickers == [None]:
+        print("No ticker to train. Pass --ticker TICKER or --all-tickers.")  # noqa: T201
+        return 1
+    sides = [args.side] if args.side else config.zoo.ticker_sides
+    for ticker in tickers:
+        for side in sides:
+            res = train_ticker_tournament(config, ticker, side, force=args.force)
+            if res.promoted:
+                print(f"{ticker}/{side}: promoted winner '{res.winner}'.")  # noqa: T201
+            else:
+                print(f"{ticker}/{side}: advisory-only (no candidate cleared the gate).")  # noqa: T201
+    return 0
+
+
 def _cmd_train(args: argparse.Namespace) -> int:  # noqa: PLR0915 — flat train dispatcher
+    if getattr(args, "tournament", False):
+        return _cmd_train_tournament(args)
+
     if getattr(args, "from_hpo", False):
         from berich.training.hpo import apply_hpo_best
 
@@ -620,6 +643,10 @@ def _cmd_train(args: argparse.Namespace) -> int:  # noqa: PLR0915 — flat train
     if asset_class:
         from berich.training.asset_class import train_asset_class_model
 
+        print(  # noqa: T201
+            "Note: --asset-class is deprecated; prefer per-ticker models via "
+            "`berich train --all-tickers` (or --ticker TICKER)."
+        )
         config = Config.load(args.config)
         name = None if args.name == "lgbm-baseline" else args.name
         res = train_asset_class_model(config, asset_class, name=name)
@@ -712,6 +739,21 @@ def _cmd_train(args: argparse.Namespace) -> int:  # noqa: PLR0915 — flat train
         save_model(meta_model, meta_meta, registry_dir=meta_dir)
         promote(args.name, registry_dir=meta_dir, force=True)  # filter, not a standalone strategy
         print(f"Saved + activated meta-labeler '{args.name}' (in-sample AUC={meta_auc:.4f}).")  # noqa: T201
+    return 0
+
+
+def _cmd_hpo(args: argparse.Namespace) -> int:
+    """Run a per-ticker Optuna search for one ticker x model x side; print best value + params."""
+    from berich.training.hpo import run_ticker_hpo
+
+    config = Config.load(args.config)
+    study = run_ticker_hpo(config, args.ticker, args.model, args.side, n_trials=args.trials)
+    best = study.best_trial
+    params = {k: v for k, v in best.params.items() if not k.startswith("feat_")}
+    print(  # noqa: T201
+        f"HPO {args.ticker}/{args.model}/{args.side}: best value={study.best_value:.4f} "
+        f"over {len(study.trials)} trials.\n  params: {params}"
+    )
     return 0
 
 
@@ -958,7 +1000,46 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subcomm
         action="store_true",
         help="Train + promote the US model using the latest HPO study's best features + params.",
     )
+    p_train.add_argument(
+        "--ticker",
+        default=None,
+        help="Per-ticker tournament: the single ticker to train (with --tournament).",
+    )
+    p_train.add_argument(
+        "--side",
+        choices=["long", "short"],
+        default=None,
+        help="Per-ticker tournament side. Default: both sides from config (zoo.ticker_sides).",
+    )
+    p_train.add_argument(
+        "--tournament",
+        action="store_true",
+        help="Run the per-ticker tournament (every framework, honest gate, per-ticker registry).",
+    )
+    p_train.add_argument(
+        "--all-tickers",
+        action="store_true",
+        help="With --tournament: run the tournament for every tradeable ticker"
+        " (union of universes).",
+    )
     p_train.set_defaults(func=_cmd_train)
+
+    p_hpo = sub.add_parser("hpo", help="Per-ticker Optuna HPO for one ticker x model x side")
+    p_hpo.add_argument("--ticker", required=True, help="Ticker to optimize.")
+    p_hpo.add_argument(
+        "--model",
+        choices=["lgbm", "lstm", "patchtst", "tft"],
+        default="lgbm",
+        help="Framework to search (default: %(default)s).",
+    )
+    p_hpo.add_argument("--side", choices=["long", "short"], default="long")
+    p_hpo.add_argument(
+        "--trials",
+        type=int,
+        default=None,
+        help="Number of Optuna trials (default: config zoo.ticker_initial_hpo_trials).",
+    )
+    p_hpo.set_defaults(func=_cmd_hpo)
 
     p_models = sub.add_parser("models", help="List models in the registry")
     p_models.set_defaults(func=_cmd_models)

@@ -51,6 +51,11 @@ class ModelMetadata(BaseModel):
     # "long_only" keeps the historical beats-buy-&-hold gate; existing artifacts that
     # predate this field deserialize to "long_only", so the legacy guard is unchanged.
     strategy_type: Literal["long_only", "market_neutral"] = "long_only"
+    # Per-ticker tournament bookkeeping. ``side="short"`` switches the promotion gate to the
+    # significance bar (a short has no buy-&-hold benchmark — its benchmark is cash/zero).
+    # Defaults keep every pre-existing artifact deserializing as a long single-asset/pooled model.
+    side: Literal["long", "short"] = "long"
+    ticker: str | None = None
     notes: str = ""
 
 
@@ -88,19 +93,8 @@ def list_models(registry_dir: Path) -> list[ModelMetadata]:
     return sorted(metas, key=lambda m: m.created_at, reverse=True)
 
 
-def _gate_failure(meta: ModelMetadata) -> str | None:
-    """Reason a model fails its promotion gate, or ``None`` if it passes.
-
-    The gate depends on ``strategy_type``:
-    - ``long_only`` keeps the historical rule — it must beat buy & hold.
-    - ``market_neutral`` has no buy-&-hold benchmark, so it must show a positive Sharpe
-      that is statistically significant (deflated Sharpe + one-sided p-value).
-    """
-    if meta.strategy_type == "long_only":
-        if not meta.beats_buy_hold:
-            return "it does not beat buy & hold"
-        return None
-
+def _significance_failure(meta: ModelMetadata) -> str | None:
+    """Positive, statistically significant Sharpe gate (no buy-&-hold benchmark)."""
     sharpe = meta.metrics.get("sharpe", 0.0)
     dsr = meta.metrics.get("deflated_sharpe", 0.0)
     pval = meta.metrics.get("sharpe_pvalue", 1.0)
@@ -111,6 +105,23 @@ def _gate_failure(meta: ModelMetadata) -> str | None:
     if pval >= MAX_SHARPE_PVALUE:
         return f"Sharpe p-value {pval:.3f} >= {MAX_SHARPE_PVALUE}"
     return None
+
+
+def _gate_failure(meta: ModelMetadata) -> str | None:
+    """Reason a model fails its promotion gate, or ``None`` if it passes.
+
+    - ``side="short"``: a directional short has no buy-&-hold benchmark, so its bar is a
+      positive, significant Sharpe vs cash (same significance test as market-neutral).
+    - ``long_only`` (long side): the historical rule — it must beat buy & hold.
+    - ``market_neutral``: positive, significant Sharpe.
+    """
+    if meta.side == "short":
+        return _significance_failure(meta)
+    if meta.strategy_type == "long_only":
+        if not meta.beats_buy_hold:
+            return "it does not beat buy & hold"
+        return None
+    return _significance_failure(meta)
 
 
 def promote(name: str, *, registry_dir: Path, force: bool = False) -> ModelMetadata:

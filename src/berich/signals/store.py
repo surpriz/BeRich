@@ -44,11 +44,15 @@ _MIGRATIONS = (
     "ALTER TABLE signals ADD COLUMN IF NOT EXISTS ret_q90 DOUBLE",
     "ALTER TABLE signals ADD COLUMN IF NOT EXISTS sigma_horizon DOUBLE",
     "ALTER TABLE signals ADD COLUMN IF NOT EXISTS sltp_method VARCHAR DEFAULT 'atr_fixed'",
+    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS direction VARCHAR DEFAULT 'long'",
+    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS proba_long DOUBLE",
+    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS proba_short DOUBLE",
 )
 
 _INSERT_COLUMNS = (
     "date, ticker, signal, proba, entry, stop_loss, take_profit, size_shares, notional, "
-    "proba_calibrated, meta_proba, acted, ret_q10, ret_q50, ret_q90, sigma_horizon, sltp_method"
+    "proba_calibrated, meta_proba, acted, ret_q10, ret_q50, ret_q90, sigma_horizon, sltp_method, "
+    "direction, proba_long, proba_short"
 )
 
 

@@ -8,13 +8,18 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:800
 export type Signal = {
   date: string;
   ticker: string;
-  signal: "BUY" | "SELL" | "NEUTRAL";
+  // LONG/SHORT/NEUTRAL are the current strings; BUY/SELL are kept for legacy rows on disk.
+  signal: "LONG" | "SHORT" | "NEUTRAL" | "BUY" | "SELL";
   proba: number;
   entry: number;
   stop_loss: number;
   take_profit: number;
   size_shares: number;
   notional: number;
+  // Direction of the call + per-side calibrated P(win) (nullable: a side may have no model).
+  direction?: "long" | "short" | null;
+  proba_long?: number | null;
+  proba_short?: number | null;
   // Enriched advice fields (nullable for back-compat / older rows).
   proba_calibrated?: number | null;
   meta_proba?: number | null;
@@ -154,6 +159,9 @@ export type SignalExplain = {
   ticker: string;
   date: string;
   proba: number;
+  direction?: "long" | "short" | null;
+  proba_long?: number | null;
+  proba_short?: number | null;
   base_value: number;
   top_features: { feature: string; contribution: number }[];
   recent_news: {

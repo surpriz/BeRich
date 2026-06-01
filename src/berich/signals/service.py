@@ -1,10 +1,12 @@
 """Generate today's swing-trade advice for the watchlist.
 
-The model is trained on all labeled history, then applied to each ticker's most
-recent (fully-formed, causal) feature row to estimate P(win). The probability is
-turned into a BUY / NEUTRAL / SELL call, and for BUY calls an ATR stop / target and
-a risk-based position size are attached. This is the "conseil" surface: where to
-enter, where the stop goes, and how big the position should be.
+Per ticker we serve up to two uniquely-trained models — a LONG model (P the upper
+barrier is hit first) and, when one has been promoted, a SHORT model (P the mirrored
+lower barrier is hit first). The two calibrated probabilities are turned into a
+LONG / SHORT / NEUTRAL call by best expectancy, and for an actionable call an ATR
+stop / target (mirrored for shorts) and a risk-based position size are attached.
+This is the "conseil" surface: which side, where to enter, where the stop goes, and
+how big the position should be.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pandas as pd
@@ -43,9 +45,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-BUY = "BUY"
-SELL = "SELL"
+# Directional decisions emitted to the dashboard / paper book.
+LONG = "LONG"
+SHORT = "SHORT"
 NEUTRAL = "NEUTRAL"
+# Legacy aliases: the long-only path historically emitted "BUY"/"SELL". `BUY` now maps
+# to LONG so old consumers (and stored rows) keep working; `_classify` below is the
+# legacy long-only classifier still used by tests. `SELL` stays a distinct constant.
+BUY = LONG
+SELL = "SELL"
+# Signal strings that open a long position (new LONG + legacy BUY rows on disk).
+LONG_SIGNALS: frozenset[str] = frozenset({LONG, "BUY"})
 
 
 @dataclass
@@ -61,6 +71,11 @@ class Signal:
     take_profit: float
     size_shares: int
     notional: float
+    # Direction of the call ("long" | "short"); NEUTRAL rows default to "long".
+    direction: str = "long"
+    # Per-side calibrated P(win): both populated when both models exist, else one/None.
+    proba_long: float | None = None
+    proba_short: float | None = None
     # Enriched advice fields (optional; default to neutral/None for back-compat).
     proba_calibrated: float | None = None
     meta_proba: float | None = None
@@ -80,6 +95,7 @@ class Signal:
 
 
 def _classify(proba: float, config: Config) -> str:
+    """Legacy long-only classifier (kept for back-compat / tests)."""
     if proba >= config.signals.buy_threshold:
         return BUY
     if proba <= config.signals.sell_threshold:
@@ -87,9 +103,41 @@ def _classify(proba: float, config: Config) -> str:
     return NEUTRAL
 
 
+def _decide(
+    p_long: float | None, p_short: float | None, config: Config
+) -> tuple[str, Literal["long", "short"]]:
+    """Pick LONG / SHORT / NEUTRAL from the two calibrated win probabilities.
+
+    Returns ``(signal, direction)``. With symmetric 2:1 barriers on both sides the
+    expectancy ordering equals the probability ordering, so comparing probabilities is
+    the expectancy comparison. ``None`` means that side has no eligible model.
+    """
+    sig = config.signals
+    long_ok = (
+        p_long is not None
+        and p_long >= sig.buy_threshold
+        and (p_short is None or p_long >= p_short)  # tie favors long (deterministic)
+    )
+    short_ok = (
+        sig.enable_short
+        and p_short is not None
+        and p_short >= sig.short_threshold
+        and (p_long is None or p_short > p_long)
+    )
+    if long_ok:
+        return LONG, "long"
+    if short_ok:
+        return SHORT, "short"
+    return NEUTRAL, "long"
+
+
 def _size_position(entry: float, stop: float, config: Config) -> tuple[int, float]:
-    """Risk-based sizing: risk at most ``risk_pct`` of capital to the stop."""
-    stop_distance = entry - stop
+    """Risk-based sizing: risk at most ``risk_pct`` of capital to the stop.
+
+    Uses the absolute entry-to-stop distance so it works for both longs (stop below
+    entry) and shorts (stop above entry).
+    """
+    stop_distance = abs(entry - stop)
     if stop_distance <= 0:
         return 0, 0.0
     risk_amount = config.signals.capital * config.signals.risk_pct
@@ -186,6 +234,23 @@ def _load_calibrator(config: Config) -> ProbaCalibrator | None:
     return load_calibrator(config.models_dir / active[1].name)
 
 
+def _ticker_side_model(
+    config: Config, ticker: str, side: str
+) -> tuple[Model, list[str], ProbaCalibrator | None] | None:
+    """Per-ticker promoted model for one side, with its feature columns + calibrator.
+
+    Returns ``None`` when this ticker has no promoted model for ``side`` (advisory-only
+    or not yet trained) — the caller then falls back (long) or skips the side (short).
+    """
+    registry_dir = config.model_dir_for_ticker(ticker, side)
+    active = load_active(registry_dir)
+    if active is None:
+        return None
+    model, meta = active
+    cal = load_calibrator(registry_dir / meta.name)
+    return model, list(meta.feature_columns), cal
+
+
 def _load_meta_labeler(config: Config) -> Model | None:
     """Load the promoted meta-labeling model from the ``meta/`` namespace, if enabled."""
     if not config.signals.use_meta_label:
@@ -197,26 +262,36 @@ def _load_meta_labeler(config: Config) -> Model | None:
 def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
     """Serve the promoted (or freshly trained) model and emit one signal per ticker."""
     label_cfg = LabelConfig(**config.labeling.model_dump())
-    model, feat_cols = _resolve_model(store, config, label_cfg)
-    with_earnings = _needs_earnings(feat_cols)
-    with_news = _needs_news(feat_cols)
-    market = store.load(MARKET_TICKER)
-    earnings_store = _earnings_store_if_available(config) if with_earnings else None
-    news_store = _news_store_if_available(config) if with_news else None
-    calibrator = _load_calibrator(config)
+    global_model, global_cols = _resolve_model(store, config, label_cfg)
+    global_cal = _load_calibrator(config)
     meta_model = _load_meta_labeler(config)
+    market = store.load(MARKET_TICKER)
+    earnings_store = _earnings_store_if_available(config)
+    news_store = _news_store_if_available(config)
 
     signals: list[Signal] = []
     for ticker in config.watchlist:
         df = store.load(ticker)
         if df is None or df.empty:
             continue
-        earnings_df = earnings_store.load(ticker) if earnings_store is not None else None
-        news_df = news_store.load(ticker) if news_store is not None else None
+        # Long side: this ticker's own promoted model if it has one, else the global fallback.
+        per_long = _ticker_side_model(config, ticker, "long")
+        long_model, long_cols, long_cal = per_long or (global_model, global_cols, global_cal)
+        # Short side: per-ticker only — absent => the ticker is never shorted.
+        per_short = _ticker_side_model(config, ticker, "short")
+        short_model, short_cols, short_cal = per_short or (None, None, None)
+
+        all_cols = [*long_cols, *(short_cols or [])]
+        with_earnings = _needs_earnings(all_cols)
+        with_news = _needs_news(all_cols)
+        earnings_df = (
+            earnings_store.load(ticker) if (with_earnings and earnings_store is not None) else None
+        )
+        news_df = news_store.load(ticker) if (with_news and news_store is not None) else None
         signal = _signal_for_ticker(
             ticker,
             df,
-            model,
+            long_model,
             config,
             label_cfg,
             market=market,
@@ -224,9 +299,12 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
             news=news_df,
             with_earnings=with_earnings,
             with_news=with_news,
-            feature_cols=feat_cols,
-            calibrator=calibrator,
+            feature_cols=long_cols,
+            calibrator=long_cal,
             meta_model=meta_model,
+            short_model=short_model,
+            short_feature_cols=short_cols,
+            short_calibrator=short_cal,
         )
         if signal is not None:
             signals.append(signal)
@@ -281,7 +359,7 @@ def generate_multi_asset_signals(config: Config, store: OhlcvStore) -> list[Sign
     return out
 
 
-def _signal_for_ticker(
+def _signal_for_ticker(  # noqa: C901, PLR0915
     ticker: str,
     df: pd.DataFrame,
     model: Model,
@@ -296,6 +374,9 @@ def _signal_for_ticker(
     feature_cols: list[str] | None = None,
     calibrator: ProbaCalibrator | None = None,
     meta_model: Model | None = None,
+    short_model: Model | None = None,
+    short_feature_cols: list[str] | None = None,
+    short_calibrator: ProbaCalibrator | None = None,
 ) -> Signal | None:
     # When a feature family is on we always pass an (optionally empty) frame so the
     # column shape stays consistent across tickers — empty frames get the neutral
@@ -306,28 +387,40 @@ def _signal_for_ticker(
     news_arg = news if with_news else None
     if with_news and news_arg is None:
         news_arg = pd.DataFrame()
-    with_micro = feature_cols is not None and _needs_micro(feature_cols)
+    with_micro = _needs_micro(feature_cols or []) or _needs_micro(short_feature_cols or [])
     feats = build_features(
         df, market=market, earnings=earnings_arg, news=news_arg, micro=with_micro
     ).dropna()
     if feats.empty:
         return None
     last_date = feats.index[-1]
-    cols = (
+    long_cols = (
         feature_cols
         if feature_cols is not None
         else feature_columns(earnings=with_earnings, news=with_news)
     )
-    x = feats.loc[[last_date], cols]
-    raw_proba = float(model.predict_proba(x)[0])
-    # Calibrated proba (if a calibrator was fit) drives the decision + sizing.
-    proba_cal = float(calibrator.transform(np.array([raw_proba]))[0]) if calibrator else None
-    eff_proba = proba_cal if proba_cal is not None else raw_proba
+    x = feats.loc[[last_date], long_cols]
+    raw_long = float(model.predict_proba(x)[0])
+    p_long = float(calibrator.transform(np.array([raw_long]))[0]) if calibrator else raw_long
+
+    raw_short: float | None = None
+    p_short: float | None = None
+    if short_model is not None:
+        scols = short_feature_cols or long_cols
+        xs = feats.loc[[last_date], scols]
+        raw_short = float(short_model.predict_proba(xs)[0])
+        p_short = (
+            float(short_calibrator.transform(np.array([raw_short]))[0])
+            if short_calibrator
+            else raw_short
+        )
 
     a = float(atr(df["high"], df["low"], df["close"], label_cfg.atr_window).loc[last_date])
     entry = float(df["close"].loc[last_date])
     if np.isnan(a):
         return None
+
+    decision, direction = _decide(p_long, p_short, config)
 
     q10 = q50 = q90 = None
     sigma_h: float | None = None
@@ -339,45 +432,62 @@ def _signal_for_ticker(
         )
         sigma_h = vf.horizon_sigma
         quantiles = None
-        predict_quantiles = getattr(model, "predict_quantiles", None)
-        if predict_quantiles is not None:
-            q = np.asarray(predict_quantiles(x))[0]
-            q10, q90 = float(q[0]), float(q[-1])
-            q50 = float(q[len(q) // 2])
-            quantiles = (q10, q90)
-        stop, target, rationale = adaptive_barriers(entry, a, vf, label_cfg, quantiles=quantiles)
+        # Quantile barriers only for the long side (the long model exposes them); the short
+        # branch mirrors the ATR/vol barriers about entry instead.
+        if direction == "long":
+            predict_quantiles = getattr(model, "predict_quantiles", None)
+            if predict_quantiles is not None:
+                q = np.asarray(predict_quantiles(x))[0]
+                q10, q90 = float(q[0]), float(q[-1])
+                q50 = float(q[len(q) // 2])
+                quantiles = (q10, q90)
+        stop, target, rationale = adaptive_barriers(
+            entry, a, vf, label_cfg, quantiles=quantiles, direction=direction
+        )
         sltp_method = str(rationale["method"])
+    elif direction == "short":
+        stop = entry + label_cfg.stop_loss_atr * a
+        target = entry - label_cfg.take_profit_atr * a
+        sltp_method = "atr_fixed"
     else:
         stop = entry - label_cfg.stop_loss_atr * a
         target = entry + label_cfg.take_profit_atr * a
         sltp_method = "atr_fixed"
 
-    decision = _classify(eff_proba, config)
-
-    # Meta-labeling precision filter: veto a BUY whose meta P(correct) is too low.
+    # Meta-labeling precision filter: veto a LONG whose meta P(correct) is too low.
+    # Shorts have no meta model, so they are never vetoed here.
     meta_proba: float | None = None
     acted = True
-    if meta_model is not None and decision == BUY:
+    if meta_model is not None and decision == LONG:
         meta_x = x.copy()
-        meta_x[PRIMARY_PROBA_COL] = eff_proba
+        meta_x[PRIMARY_PROBA_COL] = p_long
         meta_proba = float(meta_model.predict_proba(meta_x)[0])
         if meta_proba < config.signals.meta_threshold:
             acted = False
             decision = NEUTRAL
+            direction = "long"
 
-    shares, notional = _size_position(entry, stop, config) if decision == BUY else (0, 0.0)
+    shares, notional = _size_position(entry, stop, config) if decision != NEUTRAL else (0, 0.0)
+
+    # Headline proba fields reflect the acted side.
+    acted_raw = raw_short if decision == SHORT and raw_short is not None else raw_long
+    acted_cal = p_short if decision == SHORT and p_short is not None else p_long
+    acted_used_cal = (short_calibrator if decision == SHORT else calibrator) is not None
 
     return Signal(
         date=last_date,
         ticker=ticker,
         signal=decision,
-        proba=round(raw_proba, 4),
+        proba=round(acted_raw, 4),
         entry=round(entry, 2),
         stop_loss=round(stop, 2),
         take_profit=round(target, 2),
         size_shares=shares,
         notional=round(notional, 2),
-        proba_calibrated=None if proba_cal is None else round(proba_cal, 4),
+        direction=direction,
+        proba_long=round(p_long, 4),
+        proba_short=None if p_short is None else round(p_short, 4),
+        proba_calibrated=round(acted_cal, 4) if acted_used_cal else None,
         meta_proba=None if meta_proba is None else round(meta_proba, 4),
         acted=acted,
         ret_q10=None if q10 is None else round(q10, 4),
@@ -442,6 +552,12 @@ def explain_signal(
     x = feats.loc[[last_date], cols]
     proba = float(model.predict_proba(x)[0])
 
+    # Per-side calibrated win probabilities + the resulting direction, mirroring the live
+    # signal service. Best-effort: a per-ticker long model overrides the global one for the
+    # long proba; the short side is per-ticker-only (absent => never shorted). All branches
+    # are null-guarded so the explain endpoint never fails on a missing side model.
+    direction, p_long, p_short = _explain_directional(ticker, feats, last_date, config, model, cols)
+
     contribs = model.feature_contributions(x)[0]
     # LightGBM tags ``pred_contrib`` with one extra column at the end for the
     # base value (the bias of the booster). Split it off before ranking.
@@ -477,7 +593,51 @@ def explain_signal(
         "ticker": ticker.upper(),
         "date": pd.Timestamp(last_date).date().isoformat(),  # ty: ignore[unresolved-attribute]
         "proba": round(proba, 4),
+        "direction": direction,
+        "proba_long": None if p_long is None else round(p_long, 4),
+        "proba_short": None if p_short is None else round(p_short, 4),
         "base_value": base_value,
         "top_features": [{"feature": name, "contribution": float(value)} for name, value in ranked],
         "recent_news": recent_news,
     }
+
+
+def _explain_directional(
+    ticker: str,
+    feats: pd.DataFrame,
+    last_date: pd.Timestamp,
+    config: Config,
+    global_model: Model,
+    global_cols: list[str],
+) -> tuple[str, float | None, float | None]:
+    """Compute ``(direction, proba_long, proba_short)`` for the explain payload.
+
+    Uses the same per-ticker side models as :func:`generate_signals`. Best-effort and fully
+    null-guarded: any missing side model simply yields ``None`` for that side.
+    """
+    per_long = _ticker_side_model(config, ticker, "long")
+    long_model, long_cols, long_cal = per_long or (global_model, global_cols, None)
+    try:
+        xl = feats.loc[[last_date], long_cols]
+        raw_long = float(long_model.predict_proba(xl)[0])
+        p_long: float | None = (
+            float(long_cal.transform(np.array([raw_long]))[0]) if long_cal else raw_long
+        )
+    except (KeyError, ValueError):
+        p_long = None
+
+    p_short: float | None = None
+    per_short = _ticker_side_model(config, ticker, "short")
+    if per_short is not None:
+        short_model, short_cols, short_cal = per_short
+        try:
+            xs = feats.loc[[last_date], short_cols]
+            raw_short = float(short_model.predict_proba(xs)[0])
+            p_short = (
+                float(short_cal.transform(np.array([raw_short]))[0]) if short_cal else raw_short
+            )
+        except (KeyError, ValueError):
+            p_short = None
+
+    _, direction = _decide(p_long, p_short, config)
+    return direction, p_long, p_short

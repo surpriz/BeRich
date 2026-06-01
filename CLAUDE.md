@@ -55,13 +55,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
   ## CLI surface
 
-  `berich data | news | backtest | signals | drift | pead | paper | train | models | serve | schedule`
+  `berich data | news | backtest | signals | longshort | drift | pead | paper | train | hpo | models | serve | schedule`
   (defined in `src/berich/cli.py`). The `train` command runs the walk-forward OOS,
   fits a final model on all labeled history, saves it to `data/models/<name>/`, and
-  tries to promote it through the guard. `news` runs the Alpha Vantage fetch +
-  FinBERT GPU scoring pipeline; `pead` runs the event-driven Post-Earnings Drift
-  model; `paper` drives the paper-trading book. The CLI uses lazy imports inside
-  subcommands to keep startup fast (hence the `PLC0415` ruff ignore).
+  tries to promote it through the guard. As of Phase 12 `train` also drives the
+  **per-asset tournament**: `berich train --ticker AAPL --side long|short --tournament`
+  trains LightGBM/LSTM/PatchTST/TFT for one asset+side and keeps the walk-forward winner
+  under `data/models/tickers/<TICKER>/<side>/`; `--all-tickers` sweeps every configured
+  asset. `berich hpo --ticker ... --model ... --side ... --trials N` runs a per-asset
+  Optuna study (params + feature-group toggles, incl. news/FinBERT). `news` runs the
+  Alpha Vantage fetch + FinBERT GPU scoring pipeline; `pead` runs the event-driven
+  Post-Earnings Drift model; `paper` drives the paper-trading book. The CLI uses lazy
+  imports inside subcommands to keep startup fast (hence the `PLC0415` ruff ignore).
 
   ## Common commands
 
@@ -87,6 +92,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   the closest to a usable signal but still does not clear the benchmark once blended.
   The guard rule (`promote()`) refuses every variant; the dashboard surfaces an
   "advisory only" banner. This is shipped on purpose.
+
+  **Phase 12 — per-asset tournament + directional shorts (architecture, not an edge
+  claim).** Training/HPO moved from per-class to **per-asset**: each configured asset
+  (US/FR/forex/crypto/commodities) gets its own Optuna studies per `(ticker, model,
+  side)` and a tournament (`training/tournament.py`) that keeps the walk-forward winner
+  among LightGBM/LSTM/PatchTST/TFT. The label + backtest are now direction-aware, so each
+  asset can carry a **long and a short model**; the signal service emits LONG/SHORT/NEUTRAL
+  with mirrored TP/SL. The per-asset guard is unchanged in spirit — long beats that
+  asset's buy & hold OOS; short needs a positive, significant Sharpe vs cash — and assets
+  that fail stay advisory-only (served via the existing fallback behind the experimental
+  banner). Given ~400 labeled windows/asset, expect many assets to remain advisory-only;
+  that is the honest outcome, not a bug. Scheduler: `ticker_initial_sweep_job` (Sat 14:00,
+  deep, GPU pool) + `ticker_nightly_refresh_job` (23:30, light) replace the old per-class
+  nightly retrains. See `docs/RESULTS.md` "Phase 12" for the full framing.
 
   ## Exploration history & guardrails (read `docs/RESULTS.md` first)
 

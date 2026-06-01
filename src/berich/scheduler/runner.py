@@ -18,8 +18,8 @@ from berich.scheduler.jobs import (
     longshort_signals_job,
     nightly_hpo_job,
     refresh_universe_job,
-    retrain_asset_models_job,
-    retrain_zoo_job,
+    ticker_initial_sweep_job,
+    ticker_nightly_refresh_job,
     weekend_hpo_job,
 )
 
@@ -64,25 +64,15 @@ def build_scheduler(config: Config) -> BlockingScheduler:
         max_instances=1,
         coalesce=True,
     )
-    # Nightly zoo retrain at 23:30 Paris on weekdays — after daily_paper (22:30) has
-    # refreshed OHLCV, so candidates train on fresh data. max_instances/coalesce keep a
-    # long run from stacking; the guard rule still gates any promotion.
+    # Per-ticker nightly refresh at 23:30 Paris on weekdays — after daily_paper (22:30) has
+    # refreshed OHLCV, so the light HPO top-up + re-tournament run on fresh data. Only tickers
+    # that already have a promoted model are touched; the guard rule still gates any promotion.
+    # max_instances/coalesce keep a long run from stacking.
     scheduler.add_job(
-        retrain_zoo_job,
+        ticker_nightly_refresh_job,
         CronTrigger(day_of_week="mon-fri", hour=23, minute=30, timezone="Europe/Paris"),
         args=[config],
-        id="retrain_zoo",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-    # Dedicated per-asset-class models retrained at 23:35 Paris weekdays — after the wider
-    # universe refresh (22:45), alongside the US zoo retrain.
-    scheduler.add_job(
-        retrain_asset_models_job,
-        CronTrigger(day_of_week="mon-fri", hour=23, minute=35, timezone="Europe/Paris"),
-        args=[config],
-        id="retrain_asset_models",
+        id="ticker_nightly_refresh",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
@@ -112,6 +102,18 @@ def build_scheduler(config: Config) -> BlockingScheduler:
         CronTrigger(day_of_week="sat", hour=12, minute=0, timezone="Europe/Paris"),
         args=[config],
         id="weekend_hpo",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # Heavy per-ticker cold-start sweep, Saturday 14:00 Paris — after the weekend HPO (12:00).
+    # Full per-ticker HPO + tournament for every tradeable ticker x side; this is the cold
+    # start the weekday nightly_refresh later tops up.
+    scheduler.add_job(
+        ticker_initial_sweep_job,
+        CronTrigger(day_of_week="sat", hour=14, minute=0, timezone="Europe/Paris"),
+        args=[config],
+        id="ticker_initial_sweep",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

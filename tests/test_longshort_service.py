@@ -18,8 +18,13 @@ def _ohlcv(seed: int, n: int = 220) -> pd.DataFrame:
     idx = pd.bdate_range("2019-01-01", periods=n)
     close = 100 * np.exp(np.cumsum(rng.normal(0.0005, 0.02, n)))
     return pd.DataFrame(
-        {"open": close, "high": close * 1.01, "low": close * 0.99, "close": close,
-         "volume": rng.integers(1e6, 5e6, n).astype(float)},
+        {
+            "open": close,
+            "high": close * 1.01,
+            "low": close * 0.99,
+            "close": close,
+            "volume": rng.integers(1e6, 5e6, n).astype(float),
+        },
         index=idx,
     )
 

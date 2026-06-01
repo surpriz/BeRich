@@ -66,8 +66,12 @@ def train_asset_class_model(
     promote(final_name, registry_dir=registry_dir, force=True)  # advisory — UI flags experimental
     logger.info(
         "trained %s model '%s': AUC=%.4f Sharpe=%.3f vs class B&H %.3f (beats_bh=%s)",
-        asset_class, final_name, oof.auc, result.strategy.sharpe,
-        result.benchmark.sharpe, result.beats_buy_hold,
+        asset_class,
+        final_name,
+        oof.auc,
+        result.strategy.sharpe,
+        result.benchmark.sharpe,
+        result.beats_buy_hold,
     )
     return {
         "asset_class": asset_class,

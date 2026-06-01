@@ -30,6 +30,16 @@ function classify(ticker: string, u: Universes | undefined): AssetClass | "unkno
   return "unknown";
 }
 
+function Stat({ label, value, tone }: { label: string; value: string; tone?: "bull" | "bear" }) {
+  const color = tone === "bull" ? "text-[var(--color-bull)]" : tone === "bear" ? "text-[var(--color-bear)]" : "";
+  return (
+    <div className="card px-4 py-3">
+      <div className="text-[11px] uppercase tracking-widest text-[var(--color-faint)]">{label}</div>
+      <div className={`tabular mt-1 text-lg ${color}`}>{value}</div>
+    </div>
+  );
+}
+
 export default function TickerPage({ params }: { params: Promise<{ ticker: string }> }) {
   const { ticker: raw } = use(params);
   const ticker = raw.toUpperCase();
@@ -90,7 +100,22 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
             {latest && (
               <>
                 <SignalBadge signal={latest.signal} />
+                {latest.direction && (
+                  <span className="text-xs uppercase tracking-widest">
+                    {latest.direction === "short" ? t("directionShort") : t("directionLong")}
+                  </span>
+                )}
                 <span className="tabular">P(win) {latest.proba.toFixed(3)}</span>
+                {latest.proba_long != null && (
+                  <span className="tabular text-[var(--color-bull)]/80">
+                    {t("probaLong")} {latest.proba_long.toFixed(3)}
+                  </span>
+                )}
+                {latest.proba_short != null && (
+                  <span className="tabular text-[var(--color-bear)]/80">
+                    {t("probaShort")} {latest.proba_short.toFixed(3)}
+                  </span>
+                )}
               </>
             )}
           </div>
@@ -104,6 +129,15 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
           </div>
         )}
       </header>
+
+      {latest && (latest.signal === "LONG" || latest.signal === "SHORT" || latest.signal === "BUY") && (
+        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label={latest.direction === "short" ? t("shortEntry") : t("col.entry")} value={latest.entry.toFixed(2)} />
+          <Stat label={latest.direction === "short" ? t("shortStop") : t("col.stop")} value={latest.stop_loss.toFixed(2)} tone="bear" />
+          <Stat label={latest.direction === "short" ? t("shortTarget") : t("col.target")} value={latest.take_profit.toFixed(2)} tone="bull" />
+          <Stat label={t("size")} value={`${latest.size_shares}`} />
+        </div>
+      )}
 
       {klass !== "us_stocks" && klass !== "unknown" && (
         <div className="mb-6 rounded-lg border border-[var(--color-neutral)]/30 bg-[var(--color-neutral)]/[0.06] px-4 py-3 text-sm text-[var(--color-neutral)]">
@@ -224,6 +258,7 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
               <tr className="border-b border-[var(--color-line)] text-left text-xs uppercase tracking-widest text-[var(--color-faint)]">
                 <th className="px-2 py-2 font-medium">{t("col.date")}</th>
                 <th className="px-2 py-2 font-medium">{t("col.signal")}</th>
+                <th className="px-2 py-2 font-medium">{t("direction")}</th>
                 <th className="px-2 py-2 font-medium">P(win)</th>
                 <th className="px-2 py-2 text-right font-medium">{t("col.entry")}</th>
                 <th className="px-2 py-2 text-right font-medium">{t("col.stop")}</th>
@@ -239,6 +274,13 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
                   <td className="tabular px-2 py-2">{s.date}</td>
                   <td className="px-2 py-2">
                     <SignalBadge signal={s.signal} />
+                  </td>
+                  <td className="px-2 py-2 text-xs text-[var(--color-muted)]">
+                    {s.direction === "short"
+                      ? t("directionShort")
+                      : s.direction === "long"
+                        ? t("directionLong")
+                        : "—"}
                   </td>
                   <td className="tabular px-2 py-2">{s.proba.toFixed(3)}</td>
                   <td className="tabular px-2 py-2 text-right">{s.entry.toFixed(2)}</td>

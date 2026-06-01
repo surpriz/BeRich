@@ -15,6 +15,8 @@ import logging
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
+import pandas as pd
+
 from berich.backtest import BacktestConfig, run_backtest
 from berich.data.store import OhlcvStore
 from berich.datasets import build_dataset
@@ -69,20 +71,36 @@ SUPPORTED_MODELS = ("lgbm", "lstm", "patchtst", "tft")
 
 
 def _factory_from_trial(
-    model_name: str, trial: optuna.Trial, *, device: str | None
+    model_name: str, trial: optuna.Trial, *, device: str | None, regularized: bool = False
 ) -> Callable[[], Model]:
-    """Build a zero-arg model factory from a trial's suggested hyperparameters."""
+    """Build a zero-arg model factory from a trial's suggested hyperparameters.
+
+    ``regularized`` tightens the priors for the small per-ticker datasets (a few hundred
+    labeled windows): stronger LGBM shrinkage/leaf-size, a dropout floor and an epoch cap on
+    the deep models. The pooled US-zoo path leaves it ``False`` so its search space is intact.
+    """
     if model_name == "lgbm":
         from berich.models import LGBMModel  # noqa: PLC0415
 
-        params = {
-            "n_estimators": trial.suggest_int("n_estimators", 100, 600, step=50),
-            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
-            "num_leaves": trial.suggest_int("num_leaves", 15, 63),
-            "min_child_samples": trial.suggest_int("min_child_samples", 20, 120),
-            "reg_lambda": trial.suggest_float("reg_lambda", 0.0, 5.0),
-        }
+        if regularized:
+            params = {
+                "n_estimators": trial.suggest_int("n_estimators", 100, 400, step=50),
+                "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
+                "num_leaves": trial.suggest_int("num_leaves", 7, 31),
+                "min_child_samples": trial.suggest_int("min_child_samples", 40, 200),
+                "reg_lambda": trial.suggest_float("reg_lambda", 1.0, 10.0),
+            }
+        else:
+            params = {
+                "n_estimators": trial.suggest_int("n_estimators", 100, 600, step=50),
+                "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
+                "num_leaves": trial.suggest_int("num_leaves", 15, 63),
+                "min_child_samples": trial.suggest_int("min_child_samples", 20, 120),
+                "reg_lambda": trial.suggest_float("reg_lambda", 0.0, 5.0),
+            }
         return lambda: LGBMModel(**params)
+    dropout_low = 0.1 if regularized else 0.0
+    epochs_high = 40 if regularized else 60
     if model_name == "lstm":
         from berich.models import LSTMConfig, LSTMModel  # noqa: PLC0415
 
@@ -90,9 +108,9 @@ def _factory_from_trial(
             lookback=trial.suggest_int("lookback", 20, 80, step=10),
             hidden=trial.suggest_categorical("hidden", [32, 64, 128, 256]),
             num_layers=trial.suggest_int("num_layers", 1, 3),
-            dropout=trial.suggest_float("dropout", 0.0, 0.4),
+            dropout=trial.suggest_float("dropout", dropout_low, 0.4),
             lr=trial.suggest_float("lr", 1e-4, 3e-3, log=True),
-            epochs=trial.suggest_int("epochs", 20, 60, step=10),
+            epochs=trial.suggest_int("epochs", 20, epochs_high, step=10),
             device=device,
         )
         return lambda: LSTMModel(cfg)
@@ -106,9 +124,9 @@ def _factory_from_trial(
             d_model=trial.suggest_categorical("d_model", [32, 64, 128]),
             n_heads=trial.suggest_categorical("n_heads", [2, 4, 8]),
             num_layers=trial.suggest_int("num_layers", 1, 4),
-            dropout=trial.suggest_float("dropout", 0.0, 0.4),
+            dropout=trial.suggest_float("dropout", dropout_low, 0.4),
             lr=trial.suggest_float("lr", 1e-4, 3e-3, log=True),
-            epochs=trial.suggest_int("epochs", 20, 60, step=10),
+            epochs=trial.suggest_int("epochs", 20, epochs_high, step=10),
             device=device,
         )
         return lambda: PatchTSTModel(cfg)
@@ -120,9 +138,9 @@ def _factory_from_trial(
             d_model=trial.suggest_categorical("d_model", [32, 64, 128]),
             n_heads=trial.suggest_categorical("n_heads", [2, 4, 8]),
             num_layers=trial.suggest_int("num_layers", 1, 2),
-            dropout=trial.suggest_float("dropout", 0.0, 0.4),
+            dropout=trial.suggest_float("dropout", dropout_low, 0.4),
             lr=trial.suggest_float("lr", 1e-4, 3e-3, log=True),
-            epochs=trial.suggest_int("epochs", 20, 60, step=10),
+            epochs=trial.suggest_int("epochs", 20, epochs_high, step=10),
             device=device,
         )
         return lambda: TFTModel(cfg)
@@ -140,6 +158,8 @@ def objective_for(
     entry_threshold: float = 0.5,
     search_features: bool = True,
     metric: str = "auc",
+    direction: str = "long",
+    regularized: bool = False,
 ) -> Callable[[optuna.Trial], float]:
     """Return an Optuna objective.
 
@@ -147,6 +167,9 @@ def objective_for(
     metric, robust to the selection bias that chasing the best-of-N backtest Sharpe induces.
     ``metric="sharpe"`` keeps the old (selection-prone) objective. When ``search_features`` is
     set, the trial also toggles feature families on/off, optimizing the feature set jointly.
+    ``direction`` is threaded into the inner backtest (``"short"`` for per-ticker short
+    studies); ``regularized`` tightens the model priors for small per-ticker datasets. Both
+    default to the pooled-path behavior so existing callers are unchanged.
     """
 
     def objective(trial: optuna.Trial) -> float:
@@ -157,7 +180,9 @@ def objective_for(
                 return 0.0  # degenerate empty feature set
             ds = replace(dataset, x=dataset.x[cols])
             trial.set_user_attr("features", cols)
-        factory: Callable[[], Model] = _factory_from_trial(model_name, trial, device=device)
+        factory: Callable[[], Model] = _factory_from_trial(
+            model_name, trial, device=device, regularized=regularized
+        )
         oof = oof_predict(ds, factory, embargo=label_cfg.horizon_days)
         bt = run_backtest(
             prices,
@@ -168,6 +193,7 @@ def objective_for(
                 atr_window=label_cfg.atr_window,
                 take_profit_atr=label_cfg.take_profit_atr,
                 stop_loss_atr=label_cfg.stop_loss_atr,
+                direction=direction,
             ),
         )
         trial.set_user_attr("oos_auc", oof.auc)
@@ -375,6 +401,155 @@ def best_params_for(
     return {k: v for k, v in best.items() if not k.startswith("feat_")}
 
 
+# ---------------------------------------------------------------------------
+# Per-ticker HPO (each asset optimized uniquely, per side). Separate study per
+# ticker x model x side x metric; tighter priors via the ``regularized`` factory.
+# ---------------------------------------------------------------------------
+
+
+def ticker_study_name(ticker: str, model_name: str, side: str, metric: str = "auc") -> str:
+    """Optuna study name for one per-ticker search (slugged so the RDB key is path-safe)."""
+    from berich.config import safe_ticker_slug  # noqa: PLC0415
+
+    return f"berich-hpo-{safe_ticker_slug(ticker)}-{model_name}-{side}-{metric}"
+
+
+def _ticker_dataset(
+    config: Config,
+    ticker: str,
+    side: str,
+    *,
+    micro: bool = True,
+    with_news: bool = True,
+    with_earnings: bool = True,
+) -> tuple[SupervisedDataset, dict]:
+    """Build a single-ticker supervised dataset (direction-aware) + its prices dict.
+
+    News/earnings columns are included only when their caches actually hold data, so the
+    feature search can toggle them; ``side`` flips the triple-barrier into short mode.
+    """
+    from berich.data.earnings import EarningsStore  # noqa: PLC0415
+    from berich.data.news import NewsStore  # noqa: PLC0415
+    from berich.datasets.assemble import build_ticker_dataset  # noqa: PLC0415
+    from berich.features.build import market_reference_for  # noqa: PLC0415
+
+    store = OhlcvStore(config.ohlcv_dir)
+    df = store.load(ticker)
+    if df is None or df.empty:
+        msg = f"no cached OHLCV for ticker '{ticker}'"
+        raise ValueError(msg)
+    market = store.load(market_reference_for(config.asset_class_for(ticker)))
+
+    earnings = None
+    if with_earnings:
+        es = EarningsStore(config.earnings_dir)
+        if es.has_any_data():
+            loaded = es.load(ticker)
+            earnings = loaded if loaded is not None else pd.DataFrame()
+    news = None
+    if with_news:
+        ns = NewsStore(config.news_dir)
+        if ns.has_any_data():
+            loaded = ns.load(ticker)
+            news = loaded if loaded is not None else pd.DataFrame()
+
+    label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(update={"direction": side})
+    dataset = build_ticker_dataset(
+        df,
+        label_cfg,
+        ticker=ticker,
+        market=market,
+        earnings=earnings,
+        news=news,
+        micro=micro,
+    )
+    return dataset, {ticker: df}
+
+
+def run_ticker_hpo(
+    config: Config,
+    ticker: str,
+    model_name: str,
+    side: str = "long",
+    *,
+    n_trials: int | None = None,
+    device: str | None = None,
+    metric: str = "auc",
+) -> optuna.Study:
+    """Run an Optuna study for one ticker x model x side, sharing the project SQLite RDB.
+
+    The objective is the direction-aware OOS AUC (default) with the regularized priors and a
+    joint feature search. A per-study SQLite ``connect_args`` timeout lets concurrent GPU
+    workers write the same RDB without locking out.
+    """
+    import optuna  # noqa: PLC0415
+
+    label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(update={"direction": side})
+    dataset, prices = _ticker_dataset(config, ticker, side)
+    objective = objective_for(
+        model_name,
+        dataset,
+        label_cfg,
+        prices,
+        device=device,
+        entry_threshold=config.signals.buy_threshold,
+        search_features=True,
+        metric=metric,
+        direction=side,
+        regularized=True,
+    )
+
+    config.optuna_db.parent.mkdir(parents=True, exist_ok=True)
+    storage = optuna.storages.RDBStorage(
+        url=f"sqlite:///{config.optuna_db}",
+        engine_kwargs={"connect_args": {"timeout": 60}},
+    )
+    study = optuna.create_study(
+        direction="maximize",
+        storage=storage,
+        study_name=ticker_study_name(ticker, model_name, side, metric),
+        load_if_exists=True,
+    )
+    trials = n_trials if n_trials is not None else config.zoo.ticker_initial_hpo_trials
+    study.optimize(objective, n_trials=trials)
+    logger.info(
+        "per-ticker HPO %s/%s/%s best %s=%.4f",
+        ticker,
+        model_name,
+        side,
+        metric,
+        study.best_value,
+    )
+    return study
+
+
+def best_for_ticker(
+    config: Config, ticker: str, model_name: str, side: str = "long", metric: str = "auc"
+) -> tuple[dict, list[str] | None]:
+    """Best (params, selected-features) for one ticker x model x side from its HPO study.
+
+    Params drop the ``feat_*`` toggle keys; features come from the best trial's user-attr.
+    Returns ``({}, None)`` when the study is missing so the tournament falls back to default
+    params and the full feature set.
+    """
+    import optuna  # noqa: PLC0415
+
+    try:
+        study = optuna.load_study(
+            study_name=ticker_study_name(ticker, model_name, side, metric),
+            storage=f"sqlite:///{config.optuna_db}",
+        )
+        best = study.best_trial
+    except (KeyError, ValueError):
+        return {}, None
+    except Exception:  # noqa: BLE001 — a missing/locked study must never break the retrain
+        logger.warning("could not load per-ticker HPO study for %s/%s", ticker, model_name)
+        return {}, None
+    params = {k: v for k, v in best.params.items() if not k.startswith("feat_")}
+    features = best.user_attrs.get("features")
+    return params, features
+
+
 def apply_hpo_best(
     config: Config, model_name: str = "lgbm", *, metric: str = "auc"
 ) -> dict[str, object]:
@@ -460,8 +635,11 @@ __all__ = [
     "LONGSHORT_MODELS",
     "SUPPORTED_MODELS",
     "apply_hpo_best",
+    "best_for_ticker",
     "best_params_for",
     "objective_for",
     "run_hpo",
     "run_longshort_hpo",
+    "run_ticker_hpo",
+    "ticker_study_name",
 ]

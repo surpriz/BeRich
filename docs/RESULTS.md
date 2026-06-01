@@ -800,3 +800,44 @@ walk-forward the features are neutral-0 for ~90% of the panel, so OOS AUC is unc
 pipeline is causally correct and forward-looking: it will enrich live signals and future
 backtests as history accrues, and is ready to plug into a deeper (paid) fundamentals source.
 Not promoted into the active model (no evidence of benefit). Causality is unit-tested.
+
+---
+
+## Phase 12 — per-asset tournament + directional shorts (architecture, no edge claim)
+
+This phase changes the *problem framing*, not by claiming an edge but by giving each asset
+its own uniquely-trained, uniquely-optimized model and adding a directional short side. It
+is shipped as **infrastructure under the same guard rule** — a per-asset side is only
+promoted if it clears that asset's own benchmark out-of-sample.
+
+**What changed.**
+
+- **Per-ticker, not per-class.** Each configured asset (US + FR + forex + crypto +
+  commodities) gets its own Optuna study per `(ticker, model, side)` — hyperparameters
+  *and* feature-group toggles (incl. news/FinBERT) are searched per asset, so a feature
+  family is kept only where it helps that asset. A **tournament** (`training/tournament.py`)
+  trains LightGBM / LSTM / PatchTST / TFT per asset and the registry keeps the walk-forward
+  winner. Artifacts live at `data/models/tickers/<TICKER>/<side>/`.
+- **Directional shorts.** The triple-barrier label and the backtest engine are now
+  direction-aware (`direction="short"` mirrors the barriers: profit below entry, stop above;
+  realized return positive when a short wins). Each asset can carry a long model and a short
+  model; the signal service picks LONG / SHORT / NEUTRAL by best expectancy with mirrored
+  stop/target and absolute-distance sizing.
+- **Per-asset honest guard.** Long side must beat *that asset's* buy & hold OOS; short side,
+  having no buy-&-hold benchmark, must show a positive, statistically significant Sharpe vs
+  cash (deflated Sharpe ≥ 0.95, p < 0.05). Assets failing the guard stay **advisory-only**
+  (no `active.json`) and serve the fallback model behind the experimental banner — exactly as
+  Phases 0–11 predict for a hard, efficient universe.
+
+**Why this is not an edge claim.** Each asset has ~4 100 daily bars → ~400 labeled windows;
+optimizing four model families per asset is a multiple-testing risk. The per-asset guard +
+deflated Sharpe + strong regularization priors + AUC-objective HPO are the defense, and the
+expected outcome — consistent with all prior phases — is that many assets remain
+advisory-only. The value delivered is the **machinery** (unique per-asset optimization,
+directional shorts, the dashboard showing direction / per-side P(win) / mirrored TP-SL / a
+forward trend overlay), with the guard still refusing to overclaim.
+
+**Cadence.** A heavy weekend deep sweep (`ticker_initial_sweep_job`, also runnable via
+`berich train --all-tickers --tournament`) does the full per-asset HPO + tournament; a light
+nightly job (`ticker_nightly_refresh_job`) tops up studies and re-fits the current winners.
+The dual GPU is exploited via the existing `run_on_gpus` pool for the deep models.

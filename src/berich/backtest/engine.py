@@ -51,11 +51,13 @@ class BacktestConfig(BaseModel):
     # When the per-ticker median is below this, slippage scales up.
     volume_ref: float = 80_000_000.0
     slippage_cap_bps: float = 100.0  # safety cap to keep micro-caps sane
+    borrow_bps_annual: float = 0.0  # short borrow fee, bps/yr; only charged on shorts
+    direction: str = "long"
 
 
 @dataclass
 class Trade:
-    """A single completed round-trip long trade."""
+    """A single completed round-trip swing trade (long or short)."""
 
     ticker: str
     entry_date: pd.Timestamp
@@ -63,9 +65,13 @@ class Trade:
     entry_price: float
     exit_price: float
     reason: str  # "target" | "stop" | "time"
+    direction: str = "long"
 
     @property
     def gross_return(self) -> float:
+        # A short profits when it buys back below the (filled) entry price.
+        if self.direction == "short":
+            return self.entry_price / self.exit_price - 1.0
         return self.exit_price / self.entry_price - 1.0
 
 
@@ -168,6 +174,9 @@ def _simulate_ticker(
     low = df["low"]
     proba = proba.reindex(df.index)
 
+    direction = config.direction
+    borrow_per_day = config.borrow_bps_annual / 1e4 / 252.0 if direction == "short" else 0.0
+
     dates = df.index
     daily = pd.Series(0.0, index=dates)
     trades: list[Trade] = []
@@ -181,22 +190,42 @@ def _simulate_ticker(
             i += 1
             continue
 
-        entry_price = close.iloc[i] * (1 + slip)
-        stop = close.iloc[i] - config.stop_loss_atr * a
-        target = close.iloc[i] + config.take_profit_atr * a
+        if direction == "short":
+            entry_price = close.iloc[i] * (1 - slip)  # sell on entry, fill below close
+            stop = close.iloc[i] + config.stop_loss_atr * a
+            target = close.iloc[i] - config.take_profit_atr * a
+        else:
+            entry_price = close.iloc[i] * (1 + slip)
+            stop = close.iloc[i] - config.stop_loss_atr * a
+            target = close.iloc[i] + config.take_profit_atr * a
         time_exit = min(i + config.horizon_days, n - 1)
         daily.iloc[i] -= fee  # entry commission, charged on the entry bar
 
         exit_idx, exit_price, reason = _resolve_exit(
-            high, low, close, start=i + 1, time_exit=time_exit, stop=stop, target=target
+            high,
+            low,
+            close,
+            start=i + 1,
+            time_exit=time_exit,
+            stop=stop,
+            target=target,
+            direction=direction,
         )
-        exit_fill = exit_price * (1 - slip)
 
-        # Mark to market across the holding period.
-        daily.iloc[i] += close.iloc[i] / entry_price - 1.0
-        for j in range(i + 1, exit_idx):
-            daily.iloc[j] += close.iloc[j] / close.iloc[j - 1] - 1.0
-        daily.iloc[exit_idx] += exit_fill / close.iloc[exit_idx - 1] - 1.0
+        # Mark to market across the holding period. A short earns the negated price
+        # return each day and pays the borrow fee for every day the position is held.
+        if direction == "short":
+            exit_fill = exit_price * (1 + slip)  # buy back on exit, fill above price
+            daily.iloc[i] += -(close.iloc[i] / entry_price - 1.0) - borrow_per_day
+            for j in range(i + 1, exit_idx):
+                daily.iloc[j] += -(close.iloc[j] / close.iloc[j - 1] - 1.0) - borrow_per_day
+            daily.iloc[exit_idx] += -(exit_fill / close.iloc[exit_idx - 1] - 1.0) - borrow_per_day
+        else:
+            exit_fill = exit_price * (1 - slip)
+            daily.iloc[i] += close.iloc[i] / entry_price - 1.0
+            for j in range(i + 1, exit_idx):
+                daily.iloc[j] += close.iloc[j] / close.iloc[j - 1] - 1.0
+            daily.iloc[exit_idx] += exit_fill / close.iloc[exit_idx - 1] - 1.0
         daily.iloc[exit_idx] -= fee  # exit commission
 
         trades.append(
@@ -207,6 +236,7 @@ def _simulate_ticker(
                 entry_price=entry_price,
                 exit_price=exit_fill,
                 reason=reason,
+                direction=direction,
             )
         )
         i = exit_idx + 1  # no overlapping positions
@@ -223,11 +253,20 @@ def _resolve_exit(
     time_exit: int,
     stop: float,
     target: float,
+    direction: str = "long",
 ) -> tuple[int, float, str]:
-    """Find the first bar in [start, time_exit] that hits stop/target, else time-exit."""
+    """Find the first bar in [start, time_exit] that hits stop/target, else time-exit.
+
+    For a short the stop sits above entry (touched on the bar high) and the target
+    below (touched on the bar low), mirroring the long case.
+    """
     for j in range(start, time_exit + 1):
-        hit_stop = low.iloc[j] <= stop
-        hit_target = high.iloc[j] >= target
+        if direction == "short":
+            hit_stop = high.iloc[j] >= stop
+            hit_target = low.iloc[j] <= target
+        else:
+            hit_stop = low.iloc[j] <= stop
+            hit_target = high.iloc[j] >= target
         if hit_stop and hit_target:
             return j, stop, "stop"  # conservative: assume stop first
         if hit_stop:

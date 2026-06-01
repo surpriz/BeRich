@@ -29,6 +29,7 @@ from berich.signals import (
     open_new_trades,
     update_open_trades,
 )
+from berich.signals.service import LONG_SIGNALS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -77,7 +78,7 @@ def daily_paper_job(config: Config) -> dict[str, int]:
     # held.
     notified = False
     if opened > 0:
-        notified = send_buy_signals_email([s for s in signals if s.signal == "BUY"])
+        notified = send_buy_signals_email([s for s in signals if s.signal in LONG_SIGNALS])
     logger.info(
         "daily_paper: %d news rows, %d finbert scored, %d signals saved,"
         " %d paper opened, %d paper closed, email=%s",
@@ -305,6 +306,118 @@ def retrain_asset_models_job(config: Config) -> dict[str, object]:
             results[asset_class] = "error"
     logger.info("retrain_asset_models: %s", results)
     return results
+
+
+def _ticker_hpo_task(
+    device: str | None,
+    config: Config,
+    ticker: str,
+    model_name: str,
+    side: str,
+    n_trials: int,
+) -> None:
+    """Module-level (picklable) per-ticker HPO call for the GPU pool worker.
+
+    The GPU pool invokes ``fn(device, *args)``; ``device`` is the pinned ``cuda:N`` string in
+    a worker or ``cpu`` in the sequential fallback. Failures are swallowed so one bad ticker
+    never poisons the pool — the study simply keeps whatever trials it already had.
+    """
+    from berich.training.hpo import run_ticker_hpo  # noqa: PLC0415
+
+    try:
+        run_ticker_hpo(config, ticker, model_name, side, n_trials=n_trials, device=device)
+    except Exception:  # noqa: BLE001 — one ticker/model HPO failure must not abort the sweep
+        logger.warning("ticker HPO failed for %s/%s/%s", ticker, model_name, side, exc_info=True)
+
+
+def ticker_nightly_refresh_job(config: Config) -> dict[str, int]:
+    """Nightly: light top-up + re-tournament for tickers that already have a promoted model.
+
+    For each tradeable ticker x side that is already promoted, run a few HPO trials
+    (``zoo.ticker_nightly_hpo_trials``) into the shared study, then re-run the tournament to
+    re-fit / re-promote the honest winner. Bounded and best-effort: only touches tickers that
+    already cleared the gate once, and wraps each ticker's work so one failure never aborts the
+    batch. The deep-model HPO runs on the GPU pool; the tournament re-fit runs in-process.
+    """
+    from berich.models.registry import load_active  # noqa: PLC0415
+    from berich.training.gpu_pool import GpuTask, run_on_gpus  # noqa: PLC0415
+    from berich.training.tournament import train_ticker_tournament  # noqa: PLC0415
+
+    n_trials = config.zoo.ticker_nightly_hpo_trials
+    deep_models = [m for m in config.zoo.ticker_tournament_models if m != "lgbm"]
+    refreshed = 0
+    promoted = 0
+    skipped = 0
+    failed = 0
+    for ticker in config.tradeable_tickers():
+        for side in config.zoo.ticker_sides:
+            if load_active(config.model_dir_for_ticker(ticker, side)) is None:
+                skipped += 1
+                continue
+            try:
+                tasks = [
+                    GpuTask(
+                        _ticker_hpo_task,
+                        args=(config, ticker, model_name, side, n_trials),
+                        label=f"{ticker}/{model_name}/{side}",
+                    )
+                    for model_name in deep_models
+                ]
+                if tasks:
+                    run_on_gpus(tasks, config.zoo.gpu_ids)
+                result = train_ticker_tournament(config, ticker, side, calibrate=True)
+                refreshed += 1
+                promoted += int(result.promoted)
+            except Exception:  # noqa: BLE001 — one bad ticker must not abort the nightly batch
+                logger.warning("ticker_nightly_refresh: %s/%s failed", ticker, side, exc_info=True)
+                failed += 1
+    summary = {
+        "refreshed": refreshed,
+        "promoted": promoted,
+        "skipped": skipped,
+        "failed": failed,
+    }
+    logger.info("ticker_nightly_refresh: %s", summary)
+    return summary
+
+
+def ticker_initial_sweep_job(config: Config) -> dict[str, int]:
+    """Weekend heavy sweep: full per-ticker HPO + tournament for every tradeable ticker x side.
+
+    For each ticker x side, runs the full first-pass HPO (``zoo.ticker_initial_hpo_trials``) for
+    each deep model across the GPU pool, then a tournament that promotes the honest winner. This
+    is the cold-start that nightly_refresh later tops up. Best-effort per (ticker, side).
+    """
+    from berich.training.gpu_pool import GpuTask, run_on_gpus  # noqa: PLC0415
+    from berich.training.tournament import train_ticker_tournament  # noqa: PLC0415
+
+    n_trials = config.zoo.ticker_initial_hpo_trials
+    deep_models = [m for m in config.zoo.ticker_tournament_models if m != "lgbm"]
+    swept = 0
+    promoted = 0
+    failed = 0
+    for ticker in config.tradeable_tickers():
+        for side in config.zoo.ticker_sides:
+            try:
+                tasks = [
+                    GpuTask(
+                        _ticker_hpo_task,
+                        args=(config, ticker, model_name, side, n_trials),
+                        label=f"{ticker}/{model_name}/{side}",
+                    )
+                    for model_name in deep_models
+                ]
+                if tasks:
+                    run_on_gpus(tasks, config.zoo.gpu_ids)
+                result = train_ticker_tournament(config, ticker, side, calibrate=True)
+                swept += 1
+                promoted += int(result.promoted)
+            except Exception:  # noqa: BLE001 — one bad ticker must not abort the weekend sweep
+                logger.warning("ticker_initial_sweep: %s/%s failed", ticker, side, exc_info=True)
+                failed += 1
+    summary = {"swept": swept, "promoted": promoted, "failed": failed}
+    logger.info("ticker_initial_sweep: %s", summary)
+    return summary
 
 
 def _run_hpo_round(config: Config, n_trials: int, label: str) -> dict[str, float]:

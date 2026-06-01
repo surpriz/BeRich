@@ -1,8 +1,26 @@
+"use client";
+
 import Link from "next/link";
 import type { Signal } from "@/app/lib/api";
+import { useI18n } from "@/app/lib/i18n";
 import { SignalBadge } from "./SignalBadge";
 
 const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function SideProbas({ s }: { s: Signal }) {
+  const { t } = useI18n();
+  if (s.proba_long == null && s.proba_short == null) return null;
+  return (
+    <div className="mt-1 flex gap-2 text-[10px] text-[var(--color-faint)]">
+      {s.proba_long != null && (
+        <span title={t("probaLong")}>L {s.proba_long.toFixed(2)}</span>
+      )}
+      {s.proba_short != null && (
+        <span title={t("probaShort")}>S {s.proba_short.toFixed(2)}</span>
+      )}
+    </div>
+  );
+}
 
 function ProbaBar({ p, calibrated }: { p: number; calibrated?: number | null }) {
   const shown = calibrated ?? p;
@@ -73,6 +91,7 @@ export function SignalsTable({ signals }: { signals: Signal[] }) {
               <td className="px-3 py-3">
                 <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="block">
                   <ProbaBar p={s.proba} calibrated={s.proba_calibrated} />
+                  <SideProbas s={s} />
                 </Link>
               </td>
               <td className="tabular px-3 py-3 text-right">

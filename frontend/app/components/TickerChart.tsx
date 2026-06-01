@@ -12,12 +12,33 @@ import {
   type Time,
 } from "lightweight-charts";
 import type { PriceBar, Signal } from "@/app/lib/api";
+import { useI18n } from "@/app/lib/i18n";
 
 const SMA_BLUE = "#6aa8ff";
 const SMA_VIOLET = "#b386ff";
 const STOP_RED = "#ef4444";
 const TARGET_GREEN = "#b6f24e";
 const ENTRY_YELLOW = "#facc15";
+const TREND_BLUE = "#5ec8ff";
+const TREND_BAND = "rgba(94,200,255,0.12)";
+
+// LONG: legacy BUY also opens a long. SHORT is the only bearish call drawn on the chart.
+function isLongSignal(sig: Signal["signal"]): boolean {
+  return sig === "LONG" || sig === "BUY";
+}
+
+// Append `n` synthetic business-day timestamps after `last` (YYYY-MM-DD, skipping weekends).
+function futureBusinessDays(last: string, n: number): string[] {
+  const out: string[] = [];
+  const d = new Date(`${last}T00:00:00Z`);
+  while (out.length < n) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    const dow = d.getUTCDay();
+    if (dow === 0 || dow === 6) continue;
+    out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
 
 function sma(values: number[], window: number): (number | null)[] {
   const out: (number | null)[] = [];
@@ -57,6 +78,62 @@ function rsi(closes: number[], window = 14): (number | null)[] {
   return out;
 }
 
+const TREND_HORIZON = 10;
+
+// Forward trend overlay: project the last close over ~10 business days using the latest
+// signal's quantiles. Center = ret_q50 (fall back to a flat line); band = ret_q10..ret_q90
+// when present, else ±sigma_horizon around the projection. Draws nothing when there is no
+// usable forward information. lightweight-charts needs strictly increasing time, so the
+// overlay lives on its own line series over synthetic future business-day timestamps that
+// start at the last real bar (shared point anchors the projection to the candles).
+function addTrendOverlay(chart: IChartApi, bars: PriceBar[], latest: Signal | undefined) {
+  if (!latest || bars.length === 0) return;
+  const q50 = latest.ret_q50;
+  const q10 = latest.ret_q10;
+  const q90 = latest.ret_q90;
+  const sigma = latest.sigma_horizon;
+  const hasCenter = q50 != null;
+  const hasBand = q10 != null && q90 != null;
+  const hasSigma = sigma != null;
+  if (!hasCenter && !hasBand && !hasSigma) return;
+
+  const lastBar = bars[bars.length - 1];
+  const lastClose = lastBar.close;
+  const future = futureBusinessDays(lastBar.date, TREND_HORIZON);
+  const times: string[] = [lastBar.date, ...future];
+
+  // Returns are fractional; interpolate linearly from 0 at the anchor to the horizon return.
+  const ramp = (ret: number) => times.map((time, i) => ({
+    time: time as Time,
+    value: lastClose * (1 + (ret * i) / (times.length - 1)),
+  }));
+
+  const centerRet = hasCenter ? (q50 as number) : 0;
+  const center = chart.addSeries(LineSeries, {
+    color: TREND_BLUE,
+    lineWidth: 2,
+    lineStyle: 2, // dashed
+    priceLineVisible: false,
+    lastValueVisible: false,
+  });
+  center.setData(ramp(centerRet));
+
+  const upperRet = hasBand ? (q90 as number) : hasSigma ? centerRet + (sigma as number) : null;
+  const lowerRet = hasBand ? (q10 as number) : hasSigma ? centerRet - (sigma as number) : null;
+  if (upperRet != null && lowerRet != null) {
+    const bandStyle = {
+      color: TREND_BAND,
+      lineWidth: 1 as const,
+      lineStyle: 1, // dotted (faint band edges)
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    };
+    chart.addSeries(LineSeries, bandStyle).setData(ramp(upperRet));
+    chart.addSeries(LineSeries, bandStyle).setData(ramp(lowerRet));
+  }
+}
+
 export function TickerChart({
   bars,
   signals,
@@ -66,6 +143,8 @@ export function TickerChart({
 }) {
   const mainRef = useRef<HTMLDivElement>(null);
   const subRef = useRef<HTMLDivElement>(null);
+  const { t } = useI18n();
+  const trendLabel = t("trendForecast");
 
   useEffect(() => {
     if (!mainRef.current || !subRef.current || bars.length === 0) return;
@@ -136,19 +215,27 @@ export function TickerChart({
 
     const barDates = new Set(bars.map((b) => b.date));
     const markers: SeriesMarker<Time>[] = signals
-      .filter((s) => s.signal === "BUY" || s.signal === "SELL")
+      .filter((s) => s.signal === "LONG" || s.signal === "BUY" || s.signal === "SHORT")
       .filter((s) => barDates.has(s.date))
-      .map((s) => ({
-        time: s.date as Time,
-        position: s.signal === "BUY" ? "belowBar" : "aboveBar",
-        color: s.signal === "BUY" ? "#b6f24e" : "#ef4444",
-        shape: s.signal === "BUY" ? "arrowUp" : "arrowDown",
-        text: s.signal,
-      }));
+      .map((s) => {
+        const long = isLongSignal(s.signal);
+        // LONG → green up-arrow below the bar; SHORT → red down-arrow above the bar.
+        return {
+          time: s.date as Time,
+          position: long ? "belowBar" : "aboveBar",
+          color: long ? TARGET_GREEN : STOP_RED,
+          shape: long ? "arrowUp" : "arrowDown",
+          text: s.signal,
+        };
+      });
     if (markers.length > 0) createSeriesMarkers(candles, markers);
 
     const latest = signals[0];
-    if (latest && latest.signal === "BUY") {
+    // Draw entry / stop / target for the latest actionable call in either direction. Colors
+    // stay semantic — green is always the profit target, red always the stop — so for a short
+    // the green target line sits below entry and the red stop line above it.
+    const actionable = latest && (isLongSignal(latest.signal) || latest.signal === "SHORT");
+    if (latest && actionable) {
       candles.createPriceLine({
         price: latest.entry,
         color: ENTRY_YELLOW,
@@ -174,6 +261,8 @@ export function TickerChart({
         title: "target",
       });
     }
+
+    addTrendOverlay(chart, bars, latest);
 
     chart.timeScale().fitContent();
 
@@ -253,10 +342,13 @@ export function TickerChart({
           <span className="inline-block h-0.5 w-4" style={{ background: SMA_VIOLET }} /> SMA50
         </span>
         <span className="flex items-center gap-1">
-          <span style={{ color: TARGET_GREEN }}>▲</span> BUY
+          <span style={{ color: TARGET_GREEN }}>▲</span> LONG
         </span>
         <span className="flex items-center gap-1">
-          <span style={{ color: STOP_RED }}>▼</span> SELL
+          <span style={{ color: STOP_RED }}>▼</span> SHORT
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-0.5 w-4" style={{ background: TREND_BLUE }} /> {trendLabel}
         </span>
       </div>
       <div ref={subRef} className="h-[160px] w-full" />
