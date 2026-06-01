@@ -7,8 +7,11 @@ refresh+signals run after the US market close; the drift check runs weekly.
 
 from __future__ import annotations
 
+import logging
+import traceback
 from typing import TYPE_CHECKING
 
+from apscheduler.events import EVENT_JOB_ERROR
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -26,12 +29,43 @@ from berich.scheduler.jobs import (
 )
 
 if TYPE_CHECKING:
+    from apscheduler.events import JobExecutionEvent
+
     from berich.config import Config
+
+logger = logging.getLogger(__name__)
+
+
+def _on_job_error(event: JobExecutionEvent) -> None:
+    """APScheduler EVENT_JOB_ERROR handler: email an alert when any job raises.
+
+    Fires only on an *uncaught* exception from a job (jobs that handle their own errors and
+    return normally never trigger this). Best-effort: a failure to send the alert is logged
+    and swallowed so the listener never crashes the scheduler.
+    """
+    job_id = event.job_id
+    exc = event.exception
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)) if exc else ""
+    logger.error("scheduler job '%s' raised: %s", job_id, exc)
+    try:
+        from berich.notifications import send_alert_email  # noqa: PLC0415 — lazy, optional dep
+
+        send_alert_email(
+            subject=f"BeRich — job '{job_id}' failed",
+            body=(
+                f"The scheduled job '{job_id}' raised an exception at "
+                f"{event.scheduled_run_time}.\n\n{type(exc).__name__}: {exc}\n\n{tb}\n"
+                "The scheduler keeps running; other jobs are unaffected."
+            ),
+        )
+    except Exception:  # noqa: BLE001 — alerting must never crash the scheduler
+        logger.warning("scheduler: could not send failure alert for '%s'", job_id, exc_info=True)
 
 
 def build_scheduler(config: Config) -> BlockingScheduler:
     """Create a scheduler with the daily-signal and weekly-drift jobs registered."""
     scheduler = BlockingScheduler(timezone="America/New_York")
+    scheduler.add_listener(_on_job_error, EVENT_JOB_ERROR)
     # 22:30 Europe/Paris on weekdays — 30 min after the 16:00 ET close (22:00 Paris
     # year-round, since both zones observe DST), so OHLCV bars are settled daily
     # closes, not intraday snapshots. The trigger timezone is pinned explicitly

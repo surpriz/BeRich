@@ -140,13 +140,47 @@ def send_buy_signals_email(
     message.set_content(_format_text_table(signals))
     message.add_alternative(_format_html_table(signals), subtype="html")
 
+    if not _send(message, cfg, smtp_factory):
+        return False
+    logger.info("email: sent BUY-signal digest to %s (%d signals)", cfg.notify_email, len(signals))
+    return True
+
+
+def _send(message: EmailMessage, cfg: EmailConfig, smtp_factory) -> bool:  # noqa: ANN001 — test DI hook
+    """Send a prepared message over STARTTLS; swallow SMTP/OS errors (never block a job)."""
     try:
         with (smtp_factory or smtplib.SMTP)(cfg.smtp_host, cfg.smtp_port) as smtp:
             smtp.starttls()
             smtp.login(cfg.smtp_user, cfg.smtp_pass)
             smtp.send_message(message)
     except (smtplib.SMTPException, OSError) as exc:
-        logger.warning("email: SMTP send failed (%s); not blocking the job", exc)
+        logger.warning("email: SMTP send failed (%s); not blocking the caller", exc)
         return False
-    logger.info("email: sent BUY-signal digest to %s (%d signals)", cfg.notify_email, len(signals))
+    return True
+
+
+def send_alert_email(
+    subject: str,
+    body: str,
+    config: EmailConfig | None = None,
+    *,
+    smtp_factory=None,  # noqa: ANN001 — small DI hook used only in tests
+) -> bool:
+    """Send a plain-text operational alert (e.g. a scheduler job crashed).
+
+    Returns ``True`` if sent, ``False`` if email isn't configured or SMTP failed. Best-effort
+    by design: an alert failing to send must never itself raise into the scheduler.
+    """
+    cfg = config or EmailConfig.from_env()
+    if cfg is None:
+        logger.info("email: NOTIFY_EMAIL/SMTP_* not set, skipping alert %r", subject)
+        return False
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = cfg.smtp_user
+    message["To"] = cfg.notify_email
+    message.set_content(body)
+    if not _send(message, cfg, smtp_factory):
+        return False
+    logger.info("email: sent alert to %s (%s)", cfg.notify_email, subject)
     return True

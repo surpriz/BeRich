@@ -7,14 +7,18 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
+from apscheduler.events import EVENT_JOB_ERROR, JobExecutionEvent
 
+import berich.notifications as notif
 from berich.config import Config, SignalConfig
 from berich.notifications.email import (
     EmailConfig,
     _format_html_table,
     _format_text_table,
+    send_alert_email,
     send_buy_signals_email,
 )
+from berich.scheduler import runner
 from berich.signals import PaperStore, compute_calibration
 from berich.signals.calibration import DEFAULT_BUCKETS
 from berich.signals.service import BUY, NEUTRAL, Signal
@@ -99,6 +103,57 @@ def test_send_buy_signals_email_returns_false_on_smtp_error():
     fake_smtp = MagicMock(return_value=fake_conn)
     cfg = EmailConfig(notify_email="me@x.com", smtp_host="h", smtp_user="bot@x.com", smtp_pass="p")
     assert send_buy_signals_email([_signal("AAPL")], cfg, smtp_factory=fake_smtp) is False
+
+
+def test_send_alert_email_sends_plain_text():
+    fake_conn = MagicMock()
+    fake_smtp = MagicMock(return_value=fake_conn)
+    fake_conn.__enter__.return_value = fake_conn
+    fake_conn.__exit__.return_value = False
+    cfg = EmailConfig(notify_email="me@x.com", smtp_host="h", smtp_user="bot@x.com", smtp_pass="p")
+    sent = send_alert_email(
+        "BeRich — job 'x' failed", "boom\ntraceback", cfg, smtp_factory=fake_smtp
+    )
+    assert sent is True
+    fake_conn.send_message.assert_called_once()
+    msg = fake_conn.send_message.call_args[0][0]
+    assert msg["Subject"] == "BeRich — job 'x' failed"
+    assert msg["To"] == "me@x.com"
+    assert "boom" in msg.get_content()
+
+
+def test_send_alert_email_skips_when_unconfigured(monkeypatch):
+    for var in ("NOTIFY_EMAIL", "SMTP_HOST", "SMTP_USER", "SMTP_PASS"):
+        monkeypatch.delenv(var, raising=False)
+    fake_smtp = MagicMock()
+    assert send_alert_email("subj", "body", smtp_factory=fake_smtp) is False
+    fake_smtp.assert_not_called()
+
+
+def test_scheduler_registers_job_error_listener_and_alerts(monkeypatch):
+    """A job that raises triggers EVENT_JOB_ERROR -> send_alert_email is called."""
+    calls: list[tuple[str, str]] = []
+    # The listener imports send_alert_email lazily from berich.notifications, so patch it there.
+    monkeypatch.setattr(
+        notif, "send_alert_email", lambda subject, body, **_kw: calls.append((subject, body))
+    )
+
+    # The listener must be registered on the scheduler.
+    scheduler = runner.build_scheduler(Config(watchlist=["AAPL"]))
+    assert scheduler is not None
+
+    event = JobExecutionEvent(
+        EVENT_JOB_ERROR,
+        "boom_job",
+        "default",
+        scheduled_run_time=None,
+        exception=RuntimeError("kaboom"),
+    )
+    runner._on_job_error(event)
+    assert len(calls) == 1
+    subject, body = calls[0]
+    assert "boom_job" in subject
+    assert "kaboom" in body
 
 
 def test_email_body_includes_advisory_disclaimer():
