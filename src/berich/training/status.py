@@ -81,6 +81,7 @@ def _side_entry(
         "metrics": {},
         "candidates": [],
         "hpo_trials": _hpo_trials_for(counts, ticker, None, side),
+        "horizon_days": None,
     }
     if not reg.exists():
         return entry
@@ -142,6 +143,7 @@ def _fill_from_meta(
         entry["winner"] = winner
     entry["framework"] = meta.framework
     entry["metrics"] = meta.metrics
+    entry["horizon_days"] = meta.horizon_days
     if entry["trained_at"] is None:
         entry["trained_at"] = meta.created_at
 

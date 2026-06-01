@@ -249,6 +249,7 @@ export type TrainingStatus = {
   metrics: Record<string, number>;
   candidates: TournamentCandidate[];
   hpo_trials: number;
+  horizon_days?: number | null;
 };
 
 export type Health = {

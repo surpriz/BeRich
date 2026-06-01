@@ -42,6 +42,12 @@ function SideCell({ s, t }: { s: TrainingStatus | undefined; t: (k: string) => s
         {t(`training.status.${s.status}`)}
       </span>
       {s.winner && <span className="text-xs text-[var(--color-muted)]">{s.winner}</span>}
+      {s.horizon_days != null && s.status !== "never_trained" && (
+        <span className="text-[11px] text-[var(--color-faint)]">
+          {t("training.horizon")}: {s.horizon_days}
+          {t("training.daysShort")}
+        </span>
+      )}
       <Show min="standard">
         {s.status !== "never_trained" && (
           <span className="tabular text-[11px] text-[var(--color-faint)]">
@@ -111,8 +117,9 @@ export default function TrainingPage() {
   }, []);
 
   const grouped = rows ? group(rows) : [];
+  const nAssets = grouped.length;
+  const nSides = rows?.length ?? 0;
   const nPromoted = rows?.filter((r) => r.status === "promoted").length ?? 0;
-  const nHpo = rows?.filter((r) => r.hpo_trials > 0).length ?? 0;
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
@@ -121,21 +128,17 @@ export default function TrainingPage() {
 
       {rows && (
         <div className="mt-4 flex gap-6 text-sm text-[var(--color-muted)]">
-          <span>{rows.length} {t("training.entries")}</span>
+          <span>
+            {nAssets} {t("training.assets")}
+            <span className="text-[var(--color-faint)]">
+              {" "}
+              ({nSides} {t("training.sides")})
+            </span>
+          </span>
           <span className="text-[var(--color-bull)]">
             {nPromoted} {t("training.promotedCount")}
             <Info id="promoted" />
           </span>
-          <span>
-            {nHpo} {t("training.hpoCount")}
-            <Info id="hpo" />
-          </span>
-        </div>
-      )}
-
-      {nHpo === 0 && rows && (
-        <div className="mt-4 rounded-md border border-[var(--color-line)] bg-white/[0.02] px-4 py-3 text-xs text-[var(--color-muted)]">
-          {t("training.noHpoBanner")}
         </div>
       )}
 
