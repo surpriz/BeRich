@@ -78,6 +78,13 @@ def test_watchlist(client):
     assert client.get("/api/watchlist").json() == ["AAPL"]
 
 
+def test_config_exposes_thresholds(client):
+    cfg = client.get("/api/config").json()
+    assert {"buy_threshold", "short_threshold", "enable_short", "horizon_days"} <= set(cfg)
+    assert 0.0 < cfg["buy_threshold"] < 1.0
+    assert isinstance(cfg["enable_short"], bool)
+
+
 def test_signals(client):
     rows = client.get("/api/signals").json()
     assert len(rows) == 1

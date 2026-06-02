@@ -192,6 +192,15 @@ export type Universes = {
 
 export type AssetClass = keyof Universes;
 
+export type SignalConfig = {
+  buy_threshold: number;
+  short_threshold: number;
+  enable_short: boolean;
+  horizon_days: number;
+  take_profit_atr: number;
+  stop_loss_atr: number;
+};
+
 export type TournamentCandidate = {
   ticker: string;
   side: string;
@@ -283,6 +292,7 @@ export const api = {
   paperClosed: (limit = 25) => get<PaperClosedTrade[]>(`/paper/closed-trades?limit=${limit}`),
   paperCalibration: () => get<PaperCalibration>("/paper/calibration"),
   universes: () => get<Universes>("/universes"),
+  signalConfig: () => get<SignalConfig>("/config"),
   training: () => get<TrainingStatus[]>("/training"),
   ops: () => get<OpsSnapshot>("/ops"),
   longshortBasket: () => get<LongShortLeg[]>("/longshort/basket"),

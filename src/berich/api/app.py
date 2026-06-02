@@ -120,6 +120,19 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
 
         return ops_snapshot(config)
 
+    @router.get("/config", dependencies=guard)
+    def signal_config() -> dict:
+        """Decision thresholds the dashboard needs to explain why a signal is LONG/SHORT/NEUTRAL."""
+        s = config.signals
+        return {
+            "buy_threshold": s.buy_threshold,
+            "short_threshold": s.short_threshold,
+            "enable_short": s.enable_short,
+            "horizon_days": config.labeling.horizon_days,
+            "take_profit_atr": config.labeling.take_profit_atr,
+            "stop_loss_atr": config.labeling.stop_loss_atr,
+        }
+
     @router.get("/universes", dependencies=guard)
     def universes() -> dict[str, list[str]]:
         return {

@@ -7,10 +7,12 @@ import {
   type AssetClass,
   type PriceBar,
   type Signal,
+  type SignalConfig,
   type SignalExplain,
   type Universes,
 } from "@/app/lib/api";
 import { SignalBadge } from "@/app/components/SignalBadge";
+import { SignalAdvice } from "@/app/components/SignalAdvice";
 import { TickerChart } from "@/app/components/TickerChart";
 import { Show } from "@/app/components/Show";
 import { Info } from "@/app/components/Term";
@@ -50,21 +52,24 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
   const [history, setHistory] = useState<Signal[] | undefined>();
   const [explain, setExplain] = useState<SignalExplain | null | undefined>();
   const [universes, setUniverses] = useState<Universes | undefined>();
+  const [cfg, setCfg] = useState<SignalConfig | undefined>();
   const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const [b, h, u] = await Promise.all([
+        const [b, h, u, c] = await Promise.all([
           api.prices(ticker).catch(() => [] as PriceBar[]),
           api.signalHistory(ticker).catch(() => [] as Signal[]),
           api.universes().catch(() => undefined),
+          api.signalConfig().catch(() => undefined),
         ]);
         if (!alive) return;
         setBars(b);
         setHistory(h);
         setUniverses(u);
+        setCfg(c);
         try {
           const e = await api.signalExplain(ticker);
           if (alive) setExplain(e);
@@ -148,6 +153,12 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
           </div>
         )}
       </header>
+
+      {latest && (
+        <div className="mb-6">
+          <SignalAdvice signal={latest} cfg={cfg} />
+        </div>
+      )}
 
       {latest && (latest.signal === "LONG" || latest.signal === "SHORT" || latest.signal === "BUY") && (
         <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
