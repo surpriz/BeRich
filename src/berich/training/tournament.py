@@ -71,7 +71,7 @@ class CandidateResult:
 
 @dataclass
 class TournamentResult:
-    """The full per-ticker tournament outcome for one side."""
+    """The full per-ticker tournament outcome for one side x exit strategy."""
 
     ticker: str
     side: str
@@ -79,6 +79,7 @@ class TournamentResult:
     winner: str | None
     promoted: bool
     advisory_only: bool
+    strategy: str = "fixed"
 
 
 def _model_from_params(model_name: str, params: dict, *, device: str | None) -> Model:
@@ -110,24 +111,29 @@ def train_candidate(
     side: str,
     model_name: str,
     *,
+    strategy: str = "fixed",
     device: str | None = None,
     calibrate: bool = True,
 ) -> tuple[Model, ModelMetadata, ProbaCalibrator | None, CandidateResult]:
-    """Train one framework for a ticker x side: OOS, backtest, gate, final fit, calibrator.
+    """Train one framework for a ticker x side x strategy: OOS, backtest, gate, fit, calibrator.
 
-    Returns ``(model, metadata, calibrator_or_None, candidate_result)``. Nothing is saved or
-    promoted here — that is the tournament's job once it has picked a winner.
+    ``strategy`` ("fixed" | "trailing" | "trailing_tp") re-labels and backtests under that exit
+    rule so the model learns the target it will actually be served on. Returns
+    ``(model, metadata, calibrator_or_None, candidate_result)``. Nothing is saved or promoted
+    here — that is the tournament's job once it has picked a winner.
     """
     params, features = best_for_ticker(config, ticker, model_name, side)
     # Reuse the HPO-chosen triple-barrier horizon so the candidate is trained, backtested AND
     # later served on the same horizon it was optimized for. None => the configured default.
     horizon = best_horizon_for_ticker(config, ticker, model_name, side)
-    dataset, prices = _ticker_dataset(config, ticker, side, horizon_days=horizon)
+    dataset, prices = _ticker_dataset(
+        config, ticker, side, horizon_days=horizon, exit_mode=strategy
+    )
     if features is not None:
         keep = [c for c in features if c in dataset.x.columns]
         dataset = replace(dataset, x=dataset.x[keep])
 
-    update: dict[str, object] = {"direction": side}
+    update: dict[str, object] = {"direction": side, "exit_mode": strategy}
     if horizon is not None:
         update["horizon_days"] = horizon
     label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(update=update)
@@ -149,6 +155,9 @@ def train_candidate(
             take_profit_atr=label_cfg.take_profit_atr,
             stop_loss_atr=label_cfg.stop_loss_atr,
             direction=side,
+            exit_mode=strategy,
+            trailing_atr=label_cfg.trailing_atr,
+            trailing_activation_atr=label_cfg.trailing_activation_atr,
         ),
     )
 
@@ -203,7 +212,8 @@ def train_candidate(
         side=cast("Literal['long', 'short']", side),
         ticker=ticker,
         horizon_days=label_cfg.horizon_days,
-        notes=notes,
+        exit_strategy=strategy,
+        notes=f"[{strategy}] {notes}",
     )
     candidate = CandidateResult(
         ticker=ticker,
@@ -220,16 +230,17 @@ def train_candidate(
 
 
 def _write_status(config: Config, result: TournamentResult, *, stamp: str) -> None:
-    """Persist a per-(ticker, side) tournament summary for the dashboard's training tab.
+    """Persist a per-(ticker, side, strategy) tournament summary for the dashboard's training tab.
 
     Written next to the per-ticker registry as ``status.json`` so the /api/training scan can
     report the full candidate slate (not just the saved winner), the verdict, and the run time.
     """
-    out_dir = config.model_dir_for_ticker(result.ticker, result.side)
+    out_dir = config.model_dir_for_ticker(result.ticker, result.side, result.strategy)
     out_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "ticker": result.ticker,
         "side": result.side,
+        "strategy": result.strategy,
         "winner": result.winner,
         "promoted": result.promoted,
         "advisory_only": result.advisory_only,
@@ -244,32 +255,41 @@ def train_ticker_tournament(
     ticker: str,
     side: str = "long",
     *,
+    strategy: str = "fixed",
     models: list[str] | None = None,
     device: str | None = None,
     calibrate: bool = True,
     force: bool = False,
     trained_at: str | None = None,
 ) -> TournamentResult:
-    """Run every candidate framework for one ticker x side and promote the honest winner.
+    """Run every candidate framework for one ticker x side x strategy and promote the honest winner.
 
     A winner is the gate-passing candidate with the best strategy Sharpe (long) / deflated
-    Sharpe (short); it is saved + promoted into the per-ticker namespace. If none passes, the
-    best-AUC candidate is saved unpromoted (advisory-only). Writes a ``status.json`` summary
-    for the dashboard and returns the full verdict.
+    Sharpe (short); it is saved + promoted into the per-ticker x strategy namespace. If none
+    passes, the best-AUC candidate is saved unpromoted (advisory-only). Writes a ``status.json``
+    summary for the dashboard and returns the full verdict.
     """
     stamp = trained_at or datetime.now(UTC).isoformat()
     result = _run_tournament(
-        config, ticker, side, models=models, device=device, calibrate=calibrate, force=force
+        config,
+        ticker,
+        side,
+        strategy=strategy,
+        models=models,
+        device=device,
+        calibrate=calibrate,
+        force=force,
     )
     _write_status(config, result, stamp=stamp)
     return result
 
 
-def _run_tournament(
+def _run_tournament(  # noqa: C901 — linear train/gate/promote flow, clearer inline
     config: Config,
     ticker: str,
     side: str = "long",
     *,
+    strategy: str = "fixed",
     models: list[str] | None = None,
     device: str | None = None,
     calibrate: bool = True,
@@ -277,38 +297,52 @@ def _run_tournament(
 ) -> TournamentResult:
     """Train + gate the candidate frameworks (no side effects beyond the registry)."""
     model_names = models or config.zoo.ticker_tournament_models
-    registry_dir = config.model_dir_for_ticker(ticker, side)
+    registry_dir = config.model_dir_for_ticker(ticker, side, strategy)
     store = OhlcvStore(config.ohlcv_dir)
 
-    try:
-        probe, _ = _ticker_dataset(config, ticker, side)
-    except ValueError as exc:
-        logger.warning("tournament skipped for %s/%s: %s", ticker, side, exc)
-        return TournamentResult(ticker, side, [], None, promoted=False, advisory_only=True)
-    if len(probe) < MIN_LABELED_ROWS:
-        logger.info(
-            "tournament skipped for %s/%s: only %d labeled rows (< %d)",
-            ticker,
-            side,
-            len(probe),
-            MIN_LABELED_ROWS,
+    def _skip(reason: str) -> TournamentResult:
+        logger.info("tournament skipped for %s/%s/%s: %s", ticker, side, strategy, reason)
+        return TournamentResult(
+            ticker, side, [], None, promoted=False, advisory_only=True, strategy=strategy
         )
-        return TournamentResult(ticker, side, [], None, promoted=False, advisory_only=True)
+
+    try:
+        probe, _ = _ticker_dataset(config, ticker, side, exit_mode=strategy)
+    except ValueError as exc:
+        return _skip(str(exc))
+    if len(probe) < MIN_LABELED_ROWS:
+        return _skip(f"only {len(probe)} labeled rows (< {MIN_LABELED_ROWS})")
 
     trained: list[tuple[Model, ModelMetadata, ProbaCalibrator | None, CandidateResult]] = []
     for model_name in model_names:
         try:
             trained.append(
                 train_candidate(
-                    config, store, ticker, side, model_name, device=device, calibrate=calibrate
+                    config,
+                    store,
+                    ticker,
+                    side,
+                    model_name,
+                    strategy=strategy,
+                    device=device,
+                    calibrate=calibrate,
                 )
             )
         except Exception:  # noqa: BLE001 — one bad framework must not abort the tournament
-            logger.warning("candidate %s failed for %s/%s", model_name, ticker, side, exc_info=True)
+            logger.warning(
+                "candidate %s failed for %s/%s/%s",
+                model_name,
+                ticker,
+                side,
+                strategy,
+                exc_info=True,
+            )
 
     candidates = [t[3] for t in trained]
     if not trained:
-        return TournamentResult(ticker, side, candidates, None, promoted=False, advisory_only=True)
+        return TournamentResult(
+            ticker, side, candidates, None, promoted=False, advisory_only=True, strategy=strategy
+        )
 
     def _rank_key(
         entry: tuple[Model, ModelMetadata, ProbaCalibrator | None, CandidateResult],
@@ -323,9 +357,15 @@ def _run_tournament(
         if calibrator is not None:
             save_calibrator(calibrator, artifact_dir=artifact_dir)
         promote(meta.name, registry_dir=registry_dir, force=force)
-        logger.info("promoted per-ticker winner %s for %s/%s", meta.name, ticker, side)
+        logger.info("promoted per-ticker winner %s for %s/%s/%s", meta.name, ticker, side, strategy)
         return TournamentResult(
-            ticker, side, candidates, winner.model_name, promoted=True, advisory_only=False
+            ticker,
+            side,
+            candidates,
+            winner.model_name,
+            promoted=True,
+            advisory_only=False,
+            strategy=strategy,
         )
 
     # No honest winner — save the best-AUC candidate for inspection, leave it unpromoted.
@@ -333,8 +373,15 @@ def _run_tournament(
     artifact_dir = save_model(model, meta, registry_dir=registry_dir)
     if calibrator is not None:
         save_calibrator(calibrator, artifact_dir=artifact_dir)
-    logger.info("no per-ticker candidate cleared the gate for %s/%s — advisory only", ticker, side)
-    return TournamentResult(ticker, side, candidates, None, promoted=False, advisory_only=True)
+    logger.info(
+        "no per-ticker candidate cleared the gate for %s/%s/%s — advisory only",
+        ticker,
+        side,
+        strategy,
+    )
+    return TournamentResult(
+        ticker, side, candidates, None, promoted=False, advisory_only=True, strategy=strategy
+    )
 
 
 __all__ = [

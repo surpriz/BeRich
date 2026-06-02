@@ -37,6 +37,12 @@ class LabelConfig(BaseModel):
     take_profit_atr: float = 2.0
     stop_loss_atr: float = 1.0
     direction: Literal["long", "short"] = "long"
+    # Exit strategy the label simulates. "fixed" = the historical triple barrier. "trailing"
+    # drops the TP and rides a ratcheting stop; "trailing_tp" keeps the TP as a cap. The two
+    # params below only matter for the trailing variants.
+    exit_mode: Literal["fixed", "trailing", "trailing_tp"] = "fixed"
+    trailing_atr: float = 2.5
+    trailing_activation_atr: float = 1.0
 
 
 # Adaptive barrier scaling is clipped to this band so a single noisy vol estimate can't
@@ -129,22 +135,32 @@ def triple_barrier_labels(df: pd.DataFrame, config: LabelConfig) -> pd.DataFrame
         if t + horizon >= n or np.isnan(atr_vals[t]):
             continue  # incomplete forward window or ATR not warmed up
         entry = close[t]
-        if config.direction == "short":
-            tp_barrier = entry - config.take_profit_atr * atr_vals[t]
-            sl_barrier = entry + config.stop_loss_atr * atr_vals[t]
+        fwd = slice(t + 1, t + horizon + 1)
+        if config.exit_mode == "fixed":
+            if config.direction == "short":
+                tp_barrier = entry - config.take_profit_atr * atr_vals[t]
+                sl_barrier = entry + config.stop_loss_atr * atr_vals[t]
+            else:
+                tp_barrier = entry + config.take_profit_atr * atr_vals[t]
+                sl_barrier = entry - config.stop_loss_atr * atr_vals[t]
+            label, ret, bars = _first_touch(
+                high[fwd],
+                low[fwd],
+                close[fwd],
+                entry=entry,
+                tp_barrier=tp_barrier,
+                sl_barrier=sl_barrier,
+                direction=config.direction,
+            )
         else:
-            tp_barrier = entry + config.take_profit_atr * atr_vals[t]
-            sl_barrier = entry - config.stop_loss_atr * atr_vals[t]
-
-        label, ret, bars = _first_touch(
-            high[t + 1 : t + horizon + 1],
-            low[t + 1 : t + horizon + 1],
-            close[t + 1 : t + horizon + 1],
-            entry=entry,
-            tp_barrier=tp_barrier,
-            sl_barrier=sl_barrier,
-            direction=config.direction,
-        )
+            label, ret, bars = _trailing_touch(
+                high[fwd],
+                low[fwd],
+                close[fwd],
+                entry=entry,
+                atr_entry=atr_vals[t],
+                config=config,
+            )
         labels[t], rets[t], held[t] = label, ret, bars
 
     out = pd.DataFrame(
@@ -194,3 +210,74 @@ def _first_touch(
     exit_close = fwd_close[-1]
     final_ret = entry / exit_close - 1.0 if direction == "short" else exit_close / entry - 1.0
     return 0, final_ret, len(fwd_high)
+
+
+def _trailing_touch(
+    fwd_high: np.ndarray,
+    fwd_low: np.ndarray,
+    fwd_close: np.ndarray,
+    *,
+    entry: float,
+    atr_entry: float,
+    config: LabelConfig,
+) -> tuple[int, float, int]:
+    """Return (label, realized_return, bars_held) for a trailing-stop exit.
+
+    Causal ratcheting stop: the trail distance is frozen at ``entry`` (``trailing_atr``*ATR).
+    At each forward bar we test the bar's adverse extreme against the stop level *set from the
+    favorable extreme of all PRIOR bars*, then fold the current bar into that extreme — so the
+    same bar never both sets and triggers the stop. The trail only arms after price has moved
+    favorably by ``trailing_activation_atr``*ATR; before that the initial fixed stop holds. For
+    ``exit_mode == "trailing_tp"`` a fixed take-profit cap is also checked (stop wins a same-bar
+    tie, as in ``_first_touch``). The label is the sign of the realized return (a profitable
+    exit is ``1``), matching the "did this trade make money" target the trailing model predicts.
+    """
+    short = config.direction == "short"
+    trail_dist = config.trailing_atr * atr_entry
+    activation = config.trailing_activation_atr * atr_entry
+    init_stop = (
+        entry + config.stop_loss_atr * atr_entry
+        if short
+        else entry - config.stop_loss_atr * atr_entry
+    )
+    has_tp = config.exit_mode == "trailing_tp"
+    tp_barrier = (
+        (entry - config.take_profit_atr * atr_entry)
+        if short
+        else (entry + config.take_profit_atr * atr_entry)
+    )
+
+    running_ext = entry
+    cur_stop = init_stop
+    armed = False
+    for i in range(len(fwd_high)):
+        if short:
+            hit_stop = fwd_high[i] >= cur_stop
+            hit_tp = has_tp and fwd_low[i] <= tp_barrier
+        else:
+            hit_stop = fwd_low[i] <= cur_stop
+            hit_tp = has_tp and fwd_high[i] >= tp_barrier
+        if hit_stop:
+            ret = entry / cur_stop - 1.0 if short else cur_stop / entry - 1.0
+            return (1 if ret > 0 else -1), ret, i + 1
+        if hit_tp:
+            ret = entry / tp_barrier - 1.0 if short else tp_barrier / entry - 1.0
+            return (1 if ret > 0 else -1), ret, i + 1
+        # Fold this bar into the favorable extreme, then (re)arm and ratchet the stop.
+        if short:
+            running_ext = min(running_ext, fwd_low[i])
+            if running_ext <= entry - activation:
+                armed = True
+            if armed:
+                cur_stop = min(cur_stop, running_ext + trail_dist)
+        else:
+            running_ext = max(running_ext, fwd_high[i])
+            if running_ext >= entry + activation:
+                armed = True
+            if armed:
+                cur_stop = max(cur_stop, running_ext - trail_dist)
+
+    exit_close = fwd_close[-1]
+    final_ret = entry / exit_close - 1.0 if short else exit_close / entry - 1.0
+    label = 1 if final_ret > 0 else (-1 if final_ret < 0 else 0)
+    return label, final_ret, len(fwd_high)

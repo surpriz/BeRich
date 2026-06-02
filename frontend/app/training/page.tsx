@@ -17,6 +17,24 @@ function fmt(n: number | undefined, digits = 3): string {
   return n === undefined || Number.isNaN(n) ? "—" : n.toFixed(digits);
 }
 
+const STRATEGY_LABEL: Record<string, string> = {
+  fixed: "fixed",
+  trailing: "trail",
+  trailing_tp: "trail+TP",
+};
+
+const STRATEGY_MARK: Record<string, string> = {
+  promoted: "✓",
+  advisory_only: "·",
+  never_trained: "–",
+};
+
+const STRATEGY_CHIP: Record<string, string> = {
+  promoted: "text-[var(--color-bull)] border-[var(--color-bull)]/50",
+  advisory_only: "text-[var(--color-muted)] border-[var(--color-line)]",
+  never_trained: "text-[var(--color-faint)] border-[var(--color-line)]",
+};
+
 function when(iso: string | null): string {
   if (!iso) return "—";
   return iso.slice(0, 16).replace("T", " ");
@@ -61,6 +79,25 @@ function SideCell({ s, t }: { s: TrainingStatus | undefined; t: (k: string) => s
             ? `${s.hpo_trials} ${t("training.trials")} (${t("training.acrossModels")})`
             : t("training.defaultParams")}
         </span>
+        {s.strategies && s.strategies.some((st) => st.strategy !== "fixed") && (
+          <div className="mt-0.5 flex flex-wrap items-center gap-1">
+            <span className="text-[10px] uppercase tracking-wider text-[var(--color-faint)]">
+              {t("training.exitStrategies")}:
+            </span>
+            {s.strategies.map((st) => {
+              const served = st.strategy === s.served_strategy;
+              return (
+                <span
+                  key={st.strategy}
+                  title={`${st.status}${served ? " · served" : ""}`}
+                  className={`rounded border px-1.5 py-0.5 text-[10px] ${STRATEGY_CHIP[st.status]} ${served ? "ring-1 ring-[var(--color-bull)]/40" : ""}`}
+                >
+                  {STRATEGY_LABEL[st.strategy] ?? st.strategy} {STRATEGY_MARK[st.status]}
+                </span>
+              );
+            })}
+          </div>
+        )}
       </Show>
     </div>
   );

@@ -29,6 +29,12 @@ export type Signal = {
   ret_q90?: number | null;
   sigma_horizon?: number | null;
   sltp_method?: string | null;
+  // Exit strategy of the served model: "fixed" (TP/SL), "trailing" (ratcheting stop, no TP) or
+  // "trailing_tp" (TP cap + ratchet). For trailing, stop_loss is the INITIAL stop; trail_atr is
+  // the ratchet distance in ATRs once armed (trail_activation_atr).
+  exit_strategy?: string | null;
+  trail_atr?: number | null;
+  trail_activation_atr?: number | null;
   // True only when the acted side's per-asset model passed the guard. False/absent = advisory
   // (optimized but not validated — served from its own model, but no edge claim).
   promoted?: boolean | null;
@@ -100,6 +106,9 @@ export type PaperPosition = {
   days_held: number;
   mtm_pct: number;
   mtm_eur: number;
+  // Exit strategy of the trade; for a trailing trade ``trail_stop`` is the live ratcheting stop.
+  exit_strategy?: string | null;
+  trail_stop?: number | null;
 };
 
 export type PaperPositions = {
@@ -248,10 +257,23 @@ export type OpsSnapshot = {
   logs: { time: string; message: string }[];
 };
 
+// One exit strategy's verdict for a (ticker, side): fixed / trailing / trailing_tp.
+export type StrategyStatus = {
+  strategy: string;
+  status: "promoted" | "advisory_only" | "never_trained";
+  winner: string | null;
+  framework: string | null;
+  trained_at: string | null;
+  metrics: Record<string, number>;
+  candidates: TournamentCandidate[];
+  horizon_days?: number | null;
+};
+
 export type TrainingStatus = {
   ticker: string;
   asset_class: string;
   side: "long" | "short";
+  // Headline = the SERVED strategy's verdict (see served_strategy).
   status: "promoted" | "advisory_only" | "never_trained";
   winner: string | null;
   framework: string | null;
@@ -260,6 +282,9 @@ export type TrainingStatus = {
   candidates: TournamentCandidate[];
   hpo_trials: number;
   horizon_days?: number | null;
+  // Which exit strategy currently serves this (ticker, side), and the full per-strategy slate.
+  served_strategy?: string | null;
+  strategies?: StrategyStatus[];
 };
 
 export type Health = {

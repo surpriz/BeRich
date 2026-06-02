@@ -55,13 +55,17 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("exp_return_gross", "DOUBLE"),
     ("exp_return_net", "DOUBLE"),
     ("cost_bps_roundtrip", "DOUBLE"),
+    ("exit_strategy", "VARCHAR DEFAULT 'fixed'"),
+    ("trail_atr", "DOUBLE"),
+    ("trail_activation_atr", "DOUBLE"),
 )
 
 _INSERT_COLUMNS = (
     "date, ticker, signal, proba, entry, stop_loss, take_profit, size_shares, notional, "
     "proba_calibrated, meta_proba, acted, ret_q10, ret_q50, ret_q90, sigma_horizon, sltp_method, "
     "direction, proba_long, proba_short, promoted, "
-    "exp_return_gross, exp_return_net, cost_bps_roundtrip"
+    "exp_return_gross, exp_return_net, cost_bps_roundtrip, "
+    "exit_strategy, trail_atr, trail_activation_atr"
 )
 
 

@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 _STATUS_FILE = "status.json"
 _SIDES = ("long", "short")
+_STRATEGIES = ("fixed", "trailing", "trailing_tp")
 
 
 def _hpo_trial_counts(optuna_db: Path) -> dict[str, int]:
@@ -65,53 +66,105 @@ def _hpo_trials_for(counts: dict[str, int], ticker: str, model: str | None, side
     return total
 
 
-def _side_entry(
-    config: Config, ticker: str, side: str, counts: dict[str, int]
-) -> dict[str, object]:
-    """Build one (ticker, side) row: status, winner, metrics, candidates, HPO trials, time."""
-    reg = config.model_dir_for_ticker(ticker, side)
-    entry: dict[str, object] = {
-        "ticker": ticker,
-        "asset_class": config.asset_class_for(ticker),
-        "side": side,
+def _strategy_entry(
+    config: Config, ticker: str, side: str, strategy: str
+) -> dict[str, object] | None:
+    """Status of one (ticker, side, exit strategy), or ``None`` if that strategy isn't trained.
+
+    Mirrors the per-asset tournament verdict for a single exit-strategy namespace: promoted
+    (cleared the guard) / advisory_only (saved but unpromoted) / never_trained, plus the winner,
+    headline metrics, horizon and full candidate slate.
+    """
+    reg = config.model_dir_for_ticker(ticker, side, strategy)
+    if not reg.exists():
+        return None
+    item: dict[str, object] = {
+        "strategy": strategy,
         "status": "never_trained",
         "winner": None,
         "framework": None,
         "trained_at": None,
         "metrics": {},
         "candidates": [],
-        "hpo_trials": _hpo_trials_for(counts, ticker, None, side),
         "horizon_days": None,
     }
-    if not reg.exists():
-        return entry
-
-    # The tournament summary (full candidate slate + run time), when present.
     status_path = reg / _STATUS_FILE
     if status_path.exists():
         try:
             summary = json.loads(status_path.read_text(encoding="utf-8"))
-            entry["trained_at"] = summary.get("trained_at")
-            entry["candidates"] = summary.get("candidates", [])
+            item["trained_at"] = summary.get("trained_at")
+            item["candidates"] = summary.get("candidates", [])
         except (OSError, ValueError):
-            logger.warning("unreadable status.json for %s/%s", ticker, side, exc_info=True)
+            logger.warning("unreadable status.json for %s/%s/%s", ticker, side, strategy)
 
-    # The promoted artifact (if any) — authoritative for status + headline metrics.
     if (reg / ACTIVE_POINTER).exists():
         promoted = _promoted_meta(reg, ticker, side)
         if promoted is not None:
-            _fill_from_meta(entry, promoted, status="promoted", winner=promoted.name)
-            return entry
+            _fill_from_meta(item, promoted, status="promoted", winner=promoted.name)
+            return item
 
-    # No promoted pointer: advisory-only if any candidate artifact was saved, else never trained.
+    # No promoted pointer: advisory-only if a candidate artifact was saved. Exclude the nested
+    # trailing-strategy subdirs (they have no META_FILE of their own) so the fixed namespace
+    # doesn't count them as its own candidates.
     saved = [d for d in reg.iterdir() if d.is_dir() and (d / META_FILE).exists()]
-    if saved or entry["candidates"]:
-        entry["status"] = "advisory_only"
-        if saved and not entry["metrics"]:
+    if saved or item["candidates"]:
+        item["status"] = "advisory_only"
+        if saved and not item["metrics"]:
             meta = _read_meta(saved[0])
             if meta is not None:
-                _fill_from_meta(entry, meta, status="advisory_only", winner=None)
-    return entry
+                _fill_from_meta(item, meta, status="advisory_only", winner=None)
+    return item
+
+
+def _served_strategy(strategies: list[dict[str, object]], side: str) -> dict[str, object] | None:
+    """The exit strategy that serves this (ticker, side): mirrors ``service._select_strategy``.
+
+    Best PROMOTED strategy by guard metric (Sharpe long / deflated Sharpe short), ties → fixed;
+    if none is promoted, the fixed advisory if present, else the first trained. ``None`` when no
+    strategy has been trained yet.
+    """
+    trained = [s for s in strategies if s["status"] != "never_trained"]
+    if not trained:
+        return None
+    metric_key = "deflated_sharpe" if side == "short" else "sharpe"
+
+    def rank(s: dict[str, object]) -> tuple[float, bool]:
+        metric = cast("dict[str, float]", s["metrics"]).get(metric_key, 0.0)
+        return metric, s["strategy"] == "fixed"
+
+    promoted = [s for s in trained if s["status"] == "promoted"]
+    if promoted:
+        return max(promoted, key=rank)
+    return next((s for s in trained if s["strategy"] == "fixed"), trained[0])
+
+
+def _side_entry(
+    config: Config, ticker: str, side: str, counts: dict[str, int]
+) -> dict[str, object]:
+    """Build one (ticker, side) row across all exit strategies.
+
+    The headline fields (status/winner/metrics/...) reflect the SERVED strategy (the one the
+    signal service would pick); ``strategies`` carries every trained exit strategy so the
+    dashboard can show fixed vs trailing vs trailing_tp side by side.
+    """
+    per_strategy = (_strategy_entry(config, ticker, side, st) for st in _STRATEGIES)
+    strategies = [s for s in per_strategy if s is not None]
+    served = _served_strategy(strategies, side)
+    return {
+        "ticker": ticker,
+        "asset_class": config.asset_class_for(ticker),
+        "side": side,
+        "status": served["status"] if served else "never_trained",
+        "winner": served["winner"] if served else None,
+        "framework": served["framework"] if served else None,
+        "trained_at": served["trained_at"] if served else None,
+        "metrics": served["metrics"] if served else {},
+        "candidates": served["candidates"] if served else [],
+        "hpo_trials": _hpo_trials_for(counts, ticker, None, side),
+        "horizon_days": served["horizon_days"] if served else None,
+        "served_strategy": served["strategy"] if served else "fixed",
+        "strategies": strategies,
+    }
 
 
 def _read_meta(artifact_dir: Path) -> ModelMetadata | None:

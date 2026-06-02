@@ -93,6 +93,8 @@ const SLTP_LABEL: Record<string, string> = {
   vol_scaled: "vol",
   quantile: "quantile",
   atr_fixed: "ATR",
+  trailing: "trail",
+  trailing_tp: "trail+TP",
 };
 
 export function SignalsTable({ signals, cfg }: { signals: Signal[]; cfg?: SignalConfig }) {

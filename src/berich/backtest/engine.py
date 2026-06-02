@@ -53,6 +53,11 @@ class BacktestConfig(BaseModel):
     slippage_cap_bps: float = 100.0  # safety cap to keep micro-caps sane
     borrow_bps_annual: float = 0.0  # short borrow fee, bps/yr; only charged on shorts
     direction: str = "long"
+    # Exit strategy: "fixed" = the historical TP/SL barrier; "trailing" rides a ratcheting stop
+    # with no TP; "trailing_tp" keeps the TP as a cap. Trailing uses the two params below.
+    exit_mode: str = "fixed"
+    trailing_atr: float = 2.5
+    trailing_activation_atr: float = 1.0
 
 
 @dataclass
@@ -64,7 +69,7 @@ class Trade:
     exit_date: pd.Timestamp
     entry_price: float
     exit_price: float
-    reason: str  # "target" | "stop" | "time"
+    reason: str  # "target" | "stop" | "trailing" | "time"
     direction: str = "long"
 
     @property
@@ -190,27 +195,48 @@ def _simulate_ticker(
             i += 1
             continue
 
+        ref = close.iloc[i]  # barriers reference the signal close, not the slipped fill
         if direction == "short":
-            entry_price = close.iloc[i] * (1 - slip)  # sell on entry, fill below close
-            stop = close.iloc[i] + config.stop_loss_atr * a
-            target = close.iloc[i] - config.take_profit_atr * a
+            entry_price = ref * (1 - slip)  # sell on entry, fill below close
+            stop = ref + config.stop_loss_atr * a
+            target = ref - config.take_profit_atr * a
         else:
-            entry_price = close.iloc[i] * (1 + slip)
-            stop = close.iloc[i] - config.stop_loss_atr * a
-            target = close.iloc[i] + config.take_profit_atr * a
+            entry_price = ref * (1 + slip)
+            stop = ref - config.stop_loss_atr * a
+            target = ref + config.take_profit_atr * a
         time_exit = min(i + config.horizon_days, n - 1)
         daily.iloc[i] -= fee  # entry commission, charged on the entry bar
 
-        exit_idx, exit_price, reason = _resolve_exit(
-            high,
-            low,
-            close,
-            start=i + 1,
-            time_exit=time_exit,
-            stop=stop,
-            target=target,
-            direction=direction,
-        )
+        if config.exit_mode == "fixed":
+            exit_idx, exit_price, reason = _resolve_exit(
+                high,
+                low,
+                close,
+                start=i + 1,
+                time_exit=time_exit,
+                stop=stop,
+                target=target,
+                direction=direction,
+            )
+        else:
+            activation = (
+                ref - config.trailing_activation_atr * a
+                if direction == "short"
+                else ref + config.trailing_activation_atr * a
+            )
+            exit_idx, exit_price, reason = _resolve_exit_trailing(
+                high,
+                low,
+                close,
+                start=i + 1,
+                time_exit=time_exit,
+                entry=ref,
+                init_stop=stop,
+                target=target if config.exit_mode == "trailing_tp" else None,
+                trail_dist=config.trailing_atr * a,
+                activation_level=activation,
+                direction=direction,
+            )
 
         # Mark to market across the holding period. A short earns the negated price
         # return each day and pays the borrow fee for every day the position is held.
@@ -273,4 +299,57 @@ def _resolve_exit(
             return j, stop, "stop"
         if hit_target:
             return j, target, "target"
+    return time_exit, close.iloc[time_exit], "time"
+
+
+def _resolve_exit_trailing(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    *,
+    start: int,
+    time_exit: int,
+    entry: float,
+    init_stop: float,
+    target: float | None,
+    trail_dist: float,
+    activation_level: float,
+    direction: str = "long",
+) -> tuple[int, float, str]:
+    """Trailing-stop variant of :func:`_resolve_exit` — a ratcheting stop, optional TP cap.
+
+    Causal: at each bar the stop reflects the favorable extreme of all PRIOR bars; we test the
+    bar's adverse side against it, then fold the bar into the extreme (so a bar never both sets
+    and triggers its own stop). The trail arms once the favorable extreme passes
+    ``activation_level``; before that the initial fixed stop holds (reason ``"stop"`` vs the
+    armed ``"trailing"``). ``target=None`` means no take-profit (pure trend-following); a
+    same-bar stop+target tie resolves to the stop, as in the fixed engine.
+    """
+    short = direction == "short"
+    running_ext = entry
+    cur_stop = init_stop
+    armed = False
+    for j in range(start, time_exit + 1):
+        if short:
+            hit_stop = high.iloc[j] >= cur_stop
+            hit_target = target is not None and low.iloc[j] <= target
+        else:
+            hit_stop = low.iloc[j] <= cur_stop
+            hit_target = target is not None and high.iloc[j] >= target
+        if hit_stop:
+            return j, cur_stop, "trailing" if armed else "stop"
+        if hit_target:
+            return j, target, "target"
+        if short:
+            running_ext = min(running_ext, low.iloc[j])
+            if running_ext <= activation_level:
+                armed = True
+            if armed:
+                cur_stop = min(cur_stop, running_ext + trail_dist)
+        else:
+            running_ext = max(running_ext, high.iloc[j])
+            if running_ext >= activation_level:
+                armed = True
+            if armed:
+                cur_stop = max(cur_stop, running_ext - trail_dist)
     return time_exit, close.iloc[time_exit], "time"

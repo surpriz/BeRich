@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from berich.features.volatility import VolForecast
 from berich.labeling.triple_barrier import (
@@ -116,3 +117,67 @@ def test_adaptive_barriers_long_unchanged_with_direction_kwarg():
     s2, t2, _ = adaptive_barriers(100.0, 2.0, vf, cfg, direction="long")
     assert s1 == s2
     assert t1 == t2
+
+
+# ----------------------------------------------------------------- trailing exit ----
+
+
+def _trail_cfg(mode: str = "trailing", direction: str = "long", horizon: int = 5) -> LabelConfig:
+    return LabelConfig(
+        horizon_days=horizon,
+        atr_window=3,
+        take_profit_atr=2.0,
+        stop_loss_atr=2.0,
+        trailing_atr=2.5,
+        trailing_activation_atr=1.0,
+        direction=direction,  # ty: ignore[invalid-argument-type]
+        exit_mode=mode,  # ty: ignore[invalid-argument-type]
+    )
+
+
+def test_trailing_rides_past_fixed_take_profit():
+    # A clean uptrend: the fixed TP caps the win at ~2 ATR, the trailing exit lets it run to
+    # the horizon close, so the trailing realized return is strictly larger.
+    df = _series([100, 99, 101, 100, 102, 105, 108, 111, 114, 117, 120])
+    fixed = triple_barrier_labels(df, _cfg())["ret"].dropna().iloc[0]
+    trailing = triple_barrier_labels(df, _trail_cfg())["ret"].dropna().iloc[0]
+    assert trailing > fixed > 0
+
+
+def test_trailing_tp_caps_at_fixed_target():
+    # With the TP kept as a cap, an uptrend exits at that fixed target — same as the fixed
+    # label — so trailing_tp gives back the upside the pure trailing variant captures.
+    df = _series([100, 99, 101, 100, 102, 105, 108, 111, 114, 117, 120])
+    fixed = triple_barrier_labels(df, _cfg())["ret"].dropna().iloc[0]
+    capped = triple_barrier_labels(df, _trail_cfg(mode="trailing_tp"))["ret"].dropna().iloc[0]
+    pure = triple_barrier_labels(df, _trail_cfg())["ret"].dropna().iloc[0]
+    assert capped == fixed
+    assert pure > capped
+
+
+def test_trailing_short_rides_downtrend_and_wins():
+    df = _series([100, 101, 99, 100, 98, 95, 92, 89, 86, 83, 80])
+    out = triple_barrier_labels(df, _trail_cfg(direction="short")).dropna()
+    assert out["label"].iloc[0] == 1
+    assert out["ret"].iloc[0] > 0
+
+
+def test_trailing_stop_is_causal_no_same_bar_lookahead():
+    # A favorable intrabar spike (high=110) that fully retraces within the SAME bar (low=99)
+    # must NOT exit on that bar — the stop is set from the PRIOR extreme. The exit only fires
+    # on the next bar whose low breaks the ratcheted stop. A lookahead bug would exit one bar
+    # early (bars_held==1); the causal engine exits at bars_held==2, locking +5%.
+    n = 12
+    close = np.full(n, 100.0)
+    high = np.full(n, 101.0)
+    low = np.full(n, 99.0)
+    close[8:] = 104.0
+    high[7], low[7] = 110.0, 99.0  # bar A: spike up, full retrace
+    high[8], low[8] = 106.0, 104.0  # bar B: low breaks the ratcheted stop (~105)
+    high[9:], low[9:] = 105.0, 103.0
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    df = pd.DataFrame({"open": close, "high": high, "low": low, "close": close}, index=idx)
+    out = triple_barrier_labels(df, _trail_cfg(horizon=5))
+    assert out["bars_held"].iloc[6] == 2  # exited on bar B, not the spike bar A
+    assert out["label"].iloc[6] == 1
+    assert out["ret"].iloc[6] == pytest.approx(0.05, abs=1e-9)

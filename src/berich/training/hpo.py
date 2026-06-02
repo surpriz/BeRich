@@ -439,13 +439,15 @@ def _ticker_dataset(
     with_news: bool = True,
     with_earnings: bool = True,
     horizon_days: int | None = None,
+    exit_mode: str | None = None,
 ) -> tuple[SupervisedDataset, dict]:
     """Build a single-ticker supervised dataset (direction-aware) + its prices dict.
 
     News/earnings columns are included only when their caches actually hold data, so the
     feature search can toggle them; ``side`` flips the triple-barrier into short mode.
     ``horizon_days`` overrides the config's triple-barrier horizon (used by the HPO horizon
-    search); ``None`` keeps the configured default.
+    search); ``None`` keeps the configured default. ``exit_mode`` re-labels under a trailing
+    exit strategy (``"trailing"`` / ``"trailing_tp"``); ``None`` keeps the configured default.
     """
     from berich.data.earnings import EarningsStore  # noqa: PLC0415
     from berich.data.news import NewsStore  # noqa: PLC0415
@@ -475,6 +477,8 @@ def _ticker_dataset(
     update: dict[str, object] = {"direction": side}
     if horizon_days is not None:
         update["horizon_days"] = horizon_days
+    if exit_mode is not None:
+        update["exit_mode"] = exit_mode
     label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(update=update)
     dataset = build_ticker_dataset(
         df,

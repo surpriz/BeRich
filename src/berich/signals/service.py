@@ -82,7 +82,14 @@ class Signal:
     ret_q50: float | None = None
     ret_q90: float | None = None
     sigma_horizon: float | None = None
-    sltp_method: str = "atr_fixed"  # "vol_scaled" | "quantile" | "atr_fixed"
+    sltp_method: str = "atr_fixed"  # "vol_scaled" | "quantile" | "atr_fixed" | "trailing[_tp]"
+    # Exit strategy of the acted side's served model: "fixed" (TP/SL barrier), "trailing"
+    # (ratcheting stop, no TP) or "trailing_tp" (TP cap + ratcheting stop). For the trailing
+    # variants ``stop_loss`` is the INITIAL stop and the two ``trail_*`` fields below carry the
+    # ratchet params; ``take_profit`` is the cap (trailing_tp) or an informational target.
+    exit_strategy: str = "fixed"
+    trail_atr: float | None = None
+    trail_activation_atr: float | None = None
     # True when the acted side's per-asset model passed the guard (promoted); False = advisory
     # (served from the asset's own optimized-but-unpromoted candidate, never a generic fallback).
     promoted: bool = False
@@ -212,30 +219,69 @@ def _needs_micro(cols: list[str]) -> bool:
 
 @dataclass
 class _SideModel:
-    """A per-asset model for one side, plus its guard status and trained horizon."""
+    """A per-asset model for one side, plus its guard status, horizon and exit strategy."""
 
     model: Model
     cols: list[str]
     calibrator: ProbaCalibrator | None
     promoted: bool
     horizon_days: int
+    exit_strategy: str = "fixed"
+
+
+def _select_strategy(config: Config, ticker: str, side: str) -> str | None:
+    """Pick which exit strategy serves a (ticker, side); ``None`` if no artifact exists.
+
+    Among the strategies that have a model, prefer a PROMOTED one with the best guard metric
+    (Sharpe for long, deflated Sharpe for short); ties resolve to "fixed" (the baseline). If
+    none is promoted, serve "fixed" advisory if present, else any available strategy. This keeps
+    the historical behavior when only the fixed baseline exists.
+    """
+    found: list[tuple[str, bool, float]] = []
+    for strategy in ("fixed", "trailing", "trailing_tp"):
+        registry_dir = config.model_dir_for_ticker(ticker, side, strategy)
+        loaded = load_best(registry_dir)
+        if loaded is None:
+            continue
+        _model, meta = loaded
+        promoted = load_active(registry_dir) is not None
+        metric = meta.metrics.get("deflated_sharpe" if side == "short" else "sharpe", 0.0)
+        found.append((strategy, promoted, metric))
+    if not found:
+        return None
+    promoted = [f for f in found if f[1]]
+    if promoted:
+        # Best metric wins; a tie favors the fixed baseline (deterministic, conservative).
+        return max(promoted, key=lambda f: (f[2], f[0] == "fixed"))[0]
+    return next((f[0] for f in found if f[0] == "fixed"), found[0][0])
 
 
 def _ticker_side_model(config: Config, ticker: str, side: str) -> _SideModel | None:
-    """Per-asset model for one side: the promoted winner if any, else the best optimized
-    candidate (advisory). Returns ``None`` only when the asset has no artifact for ``side``
-    at all (not yet optimized). Never falls back to a generic/global model — an asset is served
-    exclusively from its own trained models. Carries the model's trained horizon so serving
-    builds its barriers on the same horizon the model learned on.
+    """Per-asset model for one side, served under the selected exit strategy (see
+    :func:`_select_strategy`): the promoted winner if any, else the best optimized candidate
+    (advisory). Returns ``None`` only when the asset has no artifact for ``side`` under any
+    strategy. Never falls back to a generic/global model — an asset is served exclusively from
+    its own trained models. Carries the model's trained horizon and exit strategy so serving
+    builds its barriers the same way the model learned and is backtested on.
     """
-    registry_dir = config.model_dir_for_ticker(ticker, side)
+    strategy = _select_strategy(config, ticker, side)
+    if strategy is None:
+        return None
+    registry_dir = config.model_dir_for_ticker(ticker, side, strategy)
     loaded = load_best(registry_dir)
-    if loaded is None:
+    if loaded is None:  # defensive: _select_strategy already confirmed an artifact
         return None
     model, meta = loaded
     cal = load_calibrator(registry_dir / meta.name)
     promoted = load_active(registry_dir) is not None
-    return _SideModel(model, list(meta.feature_columns), cal, promoted, meta.horizon_days)
+    return _SideModel(
+        model,
+        list(meta.feature_columns),
+        cal,
+        promoted,
+        meta.horizon_days,
+        exit_strategy=meta.exit_strategy,
+    )
 
 
 def _optimized_tickers(config: Config) -> list[str]:
@@ -320,6 +366,8 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
             long_promoted=per_long.promoted,
             short_promoted=per_short.promoted if per_short else False,
             horizon_days=per_long.horizon_days,
+            long_exit_strategy=per_long.exit_strategy,
+            short_exit_strategy=per_short.exit_strategy if per_short else "fixed",
         )
         if signal is not None:
             signals.append(signal)
@@ -355,6 +403,8 @@ def _signal_for_ticker(  # noqa: C901, PLR0912, PLR0915
     long_promoted: bool = False,
     short_promoted: bool = False,
     horizon_days: int | None = None,
+    long_exit_strategy: str = "fixed",
+    short_exit_strategy: str = "fixed",
 ) -> Signal | None:
     # Serve on the model's own trained horizon (the per-asset HPO may have chosen != 10), so
     # the SL/TP barriers and the vol forecast match what the model learned on.
@@ -403,10 +453,23 @@ def _signal_for_ticker(  # noqa: C901, PLR0912, PLR0915
         return None
 
     decision, direction = _decide(p_long, p_short, config)
+    acted_strategy = short_exit_strategy if direction == "short" else long_exit_strategy
 
     q10 = q50 = q90 = None
     sigma_h: float | None = None
-    if config.signals.adaptive_sltp:
+    if acted_strategy != "fixed":
+        # Trailing variants use plain entry-frozen ATR barriers — the same construction they
+        # were labeled and backtested under — not the adaptive/quantile scaling. ``stop`` is the
+        # INITIAL stop the paper book starts from; ``target`` is the TP cap (trailing_tp) or an
+        # informational first target (pure trailing). The ratchet params travel on the Signal.
+        if direction == "short":
+            stop = entry + label_cfg.stop_loss_atr * a
+            target = entry - label_cfg.take_profit_atr * a
+        else:
+            stop = entry - label_cfg.stop_loss_atr * a
+            target = entry + label_cfg.take_profit_atr * a
+        sltp_method = acted_strategy
+    elif config.signals.adaptive_sltp:
         vf = forecast_vol(
             df["close"].loc[:last_date],
             horizon_days=label_cfg.horizon_days,
@@ -486,6 +549,11 @@ def _signal_for_ticker(  # noqa: C901, PLR0912, PLR0915
         ret_q90=None if q90 is None else round(q90, 4),
         sigma_horizon=None if sigma_h is None else round(sigma_h, 6),
         sltp_method=sltp_method,
+        exit_strategy=acted_strategy,
+        trail_atr=label_cfg.trailing_atr if acted_strategy != "fixed" else None,
+        trail_activation_atr=(
+            label_cfg.trailing_activation_atr if acted_strategy != "fixed" else None
+        ),
         promoted=acted_promoted,
         exp_return_gross=None if exp_gross is None else round(exp_gross, 5),
         exp_return_net=None if exp_net is None else round(exp_net, 5),

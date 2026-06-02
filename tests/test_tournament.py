@@ -101,7 +101,10 @@ def test_tournament_promotes_when_candidate_passes(tmp_path, monkeypatch):
     # Fabricate a gate-passing candidate deterministically (no walk-forward / backtest, whose
     # OOF probabilities depend on the global RNG state and so vary by test order). This isolates
     # the tournament's promote-the-winner logic from candidate-training nondeterminism.
-    def _passing(config, store, ticker, side, model_name, *, device=None, calibrate=True):  # noqa: ARG001
+    def _passing(
+        config, store, ticker, side, model_name, *, strategy="fixed", device=None, calibrate=True
+    ):
+        del config, store, device, calibrate  # stubbed: only side/model_name/strategy are used
         model = LGBMModel().fit(pd.DataFrame({"f": [0.0, 1.0, 0.0, 1.0]}), pd.Series([0, 1, 0, 1]))
         meta = ModelMetadata(
             name=f"{model_name}-{side}",
@@ -112,6 +115,7 @@ def test_tournament_promotes_when_candidate_passes(tmp_path, monkeypatch):
             strategy_type="long_only",
             side=side,
             ticker=ticker,
+            exit_strategy=strategy,
         )
         cand = CandidateResult(
             ticker=ticker,
@@ -169,5 +173,33 @@ def test_train_candidate_returns_metadata(tmp_path):
     assert meta.ticker == "AAA"
     assert meta.side == "long"
     assert meta.name == "lgbm-long"
+    assert meta.exit_strategy == "fixed"
     assert cand.framework == "lightgbm"
     assert cal is not None
+
+
+def test_train_candidate_trailing_records_exit_strategy(tmp_path):
+    cfg = _config_with_ticker(tmp_path)
+    store = OhlcvStore(cfg.ohlcv_dir)
+    _model, meta, _cal, _cand = train_candidate(
+        cfg, store, "AAA", "long", "lgbm", strategy="trailing", calibrate=False
+    )
+    assert meta.exit_strategy == "trailing"
+
+
+def test_tournament_trailing_uses_separate_namespace_and_guards(tmp_path):
+    cfg = _config_with_ticker(tmp_path)
+    result = train_ticker_tournament(
+        cfg, "AAA", "long", strategy="trailing", models=["lgbm"], calibrate=False
+    )
+    assert result.strategy == "trailing"
+    # Trailing artifacts live in their own subdir, never colliding with the fixed baseline.
+    trailing_dir = cfg.model_dir_for_ticker("AAA", "long", "trailing")
+    fixed_dir = cfg.model_dir_for_ticker("AAA", "long", "fixed")
+    assert trailing_dir != fixed_dir
+    assert trailing_dir.parent == fixed_dir  # tickers/AAA/long/trailing under tickers/AAA/long
+    # Random-walk data cannot clear the guard — trailing is refused too (honest reporting).
+    assert result.advisory_only is True
+    assert not (trailing_dir / ACTIVE_POINTER).exists()
+    status = json.loads((trailing_dir / "status.json").read_text())
+    assert status["strategy"] == "trailing"

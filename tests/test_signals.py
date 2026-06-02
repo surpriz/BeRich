@@ -221,3 +221,35 @@ def test_legacy_signal_defaults_long_direction(tmp_path):
     store.save([_signal("AAPL", 0.6)])
     row = store.history("AAPL").iloc[0]
     assert row["direction"] == "long"
+
+
+def test_signal_store_roundtrips_trailing_fields(tmp_path):
+    store = SignalStore(tmp_path / "berich.duckdb")
+    trailing = Signal(
+        date=pd.Timestamp("2024-01-05"),
+        ticker="BNP.PA",
+        signal=LONG,
+        proba=0.6,
+        entry=100.0,
+        stop_loss=98.0,
+        take_profit=104.0,
+        size_shares=20,
+        notional=2000.0,
+        sltp_method="trailing",
+        exit_strategy="trailing",
+        trail_atr=2.5,
+        trail_activation_atr=1.0,
+    )
+    store.save([trailing])
+    row = store.history("BNP.PA").iloc[0]
+    assert row["exit_strategy"] == "trailing"
+    assert row["trail_atr"] == pytest.approx(2.5)
+    assert row["trail_activation_atr"] == pytest.approx(1.0)
+
+
+def test_legacy_signal_defaults_fixed_exit_strategy(tmp_path):
+    # A Signal built the old way persists as a fixed-exit row (back-compat default).
+    store = SignalStore(tmp_path / "berich.duckdb")
+    store.save([_signal("AAPL", 0.6)])
+    row = store.history("AAPL").iloc[0]
+    assert row["exit_strategy"] == "fixed"

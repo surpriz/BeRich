@@ -25,7 +25,9 @@ from berich.signals.paper import (
     CLOSED_STOP,
     CLOSED_TARGET,
     CLOSED_TIME,
+    CLOSED_TRAIL,
     OPEN,
+    get_open_positions,
 )
 from berich.signals.service import BUY, SHORT, Signal
 from berich.signals.store import SignalStore
@@ -85,6 +87,7 @@ def _signal(
     target: float,
     *,
     promoted: bool = True,
+    exit_strategy: str = "fixed",
 ) -> Signal:
     return Signal(
         date=date,
@@ -97,6 +100,7 @@ def _signal(
         size_shares=10,
         notional=entry * 10,
         promoted=promoted,
+        exit_strategy=exit_strategy,
     )
 
 
@@ -301,3 +305,93 @@ def test_open_trade_stays_open_when_history_too_short(config, ohlcv_store):
     assert closed == 0
     trade = PaperStore(config.db_path).all_trades().iloc[0]
     assert trade["status"] == OPEN
+
+
+# ----------------------------------------------------------------- trailing exit ----
+
+
+def _trail_config(tmp_path) -> Config:
+    """Config with a short ATR window so the entry bar has warmed ATR a few bars in."""
+    return Config(
+        data_dir=tmp_path,
+        watchlist=["AAA"],
+        labeling=LabelingConfig(
+            horizon_days=10,
+            atr_window=3,
+            stop_loss_atr=1.0,
+            take_profit_atr=2.0,
+            trailing_atr=2.5,
+            trailing_activation_atr=1.0,
+        ),
+        signals=SignalConfig(buy_threshold=0.55, capital=10_000.0, risk_pct=0.01),
+    )
+
+
+def _trail_ohlcv() -> pd.DataFrame:
+    # 6 warmup bars (ATR -> 2), entry at idx 5 (close 100), a rise that arms+ratchets the stop
+    # to ~106, then bar 8 reverses and breaks it. Padding keeps the time barrier (idx 15) clear.
+    close = [100.0] * 6 + [106.0, 110.0, 104.0] + [104.0] * 7
+    high = [101.0] * 6 + [107.0, 111.0, 108.0] + [105.0] * 7
+    low = [99.0] * 6 + [105.0, 109.0, 104.0] + [103.0] * 7
+    idx = pd.bdate_range("2024-01-02", periods=len(close))
+    return pd.DataFrame({"open": close, "high": high, "low": low, "close": close}, index=idx)
+
+
+def test_trailing_long_rides_then_exits_on_reversal(tmp_path):
+    config = _trail_config(tmp_path)
+    store = OhlcvStore(config.ohlcv_dir)
+    df = _trail_ohlcv()
+    _save_ohlcv(store, "AAA", df)
+    entry_date = df.index[5]
+    sigstore = SignalStore(config.db_path)
+    sigstore.save(
+        [_signal(entry_date, "AAA", entry=100.0, stop=98.0, target=102.0, exit_strategy="trailing")]
+    )
+
+    assert open_new_trades(config, store, sigstore) == 1
+    assert update_open_trades(config, store) == 1
+    trade = PaperStore(config.db_path).all_trades().iloc[0]
+    assert trade["status"] == CLOSED_TRAIL  # ratcheted (armed) stop, not a fixed stop
+    assert trade["exit_price"] == pytest.approx(106.0)  # high 111 - trail 5
+    assert trade["exit_price"] > 102.0  # captured more than the fixed take-profit would
+    assert trade["pnl_pct"] > 0
+
+
+def test_trailing_open_position_exposes_live_trail_stop(tmp_path):
+    config = _trail_config(tmp_path)
+    store = OhlcvStore(config.ohlcv_dir)
+    # Rise only (no reversal yet) so the trade stays open with an armed, ratcheted stop.
+    close = [100.0] * 6 + [106.0, 110.0]
+    high = [101.0] * 6 + [107.0, 111.0]
+    low = [99.0] * 6 + [105.0, 109.0]
+    idx = pd.bdate_range("2024-01-02", periods=len(close))
+    df = pd.DataFrame({"open": close, "high": high, "low": low, "close": close}, index=idx)
+    _save_ohlcv(store, "AAA", df)
+    entry_date = df.index[5]
+    sigstore = SignalStore(config.db_path)
+    sigstore.save(
+        [_signal(entry_date, "AAA", entry=100.0, stop=98.0, target=102.0, exit_strategy="trailing")]
+    )
+
+    open_new_trades(config, store, sigstore)
+    update_open_trades(config, store)  # not enough bars to hit anything -> stays open
+    positions = get_open_positions(config, store)
+    assert len(positions) == 1
+    pos = positions[0]
+    assert pos.exit_strategy == "trailing"
+    assert pos.trail_stop == pytest.approx(106.0)  # high 111 - trail 5, ratcheted up from 98
+
+
+def test_trailing_idempotent_after_close(tmp_path):
+    config = _trail_config(tmp_path)
+    store = OhlcvStore(config.ohlcv_dir)
+    _save_ohlcv(store, "AAA", _trail_ohlcv())
+    entry_date = _trail_ohlcv().index[5]
+    sigstore = SignalStore(config.db_path)
+    sigstore.save(
+        [_signal(entry_date, "AAA", entry=100.0, stop=98.0, target=102.0, exit_strategy="trailing")]
+    )
+
+    open_new_trades(config, store, sigstore)
+    assert update_open_trades(config, store) == 1
+    assert update_open_trades(config, store) == 0  # closed trades are immutable

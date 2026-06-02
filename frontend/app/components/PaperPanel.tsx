@@ -114,6 +114,7 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
               <th className="px-5 py-2 font-medium">Ticker</th>
               <th className="px-3 py-2 text-right font-medium">Entry</th>
               <th className="px-3 py-2 text-right font-medium">Current</th>
+              <th className="px-3 py-2 text-right font-medium">Stop</th>
               <th className="px-3 py-2 text-right font-medium">MTM</th>
               <th className="px-5 py-2 text-right font-medium">Days</th>
             </tr>
@@ -133,10 +134,18 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
                         long
                       </span>
                     )}
+                    {p.exit_strategy && p.exit_strategy !== "fixed" ? (
+                      <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--color-muted)] ring-1 ring-[var(--color-line)]">
+                        trail
+                      </span>
+                    ) : null}
                   </span>
                 </td>
                 <td className="tabular px-3 py-2 text-right">{fmt(p.entry)}</td>
                 <td className="tabular px-3 py-2 text-right">{fmt(p.current_price)}</td>
+                <td className="tabular px-3 py-2 text-right text-[var(--color-muted)]">
+                  {fmt(p.trail_stop ?? p.stop)}
+                </td>
                 <td className={`tabular px-3 py-2 text-right ${pnlColor(p.mtm_pct)}`}>
                   {pct(p.mtm_pct)}
                 </td>

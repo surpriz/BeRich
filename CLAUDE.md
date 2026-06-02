@@ -10,6 +10,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   carrying a **long and a short** side (Phase 12). The triple-barrier label and backtest
   engine are direction-aware.
 
+  **Exit strategies (Phase 13).** Beyond the fixed TP/SL triple barrier, the label + backtest
+  also simulate **trailing** exits via `LabelConfig.exit_mode` / `BacktestConfig.exit_mode`
+  (`fixed` | `trailing` = ratcheting stop, no TP | `trailing_tp` = TP cap + ratchet; params
+  `trailing_atr`, `trailing_activation_atr`). The trailing walk is **causal** (the trail
+  distance is frozen at entry; the stop is set from the favorable extreme of *prior* bars, so a
+  bar never sets-and-triggers its own stop). Each strategy is trained + gated as a **parallel**
+  per-asset model under `data/models/tickers/<SLUG>/<side>[/<strategy>]/` (`fixed` keeps the
+  legacy path) through the **same** `promote()` guard — `registry.py` is exit-strategy-agnostic.
+  Serving picks the best **promoted** strategy per (ticker, side), ties → `fixed`
+  (`signals/service._select_strategy`); the paper book walks the right exit per trade
+  (`paper._resolve_trailing_exit`, status `closed_trail`).
+
   ## Non-negotiable design rules
 
   1. **The guard rule.** A model is only trusted / promoted if it clears its strategy's
@@ -71,7 +83,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   **per-asset tournament**: `berich train --ticker AAPL --side long|short --tournament`
   trains LightGBM/LSTM/PatchTST/TFT for one asset+side and keeps the walk-forward winner
   under `data/models/tickers/<TICKER>/<side>/`; `--all-tickers` sweeps every configured
-  asset. `berich hpo --ticker ... --model ... --side ... --trials N` runs a per-asset
+  asset. As of Phase 13 `train --tournament --strategy fixed|trailing|trailing_tp|all`
+  trains/compares exit strategies (each gated independently), and `berich backtest --exit-mode
+  ...` backtests one; `scripts/compare_exit_strategies.py` tabulates the head-to-head verdicts.
+  `berich hpo --ticker ... --model ... --side ... --trials N` runs a per-asset
   Optuna study (params + feature-group toggles, incl. news/FinBERT;
   `zoo.ticker_initial_hpo_trials = 100`). `berich backup [--keep N]` archives the
   training state. `news` runs the Alpha Vantage fetch + FinBERT GPU scoring; `pead`

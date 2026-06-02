@@ -44,6 +44,17 @@ class LabelingConfig(BaseModel):
     # historical default); "short" mirrors them. Per-asset short models build their
     # dataset with a LabelConfig carrying direction="short".
     direction: Literal["long", "short"] = "long"
+    # Exit strategy the label simulates. "fixed" is the historical triple barrier (TP/SL
+    # frozen at entry). "trailing" drops the TP and rides a ratcheting stop (let winners
+    # run); "trailing_tp" keeps the fixed TP as a cap but ratchets the stop up. The trailing
+    # variants use the two params below; "fixed" ignores them, so existing configs are
+    # unchanged. See docs/RESULTS.md "Trailing stop".
+    exit_mode: Literal["fixed", "trailing", "trailing_tp"] = "fixed"
+    # Trailing-stop distance, in entry-frozen ATRs, once the trail is armed.
+    trailing_atr: float = 2.5
+    # The trail only arms after price moves favorably by this many entry-frozen ATRs; before
+    # that the initial fixed stop (stop_loss_atr) holds. 0 arms immediately.
+    trailing_activation_atr: float = 1.0
 
 
 class SignalConfig(BaseModel):
@@ -120,6 +131,12 @@ class ZooConfig(BaseModel):
     ticker_initial_hpo_trials: int = 100  # heavy first sweep, per ticker x model x side
     ticker_nightly_hpo_trials: int = 4  # light nightly top-up into the same per-ticker study
     ticker_sides: list[str] = Field(default_factory=lambda: ["long", "short"])
+    # Exit strategies each per-asset tournament trains and compares (each is gated by the same
+    # honest guard; only a passer is promoted/served). "fixed" stays the baseline and keeps the
+    # existing registry namespace; trailing variants get their own subdir per (ticker, side).
+    ticker_exit_strategies: list[str] = Field(
+        default_factory=lambda: ["fixed", "trailing", "trailing_tp"]
+    )
     # Triple-barrier horizons (trading days) the per-asset HPO searches over. The winning
     # horizon is recorded on the model and reused at serve time. Single value => fixed horizon.
     ticker_hpo_horizons: list[int] = Field(default_factory=lambda: [5, 10, 15, 20])
@@ -291,17 +308,25 @@ class Config(BaseModel):
             return self.models_dir
         return self.models_dir / asset_class
 
-    def model_dir_for_ticker(self, ticker: str, side: str = "long") -> Path:
-        """Per-ticker registry namespace: ``data/models/tickers/<SLUG>/<side>/``.
+    def model_dir_for_ticker(
+        self, ticker: str, side: str = "long", strategy: str = "fixed"
+    ) -> Path:
+        """Per-ticker registry namespace: ``data/models/tickers/<SLUG>/<side>[/<strategy>]/``.
 
-        Each asset gets its own uniquely-trained/optimized model per side. The
-        ``tickers/`` subtree never collides with the legacy root artifacts or the
-        per-class subdirectories (``crypto/``, ``forex/`` …), so migration is additive.
+        Each asset gets its own uniquely-trained/optimized model per side and exit strategy.
+        ``strategy="fixed"`` keeps the historical ``.../<side>/`` path so existing artifacts and
+        the daily serving path are unchanged; trailing variants get a ``/<strategy>`` suffix. The
+        ``tickers/`` subtree never collides with the legacy root artifacts or the per-class
+        subdirectories (``crypto/``, ``forex/`` …), so migration is additive.
         """
         if side not in ("long", "short"):
             msg = f"unknown side '{side}' (expected 'long' or 'short')"
             raise ValueError(msg)
-        return self.models_dir / "tickers" / safe_ticker_slug(ticker) / side
+        if strategy not in ("fixed", "trailing", "trailing_tp"):
+            msg = f"unknown strategy '{strategy}' (expected fixed | trailing | trailing_tp)"
+            raise ValueError(msg)
+        base = self.models_dir / "tickers" / safe_ticker_slug(ticker) / side
+        return base if strategy == "fixed" else base / strategy
 
     def tradeable_tickers(self) -> list[str]:
         """Every configured asset eligible for a per-ticker model (union of universes)."""

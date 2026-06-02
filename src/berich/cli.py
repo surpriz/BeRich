@@ -74,7 +74,10 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
 
     config = Config.load(args.config)
     store = OhlcvStore(config.ohlcv_dir)
-    label_cfg = LabelConfig(**config.labeling.model_dump())
+    exit_mode = getattr(args, "exit_mode", "fixed")
+    label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(
+        update={"exit_mode": exit_mode}
+    )
 
     asset_class = getattr(args, "asset_class", None)
     if asset_class:
@@ -137,6 +140,9 @@ def _cmd_backtest(args: argparse.Namespace) -> int:
         take_profit_atr=label_cfg.take_profit_atr,
         stop_loss_atr=label_cfg.stop_loss_atr,
         volume_proportional_slippage=args.volume_slippage,
+        exit_mode=exit_mode,
+        trailing_atr=label_cfg.trailing_atr,
+        trailing_activation_atr=label_cfg.trailing_activation_atr,
     )
     result = run_backtest(prices, oof, bt_cfg)
 
@@ -616,13 +622,19 @@ def _cmd_train_tournament(args: argparse.Namespace) -> int:
         print("No ticker to train. Pass --ticker TICKER or --all-tickers.")  # noqa: T201
         return 1
     sides = [args.side] if args.side else config.zoo.ticker_sides
+    strategy_arg = getattr(args, "strategy", "fixed")
+    strategies = config.zoo.ticker_exit_strategies if strategy_arg == "all" else [strategy_arg]
     for ticker in tickers:
         for side in sides:
-            res = train_ticker_tournament(config, ticker, side, force=args.force)
-            if res.promoted:
-                print(f"{ticker}/{side}: promoted winner '{res.winner}'.")  # noqa: T201
-            else:
-                print(f"{ticker}/{side}: advisory-only (no candidate cleared the gate).")  # noqa: T201
+            for strategy in strategies:
+                res = train_ticker_tournament(
+                    config, ticker, side, strategy=strategy, force=args.force
+                )
+                tag = f"{ticker}/{side}/{strategy}"
+                if res.promoted:
+                    print(f"{tag}: promoted winner '{res.winner}'.")  # noqa: T201
+                else:
+                    print(f"{tag}: advisory-only (no candidate cleared the gate).")  # noqa: T201
     return 0
 
 
@@ -901,6 +913,13 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subcomm
         " multi-asset config, uses a class-specific regime proxy (e.g. BTC for crypto),"
         " and disables earnings/news. Overrides --universe when set.",
     )
+    p_bt.add_argument(
+        "--exit-mode",
+        choices=["fixed", "trailing", "trailing_tp"],
+        default="fixed",
+        help="Exit strategy: fixed = TP/SL barrier (default); trailing = ratcheting stop,"
+        " no TP (let winners run); trailing_tp = TP cap + ratcheting stop.",
+    )
     p_bt.set_defaults(func=_cmd_backtest)
 
     p_sig = sub.add_parser("signals", help="Generate today's signals for the watchlist")
@@ -1042,6 +1061,13 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subcomm
         action="store_true",
         help="With --tournament: run the tournament for every tradeable ticker"
         " (union of universes).",
+    )
+    p_train.add_argument(
+        "--strategy",
+        choices=["fixed", "trailing", "trailing_tp", "all"],
+        default="fixed",
+        help="With --tournament: exit strategy to train/compare. 'all' runs every strategy in"
+        " zoo.ticker_exit_strategies, each gated independently. Default: fixed (the baseline).",
     )
     p_train.set_defaults(func=_cmd_train)
 

@@ -27,6 +27,7 @@ import pandas as pd
 
 from berich.backtest.metrics import max_drawdown
 from berich.features.build import MARKET_TICKER
+from berich.features.indicators import atr
 from berich.labeling.triple_barrier import LabelConfig as _LabelConfig
 
 if TYPE_CHECKING:
@@ -67,7 +68,8 @@ OPEN = "open"
 CLOSED_STOP = "closed_stop"
 CLOSED_TARGET = "closed_target"
 CLOSED_TIME = "closed_time"
-CLOSED_STATUSES: tuple[str, ...] = (CLOSED_STOP, CLOSED_TARGET, CLOSED_TIME)
+CLOSED_TRAIL = "closed_trail"  # ratcheted (armed) trailing stop hit — distinct from a fixed stop
+CLOSED_STATUSES: tuple[str, ...] = (CLOSED_STOP, CLOSED_TARGET, CLOSED_TIME, CLOSED_TRAIL)
 
 # Signal labels that open a position, by direction. The paper book opens both
 # sides (promoted long + promoted short); ``signal`` on each row records which.
@@ -122,6 +124,14 @@ _MIGRATION_SOURCE_COLUMN = (
     "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS source VARCHAR DEFAULT 'daily_lgbm';"
 )
 
+# Exit strategy of the trade (so the daily walk applies the right rule): "fixed" keeps the
+# historical TP/SL barrier; "trailing" / "trailing_tp" drive the ratcheting-stop walk. Like the
+# ``source`` migration this is a safe no-op on fresh tables and only ALTERs pre-existing ones;
+# the default keeps every legacy row on the fixed rule.
+_MIGRATION_EXIT_STRATEGY_COLUMN = (
+    "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS exit_strategy VARCHAR DEFAULT 'fixed';"
+)
+
 _TRADE_COLUMNS = (
     "date_open",
     "ticker",
@@ -135,6 +145,7 @@ _TRADE_COLUMNS = (
     "exit_price",
     "pnl_pct",
     "pnl_eur",
+    "exit_strategy",
 )
 
 
@@ -153,6 +164,10 @@ class OpenPosition:
     days_held: int
     mtm_pct: float
     mtm_eur: float
+    exit_strategy: str = "fixed"
+    # Live ratcheting stop for an open trailing trade (the effective stop after the high-water
+    # mark since entry); None for fixed trades, where ``stop`` is already the effective level.
+    trail_stop: float | None = None
 
     def as_row(self) -> dict[str, object]:
         return {
@@ -167,6 +182,8 @@ class OpenPosition:
             "days_held": self.days_held,
             "mtm_pct": self.mtm_pct,
             "mtm_eur": self.mtm_eur,
+            "exit_strategy": self.exit_strategy,
+            "trail_stop": self.trail_stop,
         }
 
 
@@ -187,6 +204,7 @@ class PaperStore:
         with self._connect() as con:
             con.execute(_SCHEMA)
             con.execute(_MIGRATION_SOURCE_COLUMN)
+            con.execute(_MIGRATION_EXIT_STRATEGY_COLUMN)
 
     def _connect(self) -> duckdb.DuckDBPyConnection:
         return duckdb.connect(str(self.db_path))
@@ -319,6 +337,172 @@ def _resolve_paper_exit(
     return None
 
 
+def _trail_scalars(
+    df: pd.DataFrame, entry_idx: int, cfg: _LabelConfig, *, short: bool
+) -> tuple[float, float, float] | None:
+    """Return ``(entry_ref, trail_dist, activation_level)`` for a trailing trade, or ``None``.
+
+    The trail distance is the entry-frozen ATR (``trailing_atr``*ATR at the entry bar) and the
+    activation sits ``trailing_activation_atr``*ATR on the favorable side of the entry close —
+    the same construction the backtest/label use. ``None`` when ATR isn't warmed at the entry
+    bar (caller then falls back to the fixed stop).
+    """
+    a = float(atr(df["high"], df["low"], df["close"], cfg.atr_window).iloc[entry_idx])
+    if pd.isna(a):
+        return None
+    entry_ref = float(df["close"].iloc[entry_idx])
+    trail_dist = cfg.trailing_atr * a
+    activation_level = (
+        entry_ref - cfg.trailing_activation_atr * a
+        if short
+        else entry_ref + cfg.trailing_activation_atr * a
+    )
+    return entry_ref, trail_dist, activation_level
+
+
+def _resolve_trailing_exit(  # noqa: C901, PLR0912 — the bar-by-bar ratchet is irreducibly branchy
+    df: pd.DataFrame,
+    entry_idx: int,
+    horizon_days: int,
+    init_stop: float,
+    target: float | None,
+    *,
+    short: bool,
+    entry_ref: float,
+    trail_dist: float,
+    activation_level: float,
+) -> tuple[int, float, str] | None:
+    """Trailing-stop walk mirroring ``backtest.engine._resolve_exit_trailing``.
+
+    Causal ratcheting stop (the bar never sets-and-triggers its own stop); arms once the
+    favorable extreme passes ``activation_level``, then reports ``CLOSED_TRAIL`` (vs the pre-arm
+    ``CLOSED_STOP``). ``target=None`` means no TP cap (pure trailing). Returns ``None`` when the
+    cache hasn't reached the time barrier and nothing has triggered yet (trade stays open).
+    """
+    n = len(df)
+    time_exit_idx = entry_idx + horizon_days
+    last_walkable = min(time_exit_idx, n - 1)
+    if last_walkable <= entry_idx:
+        return None
+
+    high = df["high"]
+    low = df["low"]
+    close = df["close"]
+    running_ext = entry_ref
+    cur_stop = init_stop
+    armed = False
+    for j in range(entry_idx + 1, last_walkable + 1):
+        if short:
+            hit_stop = float(high.iloc[j]) >= cur_stop
+            hit_target = target is not None and float(low.iloc[j]) <= target
+        else:
+            hit_stop = float(low.iloc[j]) <= cur_stop
+            hit_target = target is not None and float(high.iloc[j]) >= target
+        if hit_stop:
+            return j, cur_stop, (CLOSED_TRAIL if armed else CLOSED_STOP)
+        if hit_target:
+            return j, float(target), CLOSED_TARGET
+        if short:
+            running_ext = min(running_ext, float(low.iloc[j]))
+            if running_ext <= activation_level:
+                armed = True
+            if armed:
+                cur_stop = min(cur_stop, running_ext + trail_dist)
+        else:
+            running_ext = max(running_ext, float(high.iloc[j]))
+            if running_ext >= activation_level:
+                armed = True
+            if armed:
+                cur_stop = max(cur_stop, running_ext - trail_dist)
+
+    if last_walkable >= time_exit_idx:
+        return time_exit_idx, float(close.iloc[time_exit_idx]), CLOSED_TIME
+    return None
+
+
+def _current_trail_stop(
+    df: pd.DataFrame,
+    entry_idx: int,
+    init_stop: float,
+    *,
+    short: bool,
+    trail_dist: float,
+    activation_level: float,
+) -> float:
+    """Live ratcheting stop for an open trailing trade: walk every bar since entry to the latest
+    close and return the effective stop (the high-water-mark stop once armed, else the initial).
+    """
+    high = df["high"]
+    low = df["low"]
+    entry_ref = float(df["close"].iloc[entry_idx])
+    running_ext = entry_ref
+    cur_stop = init_stop
+    armed = False
+    for j in range(entry_idx + 1, len(df)):
+        if short:
+            running_ext = min(running_ext, float(low.iloc[j]))
+            if running_ext <= activation_level:
+                armed = True
+            if armed:
+                cur_stop = min(cur_stop, running_ext + trail_dist)
+        else:
+            running_ext = max(running_ext, float(high.iloc[j]))
+            if running_ext >= activation_level:
+                armed = True
+            if armed:
+                cur_stop = max(cur_stop, running_ext - trail_dist)
+    return cur_stop
+
+
+def _resolve_trade_exit(
+    df: pd.DataFrame,
+    row: pd.Series,
+    entry_idx: int,
+    cfg: _LabelConfig,
+    *,
+    short: bool,
+    strategy: str,
+) -> tuple[int, float, str] | None:
+    """Dispatch one open trade to its exit walk: fixed barrier or ratcheting trailing stop.
+
+    Trailing falls back to the fixed stop when ATR isn't warmed at the entry bar (degenerate);
+    ``trailing`` drops the TP cap, ``trailing_tp`` keeps the stored target as the cap.
+    """
+    stop = float(row["stop"])
+    target = float(row["target"])
+    if strategy == "fixed":
+        return _resolve_paper_exit(
+            df,
+            entry_idx=entry_idx,
+            horizon_days=cfg.horizon_days,
+            stop=stop,
+            target=target,
+            short=short,
+        )
+    scal = _trail_scalars(df, entry_idx, cfg, short=short)
+    if scal is None:
+        return _resolve_paper_exit(
+            df,
+            entry_idx=entry_idx,
+            horizon_days=cfg.horizon_days,
+            stop=stop,
+            target=target,
+            short=short,
+        )
+    entry_ref, trail_dist, activation_level = scal
+    return _resolve_trailing_exit(
+        df,
+        entry_idx,
+        cfg.horizon_days,
+        stop,
+        target if strategy == "trailing_tp" else None,
+        short=short,
+        entry_ref=entry_ref,
+        trail_dist=trail_dist,
+        activation_level=activation_level,
+    )
+
+
 # --------------------------------------------------------- top-level operations ----
 
 
@@ -350,6 +534,11 @@ def open_new_trades(
         actionable = actionable.iloc[0:0]  # no column yet => nothing known-promoted => open nothing
     if actionable.empty:
         return 0
+    exit_strategy = (
+        actionable["exit_strategy"].fillna("fixed")
+        if "exit_strategy" in actionable.columns
+        else "fixed"
+    )
     rows = pd.DataFrame(
         {
             "date_open": actionable["date"],
@@ -360,6 +549,7 @@ def open_new_trades(
             "target": actionable["take_profit"],
             "size_shares": actionable["size_shares"],
             "status": OPEN,
+            "exit_strategy": exit_strategy,
         }
     )
     paper = PaperStore(config.db_path)
@@ -402,14 +592,8 @@ def update_open_trades(
             continue
         entry_idx = int(ohlcv.index.get_loc(date_open))
         short = _is_short(row["signal"])
-        resolved = _resolve_paper_exit(
-            ohlcv,
-            entry_idx=entry_idx,
-            horizon_days=cfg.horizon_days,
-            stop=float(row["stop"]),
-            target=float(row["target"]),
-            short=short,
-        )
+        strategy = str(row["exit_strategy"]) if "exit_strategy" in row else "fixed"
+        resolved = _resolve_trade_exit(ohlcv, row, entry_idx, cfg, short=short, strategy=strategy)
         if resolved is None:
             continue
         exit_idx, exit_price, status = resolved
@@ -431,9 +615,10 @@ def update_open_trades(
 
 
 def get_open_positions(config: Config, store: OhlcvStore) -> list[OpenPosition]:
-    """Return open paper trades enriched with the latest-close MTM."""
+    """Return open paper trades enriched with the latest-close MTM (and live trailing stop)."""
     paper = PaperStore(config.db_path)
     df = paper.open_trades()
+    cfg = _LabelConfig(**config.labeling.model_dump())
     out: list[OpenPosition] = []
     today = _ts(pd.Timestamp.today()).normalize()
     for _, row in df.iterrows():
@@ -448,6 +633,10 @@ def get_open_positions(config: Config, store: OhlcvStore) -> list[OpenPosition]:
         date_open = _ts(row["date_open"])
         days_held = max(0, int(np.busday_count(date_open.date(), today.date())))
         mtm_pct, mtm_eur = _direction_pnl(entry, current_price, shares, short=short)
+        strategy = str(row["exit_strategy"]) if "exit_strategy" in row else "fixed"
+        trail_stop = _open_trail_stop(
+            ohlcv, date_open, float(row["stop"]), cfg, strategy, short=short
+        )
         out.append(
             OpenPosition(
                 date_open=date_open,
@@ -461,9 +650,39 @@ def get_open_positions(config: Config, store: OhlcvStore) -> list[OpenPosition]:
                 days_held=days_held,
                 mtm_pct=mtm_pct,
                 mtm_eur=mtm_eur,
+                exit_strategy=strategy,
+                trail_stop=trail_stop,
             )
         )
     return out
+
+
+def _open_trail_stop(
+    ohlcv: pd.DataFrame,
+    date_open: pd.Timestamp,
+    init_stop: float,
+    cfg: _LabelConfig,
+    strategy: str,
+    *,
+    short: bool,
+) -> float | None:
+    """Live ratcheting stop for an open trailing trade, or ``None`` for a fixed trade / when the
+    entry bar isn't in the cache or ATR isn't warmed."""
+    if strategy == "fixed" or date_open not in ohlcv.index:
+        return None
+    entry_idx = int(ohlcv.index.get_loc(date_open))
+    scal = _trail_scalars(ohlcv, entry_idx, cfg, short=short)
+    if scal is None:
+        return None
+    _entry_ref, trail_dist, activation_level = scal
+    return _current_trail_stop(
+        ohlcv,
+        entry_idx,
+        init_stop,
+        short=short,
+        trail_dist=trail_dist,
+        activation_level=activation_level,
+    )
 
 
 # ---------------------------------------------------------------- equity curve ----
@@ -594,6 +813,7 @@ __all__ = [
     "CLOSED_STOP",
     "CLOSED_TARGET",
     "CLOSED_TIME",
+    "CLOSED_TRAIL",
     "OPEN",
     "OpenPosition",
     "PaperStore",

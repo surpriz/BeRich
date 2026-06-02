@@ -61,6 +61,11 @@ class ModelMetadata(BaseModel):
     # forecast must use the SAME horizon the model learned on. Defaults to 10 (the historical
     # global horizon) so every pre-existing artifact deserializes unchanged.
     horizon_days: int = 10
+    # Exit strategy this model was trained, backtested AND must be served under: "fixed" (the
+    # historical TP/SL triple barrier), "trailing" (ratcheting stop, no TP), or "trailing_tp"
+    # (TP cap + ratcheting stop). Audit-only — the promotion gate is exit-strategy-agnostic (it
+    # judges the resulting returns). Defaults to "fixed" so pre-existing artifacts are unchanged.
+    exit_strategy: str = "fixed"
     notes: str = ""
 
 
