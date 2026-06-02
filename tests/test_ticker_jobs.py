@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 
 import numpy as np
 import pandas as pd
@@ -157,6 +158,40 @@ def test_initial_sweep_covers_every_exit_strategy(tmp_path, monkeypatch):
     # One ticker x one side x two strategies => both strategies swept.
     assert out["swept"] == 2
     assert calls == [("AAA", "long", "fixed"), ("AAA", "long", "trailing")]
+
+
+def test_hpo_lock_is_exclusive_across_holders(tmp_path):
+    cfg = Config(data_dir=tmp_path)
+    fd1 = jobs_mod.acquire_hpo_lock(cfg)
+    assert fd1 is not None
+    # A second holder cannot take it while the first is open (single-driver rule).
+    assert jobs_mod.acquire_hpo_lock(cfg) is None
+    os.close(fd1)
+    # Once released, it can be acquired again.
+    fd2 = jobs_mod.acquire_hpo_lock(cfg)
+    assert fd2 is not None
+    os.close(fd2)
+
+
+def test_hpo_queue_skips_when_lock_held(tmp_path, monkeypatch):
+    store = OhlcvStore(tmp_path / "ohlcv")
+    store.save("AAA", _ohlcv())
+    store.save("SPY", _ohlcv(seed=1))
+    cfg = Config(data_dir=tmp_path, universes={"us_stocks": ["AAA"]})
+    cfg.zoo.ticker_sides = ["long"]
+    cfg.zoo.ticker_exit_strategies = ["fixed"]
+
+    called = []
+    monkeypatch.setattr(
+        jobs_mod, "_hpo_and_tournament", lambda *a: called.append(a) or False
+    )
+    held = jobs_mod.acquire_hpo_lock(cfg)  # simulate the sweep service holding the lock
+    try:
+        out = jobs_mod.ticker_hpo_queue_job(cfg, max_assets=1)
+    finally:
+        os.close(held)
+    assert out["skipped"] == "locked"
+    assert called == []  # nothing trained while the lock was held
 
 
 def test_cmd_train_tournament_single_ticker(tmp_path, monkeypatch):

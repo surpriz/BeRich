@@ -7,7 +7,9 @@ idempotent: re-running a day's refresh/signals overwrites rather than duplicates
 
 from __future__ import annotations
 
+import fcntl
 import logging
+import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -40,6 +42,30 @@ logger = logging.getLogger(__name__)
 
 # Number of most-recent samples treated as the "current" window for drift.
 DRIFT_CURRENT_SAMPLES = 2000
+
+# Cross-process exclusive lock for the per-asset HPO+tournament queue. The standalone sweep
+# service (scripts/run_full_sweep.py) and the scheduler's HPO jobs all take this, so only one
+# driver ever trains a (ticker, side, strategy) at a time — no Optuna/registry write races. The
+# sweep holds it for its whole life; the scheduler jobs try non-blocking and skip when it's held.
+_HPO_LOCK_FILE = ".hpo_sweep.lock"
+
+
+def acquire_hpo_lock(config: Config) -> int | None:
+    """Try to take the HPO queue lock without blocking.
+
+    Returns an open file descriptor (keep it open to HOLD the lock; ``os.close`` to release) or
+    ``None`` if another process already holds it. The lock is advisory and auto-released if the
+    holder dies (flock semantics), so a crashed driver never deadlocks the queue.
+    """
+    path = config.data_dir / _HPO_LOCK_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
 
 
 def daily_paper_job(config: Config) -> dict[str, int]:
@@ -350,6 +376,10 @@ def ticker_nightly_refresh_job(config: Config) -> dict[str, int]:
     from berich.training.gpu_pool import GpuTask, run_on_gpus  # noqa: PLC0415
     from berich.training.tournament import train_ticker_tournament  # noqa: PLC0415
 
+    lock = acquire_hpo_lock(config)
+    if lock is None:
+        logger.info("ticker_nightly_refresh: HPO lock held (sweep service running), skipping")
+        return {"refreshed": 0, "promoted": 0, "skipped": 0, "failed": 0}
     n_trials = config.zoo.ticker_nightly_hpo_trials
     deep_models = [m for m in config.zoo.ticker_tournament_models if m != "lgbm"]
     refreshed = 0
@@ -387,6 +417,7 @@ def ticker_nightly_refresh_job(config: Config) -> dict[str, int]:
                         exc_info=True,
                     )
                     failed += 1
+    os.close(lock)  # release the HPO queue lock (per-iteration try/except keeps the loop safe)
     summary = {
         "refreshed": refreshed,
         "promoted": promoted,
@@ -501,21 +532,28 @@ def ticker_hpo_queue_job(config: Config, *, max_assets: int = 1) -> dict[str, ob
     yet, and is resumable: each call drains the next slice of the work-list. Run it on a short
     cron (or in a loop) to give every asset its first deep HPO without a thundering herd.
     """
+    lock = acquire_hpo_lock(config)
+    if lock is None:
+        logger.info("ticker_hpo_queue: HPO lock held (sweep service running), skipping this round")
+        return {"processed": [], "promoted": 0, "failed": 0, "skipped": "locked"}
     n_trials = config.zoo.ticker_initial_hpo_trials
     pending = _pending_hpo_targets(config)
     processed: list[str] = []
     promoted = 0
     failed = 0
-    for ticker, side, strategy in pending[:max_assets]:
-        try:
-            if _hpo_and_tournament(config, ticker, side, n_trials, strategy):
-                promoted += 1
-            processed.append(f"{ticker}/{side}/{strategy}")
-        except Exception:  # noqa: BLE001 — one bad asset must not stall the queue
-            logger.warning(
-                "ticker_hpo_queue: %s/%s/%s failed", ticker, side, strategy, exc_info=True
-            )
-            failed += 1
+    try:
+        for ticker, side, strategy in pending[:max_assets]:
+            try:
+                if _hpo_and_tournament(config, ticker, side, n_trials, strategy):
+                    promoted += 1
+                processed.append(f"{ticker}/{side}/{strategy}")
+            except Exception:  # noqa: BLE001 — one bad asset must not stall the queue
+                logger.warning(
+                    "ticker_hpo_queue: %s/%s/%s failed", ticker, side, strategy, exc_info=True
+                )
+                failed += 1
+    finally:
+        os.close(lock)
     # Keep /signals in lock-step with the model set we just changed.
     refreshed = refresh_signals(config) if processed else 0
     summary: dict[str, object] = {
@@ -536,6 +574,10 @@ def ticker_initial_sweep_job(config: Config) -> dict[str, int]:
     each deep model across the GPU pool, then a tournament that promotes the honest winner. This
     is the cold-start that nightly_refresh later tops up. Best-effort per (ticker, side).
     """
+    lock = acquire_hpo_lock(config)
+    if lock is None:
+        logger.info("ticker_initial_sweep: HPO lock held (sweep service running), skipping")
+        return {"swept": 0, "promoted": 0, "failed": 0}
     n_trials = config.zoo.ticker_initial_hpo_trials
     swept = 0
     promoted = 0
@@ -556,6 +598,7 @@ def ticker_initial_sweep_job(config: Config) -> dict[str, int]:
                         exc_info=True,
                     )
                     failed += 1
+    os.close(lock)
     summary = {"swept": swept, "promoted": promoted, "failed": failed}
     logger.info("ticker_initial_sweep: %s", summary)
     return summary

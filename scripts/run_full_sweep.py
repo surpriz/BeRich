@@ -15,21 +15,57 @@ Run it as a long-lived background process while the scheduler's competing hpo_qu
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import time
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from berich.config import Config
-from berich.scheduler.jobs import _hpo_and_tournament, _pending_hpo_targets, refresh_signals
+from berich.scheduler.jobs import (
+    _hpo_and_tournament,
+    _pending_hpo_targets,
+    acquire_hpo_lock,
+    refresh_signals,
+)
 
+_LOG_PATH = Path("data/sweep.log")
+_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[
+        # Own the log file (append, capped) so it works identically whether launched by systemd
+        # or by hand, and /ops can read the drainer's activity from data/sweep.log.
+        RotatingFileHandler(_LOG_PATH, maxBytes=20_000_000, backupCount=2),
+        logging.StreamHandler(),
+    ],
 )
 log = logging.getLogger("sweep")
 
 
 def main() -> int:
     config = Config.load("config/berich.yaml")
+    # Single-driver guarantee: hold the cross-process HPO lock for the whole run so the scheduler's
+    # HPO jobs yield to us (no Optuna/registry write races). Retry a while in case a scheduler job
+    # is mid-triple when we (re)start under systemd.
+    lock = None
+    for _ in range(60):
+        lock = acquire_hpo_lock(config)
+        if lock is not None:
+            break
+        log.info("HPO lock busy (scheduler job running?), retrying in 30s")
+        time.sleep(30)
+    if lock is None:
+        log.error("could not acquire HPO lock after 30 min; exiting")
+        return 1
+    try:
+        return _drain(config)
+    finally:
+        os.close(lock)
+
+
+def _drain(config: Config) -> int:
     n_trials = config.zoo.ticker_initial_hpo_trials
     giveup: set[tuple[str, str, str]] = set()
     done = 0
