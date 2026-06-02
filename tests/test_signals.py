@@ -159,6 +159,29 @@ def test_signal_store_roundtrip_and_upsert(tmp_path):
     assert abs(aapl["proba"] - 0.7) < 1e-9
 
 
+def test_promoted_persists_across_store_instances(tmp_path):
+    # Regression: a promoted signal must read back True from a SEPARATE SignalStore instance
+    # (the API/paper book open their own). Guards the recurring "promoted shows False" bug.
+    db = tmp_path / "berich.duckdb"
+    sig = Signal(
+        date=pd.Timestamp("2024-01-05"),
+        ticker="BNP.PA",
+        signal=LONG,
+        proba=0.6,
+        entry=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
+        size_shares=20,
+        notional=2000.0,
+        promoted=True,
+    )
+    SignalStore(db).save([sig])
+    # Fresh instance (new connection) — the value must still be True.
+    reread = SignalStore(db).latest()
+    row = reread[reread["ticker"] == "BNP.PA"].iloc[0]
+    assert bool(row["promoted"]) is True
+
+
 def test_signal_store_history(tmp_path):
     store = SignalStore(tmp_path / "berich.duckdb")
     store.save([_signal("AAPL", 0.6, "2024-01-04"), _signal("AAPL", 0.5, "2024-01-05")])

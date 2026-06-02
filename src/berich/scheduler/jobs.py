@@ -432,22 +432,47 @@ def _pending_hpo_targets(config: Config) -> list[tuple[str, str]]:
 def refresh_signals(config: Config) -> int:
     """Regenerate + persist today's signals so the dashboard matches the current model set.
 
-    Drops the stored table first so assets no longer optimized disappear (rather than lingering
-    via the (date, ticker) upsert). Returns the number of signals written. Called after any job
-    that mutates models, so /signals never drifts from /training. Best-effort: never raises.
+    Replaces the whole table (assets no longer optimized disappear; newly promoted ones appear)
+    atomically in a single connection + transaction, then CHECKPOINTs so other processes see
+    the new state immediately. Returns the count written. Best-effort: never raises.
     """
     import duckdb  # noqa: PLC0415
+    import pandas as pd  # noqa: PLC0415
+
+    from berich.signals.store import _INSERT_COLUMNS  # noqa: PLC0415
 
     try:
         store = OhlcvStore(config.ohlcv_dir)
         sigs = generate_signals(config, store)
+        SignalStore(config.db_path)  # ensure schema/migrations exist
+        rows = pd.DataFrame([s.as_row() for s in sigs])
+        rows["date"] = pd.to_datetime(rows["date"]).dt.date
         with duckdb.connect(str(config.db_path)) as con:
+            con.register("incoming", rows)
+            con.execute("BEGIN TRANSACTION")
             con.execute("DELETE FROM signals")
-        SignalStore(config.db_path).save(sigs)
+            con.execute(
+                f"INSERT INTO signals ({_INSERT_COLUMNS}) "  # noqa: S608 — module constant
+                f"SELECT {_INSERT_COLUMNS} FROM incoming"
+            )
+            con.execute("COMMIT")
+            con.execute("CHECKPOINT")
     except Exception:  # noqa: BLE001 — a refresh failure must not abort the calling job
         logger.warning("refresh_signals failed", exc_info=True)
         return 0
     return len(sigs)
+
+
+def refresh_signals_job(config: Config) -> dict[str, int]:
+    """Periodically rewrite the served signals from the current promoted/optimized model set.
+
+    The per-asset HPO queue promotes models throughout the day, but the signals table was only
+    rewritten by the daily chain (22:30) and right after a queue run — so a promotion landing
+    between those left /signals stale vs /training. This job closes that gap on a short cron.
+    """
+    n = refresh_signals(config)
+    logger.info("refresh_signals_job: %d signals written", n)
+    return {"signals": n}
 
 
 def ticker_hpo_queue_job(config: Config, *, max_assets: int = 1) -> dict[str, object]:

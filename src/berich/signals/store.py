@@ -33,24 +33,28 @@ CREATE TABLE IF NOT EXISTS signals (
 );
 """
 
-# Enriched-advice columns added after the original schema; ADD COLUMN IF NOT EXISTS keeps
-# pre-existing DuckDB files valid (the columns are nullable / have safe defaults).
-_MIGRATIONS = (
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS proba_calibrated DOUBLE",
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS meta_proba DOUBLE",
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS acted BOOLEAN DEFAULT TRUE",
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS ret_q10 DOUBLE",
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS ret_q50 DOUBLE",
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS ret_q90 DOUBLE",
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS sigma_horizon DOUBLE",
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS sltp_method VARCHAR DEFAULT 'atr_fixed'",
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS direction VARCHAR DEFAULT 'long'",
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS proba_long DOUBLE",
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS proba_short DOUBLE",
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS promoted BOOLEAN DEFAULT FALSE",
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS exp_return_gross DOUBLE",
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS exp_return_net DOUBLE",
-    "ALTER TABLE signals ADD COLUMN IF NOT EXISTS cost_bps_roundtrip DOUBLE",
+# Enriched-advice columns added after the original schema, as (name, "TYPE [DEFAULT ...]").
+# CRITICAL: we only ADD a column when it is genuinely missing. Re-running
+# ``ADD COLUMN IF NOT EXISTS <col> ... DEFAULT <d>`` on a column that already exists does NOT
+# no-op in DuckDB — it RE-APPLIES the default, wiping every stored value back to <d>. Since the
+# store is constructed on every access, that silently reset e.g. ``promoted`` to FALSE on each
+# read. So `_apply_migrations` checks the live column set first (see __init__).
+_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    ("proba_calibrated", "DOUBLE"),
+    ("meta_proba", "DOUBLE"),
+    ("acted", "BOOLEAN DEFAULT TRUE"),
+    ("ret_q10", "DOUBLE"),
+    ("ret_q50", "DOUBLE"),
+    ("ret_q90", "DOUBLE"),
+    ("sigma_horizon", "DOUBLE"),
+    ("sltp_method", "VARCHAR DEFAULT 'atr_fixed'"),
+    ("direction", "VARCHAR DEFAULT 'long'"),
+    ("proba_long", "DOUBLE"),
+    ("proba_short", "DOUBLE"),
+    ("promoted", "BOOLEAN DEFAULT FALSE"),
+    ("exp_return_gross", "DOUBLE"),
+    ("exp_return_net", "DOUBLE"),
+    ("cost_bps_roundtrip", "DOUBLE"),
 )
 
 _INSERT_COLUMNS = (
@@ -69,8 +73,12 @@ class SignalStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as con:
             con.execute(_SCHEMA)
-            for migration in _MIGRATIONS:
-                con.execute(migration)
+            existing = {row[0] for row in con.execute("DESCRIBE signals").fetchall()}
+            for name, decl in _MIGRATIONS:
+                # Only add a genuinely-missing column. DuckDB re-applies the DEFAULT (wiping
+                # stored values) if we ALTER an existing column, so guard on `existing`.
+                if name not in existing:
+                    con.execute(f"ALTER TABLE signals ADD COLUMN {name} {decl}")
 
     def _connect(self) -> duckdb.DuckDBPyConnection:
         return duckdb.connect(str(self.db_path))

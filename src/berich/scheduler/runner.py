@@ -21,6 +21,7 @@ from berich.scheduler.jobs import (
     daily_paper_job,
     longshort_signals_job,
     nightly_hpo_job,
+    refresh_signals_job,
     refresh_universe_job,
     ticker_hpo_queue_job,
     ticker_initial_sweep_job,
@@ -164,6 +165,19 @@ def build_scheduler(config: Config) -> BlockingScheduler:
         CronTrigger(minute="*/10", timezone="Europe/Paris"),
         args=[config],
         id="ticker_hpo_queue",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # Keep /signals in lock-step with /training: rewrite the served signals every 15 min from
+    # the current promoted/optimized model set, so a promotion landing mid-day shows up without
+    # waiting for the 22:30 chain. max_instances=1 + coalesce avoid pile-ups; offset by 5 min
+    # from the HPO queue (*/10) to avoid both hitting the DB at the same instant.
+    scheduler.add_job(
+        refresh_signals_job,
+        CronTrigger(minute="5,20,35,50", timezone="Europe/Paris"),
+        args=[config],
+        id="refresh_signals",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
