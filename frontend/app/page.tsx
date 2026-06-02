@@ -27,6 +27,7 @@ import { UniverseTabs } from "./components/UniverseTabs";
 import { Show } from "./components/Show";
 import { useTranslate } from "./lib/i18n";
 import { useLevel } from "./lib/level";
+import { useStrategy } from "./lib/strategy";
 
 type State = {
   signals?: Signal[];
@@ -48,6 +49,7 @@ export default function Dashboard() {
   const [activeUniverse, setActiveUniverse] = useState<AssetClass>("us_stocks");
   const t = useTranslate();
   const { level } = useLevel();
+  const { strategy } = useStrategy();
 
   useEffect(() => {
     let alive = true;
@@ -69,9 +71,9 @@ export default function Dashboard() {
           api.signals(),
           api.drift(),
           api.backtest(),
-          api.paperEquity(),
-          api.paperPositions(),
-          api.paperClosed(),
+          api.paperEquity(strategy),
+          api.paperPositions(strategy),
+          api.paperClosed(25, strategy),
           api.paperCalibration(),
           api.universes().catch(() => undefined),
           api.longshortBasket().catch(() => [] as LongShortLeg[]),
@@ -99,14 +101,16 @@ export default function Dashboard() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [strategy]);
 
   const filtered = useMemo(() => {
     if (!s.signals) return undefined;
-    if (!s.universes) return s.signals;
+    // One signal row per (ticker, exit strategy): show only the selected strategy's view.
+    const byStrategy = s.signals.filter((sig) => (sig.exit_strategy ?? "fixed") === strategy);
+    if (!s.universes) return byStrategy;
     const allowed = new Set(s.universes[activeUniverse]);
-    return s.signals.filter((sig) => allowed.has(sig.ticker));
-  }, [s.signals, s.universes, activeUniverse]);
+    return byStrategy.filter((sig) => allowed.has(sig.ticker));
+  }, [s.signals, s.universes, activeUniverse, strategy]);
 
   const asOf = filtered?.[0]?.date ?? s.signals?.[0]?.date;
 

@@ -210,6 +210,9 @@ def objective_for(
                 take_profit_atr=lcfg.take_profit_atr,
                 stop_loss_atr=lcfg.stop_loss_atr,
                 direction=direction,
+                exit_mode=lcfg.exit_mode,
+                trailing_atr=lcfg.trailing_atr,
+                trailing_activation_atr=lcfg.trailing_activation_atr,
             ),
         )
         trial.set_user_attr("oos_auc", oof.auc)
@@ -423,11 +426,19 @@ def best_params_for(
 # ---------------------------------------------------------------------------
 
 
-def ticker_study_name(ticker: str, model_name: str, side: str, metric: str = "auc") -> str:
-    """Optuna study name for one per-ticker search (slugged so the RDB key is path-safe)."""
+def ticker_study_name(
+    ticker: str, model_name: str, side: str, strategy: str = "fixed", metric: str = "auc"
+) -> str:
+    """Optuna study name for one per-ticker x exit-strategy search (slugged, RDB-path-safe).
+
+    ``strategy="fixed"`` keeps the legacy name (no strategy segment) so every pre-existing study
+    keeps resolving; trailing variants get a ``-<strategy>`` segment before the metric.
+    """
     from berich.config import safe_ticker_slug  # noqa: PLC0415
 
-    return f"berich-hpo-{safe_ticker_slug(ticker)}-{model_name}-{side}-{metric}"
+    slug = safe_ticker_slug(ticker)
+    strat_seg = "" if strategy == "fixed" else f"-{strategy}"
+    return f"berich-hpo-{slug}-{model_name}-{side}{strat_seg}-{metric}"
 
 
 def _ticker_dataset(
@@ -498,24 +509,29 @@ def run_ticker_hpo(
     model_name: str,
     side: str = "long",
     *,
+    strategy: str = "fixed",
     n_trials: int | None = None,
     device: str | None = None,
     metric: str = "auc",
 ) -> optuna.Study:
-    """Run an Optuna study for one ticker x model x side, sharing the project SQLite RDB.
+    """Run an Optuna study for one ticker x model x side x exit strategy, sharing the SQLite RDB.
 
-    The objective is the direction-aware OOS AUC (default) with the regularized priors and a
-    joint feature search. A per-study SQLite ``connect_args`` timeout lets concurrent GPU
-    workers write the same RDB without locking out.
+    ``strategy`` re-labels and backtests the objective under that exit rule ("fixed" |
+    "trailing" | "trailing_tp"), so each strategy is optimized on its OWN target — the same
+    HPO treatment everywhere. The objective is the direction-aware OOS AUC (default) with
+    regularized priors and a joint feature search. A per-study SQLite ``connect_args`` timeout
+    lets concurrent GPU workers write the same RDB without locking out.
     """
     import optuna  # noqa: PLC0415
 
-    label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(update={"direction": side})
-    dataset, prices = _ticker_dataset(config, ticker, side)
+    label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(
+        update={"direction": side, "exit_mode": strategy}
+    )
+    dataset, prices = _ticker_dataset(config, ticker, side, exit_mode=strategy)
     horizons = config.zoo.ticker_hpo_horizons
 
     def _build_for_horizon(h: int) -> tuple[SupervisedDataset, dict]:
-        return _ticker_dataset(config, ticker, side, horizon_days=h)
+        return _ticker_dataset(config, ticker, side, horizon_days=h, exit_mode=strategy)
 
     objective = objective_for(
         model_name,
@@ -540,16 +556,17 @@ def run_ticker_hpo(
     study = optuna.create_study(
         direction="maximize",
         storage=storage,
-        study_name=ticker_study_name(ticker, model_name, side, metric),
+        study_name=ticker_study_name(ticker, model_name, side, strategy, metric),
         load_if_exists=True,
     )
     trials = n_trials if n_trials is not None else config.zoo.ticker_initial_hpo_trials
     study.optimize(objective, n_trials=trials)
     logger.info(
-        "per-ticker HPO %s/%s/%s best %s=%.4f",
+        "per-ticker HPO %s/%s/%s/%s best %s=%.4f",
         ticker,
         model_name,
         side,
+        strategy,
         metric,
         study.best_value,
     )
@@ -557,9 +574,14 @@ def run_ticker_hpo(
 
 
 def best_for_ticker(
-    config: Config, ticker: str, model_name: str, side: str = "long", metric: str = "auc"
+    config: Config,
+    ticker: str,
+    model_name: str,
+    side: str = "long",
+    strategy: str = "fixed",
+    metric: str = "auc",
 ) -> tuple[dict, list[str] | None]:
-    """Best (params, selected-features) for one ticker x model x side from its HPO study.
+    """Best (params, selected-features) for one ticker x model x side x strategy from its study.
 
     Params drop the ``feat_*`` toggle keys; features come from the best trial's user-attr.
     Returns ``({}, None)`` when the study is missing so the tournament falls back to default
@@ -569,7 +591,7 @@ def best_for_ticker(
 
     try:
         study = optuna.load_study(
-            study_name=ticker_study_name(ticker, model_name, side, metric),
+            study_name=ticker_study_name(ticker, model_name, side, strategy, metric),
             storage=f"sqlite:///{config.optuna_db}",
         )
         best = study.best_trial
@@ -588,14 +610,19 @@ def best_for_ticker(
 
 
 def best_horizon_for_ticker(
-    config: Config, ticker: str, model_name: str, side: str = "long", metric: str = "auc"
+    config: Config,
+    ticker: str,
+    model_name: str,
+    side: str = "long",
+    strategy: str = "fixed",
+    metric: str = "auc",
 ) -> int | None:
     """Triple-barrier horizon chosen by the best HPO trial, or None if no study/horizon search."""
     import optuna  # noqa: PLC0415
 
     try:
         study = optuna.load_study(
-            study_name=ticker_study_name(ticker, model_name, side, metric),
+            study_name=ticker_study_name(ticker, model_name, side, strategy, metric),
             storage=f"sqlite:///{config.optuna_db}",
         )
         h = study.best_trial.user_attrs.get("horizon_days")

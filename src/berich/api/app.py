@@ -181,17 +181,17 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
         return _run_cached_backtest(config_path, round(threshold, 3))
 
     @router.get("/paper/positions", dependencies=guard)
-    def paper_positions() -> dict:
-        positions = get_open_positions(config, store)
+    def paper_positions(strategy: str | None = Query(default=None)) -> dict:
+        positions = get_open_positions(config, store, exit_strategy=strategy)
         return {
             "n": len(positions),
             "positions": [p.as_row() for p in positions],
         }
 
     @router.get("/paper/equity", dependencies=guard)
-    def paper_equity() -> dict:
-        curve = get_equity_curve(config, store)
-        metrics = get_paper_metrics(config, store)
+    def paper_equity(strategy: str | None = Query(default=None)) -> dict:
+        curve = get_equity_curve(config, store, exit_strategy=strategy)
+        metrics = get_paper_metrics(config, store, exit_strategy=strategy)
         if curve.empty:
             return {"dates": [], "equity_paper": [], "equity_spy": [], "metrics": metrics}
         return {
@@ -202,8 +202,11 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
         }
 
     @router.get("/paper/closed-trades", dependencies=guard)
-    def paper_closed(limit: int = Query(default=50, ge=1, le=500)) -> list[dict]:
-        df = PaperStore(config.db_path).closed_trades(limit=limit)
+    def paper_closed(
+        limit: int = Query(default=50, ge=1, le=500),
+        strategy: str | None = Query(default=None),
+    ) -> list[dict]:
+        df = PaperStore(config.db_path).closed_trades(limit=limit, exit_strategy=strategy)
         if df.empty:
             return []
         df = df.copy()

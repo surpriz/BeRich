@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import duckdb
 import pandas as pd
 import pytest
 
@@ -253,3 +254,67 @@ def test_legacy_signal_defaults_fixed_exit_strategy(tmp_path):
     store.save([_signal("AAPL", 0.6)])
     row = store.history("AAPL").iloc[0]
     assert row["exit_strategy"] == "fixed"
+
+
+def test_fixed_and_trailing_signals_coexist_for_same_asset(tmp_path):
+    # The toggle relies on one row per (date, ticker, exit_strategy): both must survive a save.
+    store = SignalStore(tmp_path / "berich.duckdb")
+    common = {
+        "date": pd.Timestamp("2024-01-05"),
+        "ticker": "BNP.PA",
+        "signal": LONG,
+        "proba": 0.6,
+        "entry": 100.0,
+        "stop_loss": 98.0,
+        "take_profit": 104.0,
+        "size_shares": 20,
+        "notional": 2000.0,
+    }
+    store.save(
+        [
+            Signal(**common, exit_strategy="fixed"),
+            Signal(**common, exit_strategy="trailing", sltp_method="trailing"),
+        ]
+    )
+    latest = store.latest()
+    rows = latest[latest["ticker"] == "BNP.PA"]
+    assert set(rows["exit_strategy"]) == {"fixed", "trailing"}
+
+
+def test_legacy_two_column_pk_is_upgraded_in_place(tmp_path):
+    # A pre-Phase-13 DB keyed (date, ticker) must be rebuilt to (date, ticker, exit_strategy)
+    # WITHOUT losing rows, so the prod DB can hold a second strategy after deploy.
+    db = tmp_path / "berich.duckdb"
+    with duckdb.connect(str(db)) as con:
+        con.execute(
+            "CREATE TABLE signals (date DATE, ticker VARCHAR, signal VARCHAR, proba DOUBLE, "
+            "entry DOUBLE, stop_loss DOUBLE, take_profit DOUBLE, size_shares BIGINT, "
+            "notional DOUBLE, PRIMARY KEY (date, ticker))"
+        )
+        con.execute(
+            "INSERT INTO signals VALUES ('2024-01-05', 'AAPL', 'LONG', 0.6, 100, 95, 110, 10, 1000)"
+        )
+    # Constructing the store runs the PK upgrade; the legacy row is preserved as a fixed-exit row.
+    store = SignalStore(db)
+    hist = store.history("AAPL")
+    assert len(hist) == 1
+    assert hist.iloc[0]["exit_strategy"] == "fixed"
+    # And a trailing variant can now be added for the same (date, ticker).
+    store.save([_signal("AAPL", 0.6, "2024-01-05")])  # fixed, overwrites
+    store.save(
+        [
+            Signal(
+                date=pd.Timestamp("2024-01-05"),
+                ticker="AAPL",
+                signal=LONG,
+                proba=0.6,
+                entry=100.0,
+                stop_loss=98.0,
+                take_profit=104.0,
+                size_shares=10,
+                notional=1000.0,
+                exit_strategy="trailing",
+            )
+        ]
+    )
+    assert set(store.history("AAPL")["exit_strategy"]) == {"fixed", "trailing"}

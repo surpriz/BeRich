@@ -313,9 +313,14 @@ export const api = {
   prices: (ticker: string, days = 365) => get<PriceBar[]>(`/prices/${ticker}?days=${days}`),
   drift: () => get<DriftReport>("/drift"),
   backtest: (threshold = 0.5) => get<Backtest>(`/backtest?threshold=${threshold}`),
-  paperPositions: () => get<PaperPositions>("/paper/positions"),
-  paperEquity: () => get<PaperEquity>("/paper/equity"),
-  paperClosed: (limit = 25) => get<PaperClosedTrade[]>(`/paper/closed-trades?limit=${limit}`),
+  paperPositions: (strategy?: string) =>
+    get<PaperPositions>(`/paper/positions${strategy ? `?strategy=${strategy}` : ""}`),
+  paperEquity: (strategy?: string) =>
+    get<PaperEquity>(`/paper/equity${strategy ? `?strategy=${strategy}` : ""}`),
+  paperClosed: (limit = 25, strategy?: string) =>
+    get<PaperClosedTrade[]>(
+      `/paper/closed-trades?limit=${limit}${strategy ? `&strategy=${strategy}` : ""}`,
+    ),
   paperCalibration: () => get<PaperCalibration>("/paper/calibration"),
   universes: () => get<Universes>("/universes"),
   signalConfig: () => get<SignalConfig>("/config"),

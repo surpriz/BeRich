@@ -50,30 +50,45 @@ def _hpo_trial_counts(optuna_db: Path) -> dict[str, int]:
     return {name: int(n) for name, n in rows}
 
 
-def _hpo_trials_for(counts: dict[str, int], ticker: str, model: str | None, side: str) -> int:
-    """Sum HPO trials across that ticker+side's studies (all frameworks, or one if given)."""
+def _hpo_trials_for(
+    counts: dict[str, int],
+    ticker: str,
+    model: str | None,
+    side: str,
+    strategy: str | None = None,
+) -> int:
+    """Sum HPO trials across that ticker+side's studies.
+
+    ``model``/``strategy`` filter further (``None`` = any). Study names are
+    ``berich-hpo-<SLUG>-<model>-<side>[-<strategy>]-<metric>`` (fixed has no strategy segment),
+    so ``strategy="fixed"`` matches names with no trailing segment, and a trailing strategy
+    matches names carrying its segment.
+    """
     slug = safe_ticker_slug(ticker)
     total = 0
     for name, n in counts.items():
-        # berich-hpo-<SLUG>-<model>-<side>-<metric>
         if not name.startswith(f"berich-hpo-{slug}-"):
             continue
         if f"-{side}-" not in name:
             continue
         if model is not None and f"-{model}-" not in name:
             continue
+        if strategy == "fixed" and ("-trailing-" in name or "-trailing_tp-" in name):
+            continue
+        if strategy is not None and strategy != "fixed" and f"-{strategy}-" not in name:
+            continue
         total += n
     return total
 
 
 def _strategy_entry(
-    config: Config, ticker: str, side: str, strategy: str
+    config: Config, ticker: str, side: str, strategy: str, counts: dict[str, int]
 ) -> dict[str, object] | None:
     """Status of one (ticker, side, exit strategy), or ``None`` if that strategy isn't trained.
 
     Mirrors the per-asset tournament verdict for a single exit-strategy namespace: promoted
     (cleared the guard) / advisory_only (saved but unpromoted) / never_trained, plus the winner,
-    headline metrics, horizon and full candidate slate.
+    headline metrics, horizon, this strategy's own HPO trial count, and the full candidate slate.
     """
     reg = config.model_dir_for_ticker(ticker, side, strategy)
     if not reg.exists():
@@ -87,6 +102,7 @@ def _strategy_entry(
         "metrics": {},
         "candidates": [],
         "horizon_days": None,
+        "hpo_trials": _hpo_trials_for(counts, ticker, None, side, strategy),
     }
     status_path = reg / _STATUS_FILE
     if status_path.exists():
@@ -147,7 +163,7 @@ def _side_entry(
     signal service would pick); ``strategies`` carries every trained exit strategy so the
     dashboard can show fixed vs trailing vs trailing_tp side by side.
     """
-    per_strategy = (_strategy_entry(config, ticker, side, st) for st in _STRATEGIES)
+    per_strategy = (_strategy_entry(config, ticker, side, st, counts) for st in _STRATEGIES)
     strategies = [s for s in per_strategy if s is not None]
     served = _served_strategy(strategies, side)
     return {

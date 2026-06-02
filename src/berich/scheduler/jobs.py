@@ -317,8 +317,9 @@ def _ticker_hpo_task(
     model_name: str,
     side: str,
     n_trials: int,
+    strategy: str = "fixed",
 ) -> None:
-    """Module-level (picklable) per-ticker HPO call for the GPU pool worker.
+    """Module-level (picklable) per-ticker x exit-strategy HPO call for the GPU pool worker.
 
     The GPU pool invokes ``fn(device, *args)``; ``device`` is the pinned ``cuda:N`` string in
     a worker or ``cpu`` in the sequential fallback. Failures are swallowed so one bad ticker
@@ -327,9 +328,13 @@ def _ticker_hpo_task(
     from berich.training.hpo import run_ticker_hpo  # noqa: PLC0415
 
     try:
-        run_ticker_hpo(config, ticker, model_name, side, n_trials=n_trials, device=device)
+        run_ticker_hpo(
+            config, ticker, model_name, side, strategy=strategy, n_trials=n_trials, device=device
+        )
     except Exception:  # noqa: BLE001 — one ticker/model HPO failure must not abort the sweep
-        logger.warning("ticker HPO failed for %s/%s/%s", ticker, model_name, side, exc_info=True)
+        logger.warning(
+            "ticker HPO failed for %s/%s/%s/%s", ticker, model_name, side, strategy, exc_info=True
+        )
 
 
 def ticker_nightly_refresh_job(config: Config) -> dict[str, int]:
@@ -353,26 +358,35 @@ def ticker_nightly_refresh_job(config: Config) -> dict[str, int]:
     failed = 0
     for ticker in config.tradeable_tickers():
         for side in config.zoo.ticker_sides:
-            if load_active(config.model_dir_for_ticker(ticker, side)) is None:
-                skipped += 1
-                continue
-            try:
-                tasks = [
-                    GpuTask(
-                        _ticker_hpo_task,
-                        args=(config, ticker, model_name, side, n_trials),
-                        label=f"{ticker}/{model_name}/{side}",
+            for strategy in config.zoo.ticker_exit_strategies:
+                if load_active(config.model_dir_for_ticker(ticker, side, strategy)) is None:
+                    skipped += 1
+                    continue
+                try:
+                    tasks = [
+                        GpuTask(
+                            _ticker_hpo_task,
+                            args=(config, ticker, model_name, side, n_trials, strategy),
+                            label=f"{ticker}/{model_name}/{side}/{strategy}",
+                        )
+                        for model_name in deep_models
+                    ]
+                    if tasks:
+                        run_on_gpus(tasks, config.zoo.gpu_ids)
+                    result = train_ticker_tournament(
+                        config, ticker, side, strategy=strategy, calibrate=True
                     )
-                    for model_name in deep_models
-                ]
-                if tasks:
-                    run_on_gpus(tasks, config.zoo.gpu_ids)
-                result = train_ticker_tournament(config, ticker, side, calibrate=True)
-                refreshed += 1
-                promoted += int(result.promoted)
-            except Exception:  # noqa: BLE001 — one bad ticker must not abort the nightly batch
-                logger.warning("ticker_nightly_refresh: %s/%s failed", ticker, side, exc_info=True)
-                failed += 1
+                    refreshed += 1
+                    promoted += int(result.promoted)
+                except Exception:  # noqa: BLE001 — one bad ticker must not abort the nightly batch
+                    logger.warning(
+                        "ticker_nightly_refresh: %s/%s/%s failed",
+                        ticker,
+                        side,
+                        strategy,
+                        exc_info=True,
+                    )
+                    failed += 1
     summary = {
         "refreshed": refreshed,
         "promoted": promoted,
@@ -384,8 +398,10 @@ def ticker_nightly_refresh_job(config: Config) -> dict[str, int]:
     return summary
 
 
-def _hpo_and_tournament(config: Config, ticker: str, side: str, n_trials: int) -> bool:
-    """Full first-pass HPO (deep models on the GPU pool) + tournament for one ticker x side.
+def _hpo_and_tournament(
+    config: Config, ticker: str, side: str, n_trials: int, strategy: str = "fixed"
+) -> bool:
+    """Full first-pass HPO (deep models on the GPU pool) + tournament for one ticker/side/strategy.
 
     Returns whether a model was promoted. Deep-model HPO runs across the GPU pool; LightGBM is
     searched in-process by the tournament's own best-params lookup. Raises on hard failure so
@@ -397,35 +413,37 @@ def _hpo_and_tournament(config: Config, ticker: str, side: str, n_trials: int) -
     deep_models = [m for m in config.zoo.ticker_tournament_models if m != "lgbm"]
     # LightGBM HPO runs in-process (CPU, fast); deep models go on the GPU pool.
     if "lgbm" in config.zoo.ticker_tournament_models:
-        _ticker_hpo_task(None, config, ticker, "lgbm", side, n_trials)
+        _ticker_hpo_task(None, config, ticker, "lgbm", side, n_trials, strategy)
     tasks = [
         GpuTask(
             _ticker_hpo_task,
-            args=(config, ticker, model_name, side, n_trials),
-            label=f"{ticker}/{model_name}/{side}",
+            args=(config, ticker, model_name, side, n_trials, strategy),
+            label=f"{ticker}/{model_name}/{side}/{strategy}",
         )
         for model_name in deep_models
     ]
     if tasks:
         run_on_gpus(tasks, config.zoo.gpu_ids)
-    return train_ticker_tournament(config, ticker, side, calibrate=True).promoted
+    return train_ticker_tournament(config, ticker, side, strategy=strategy, calibrate=True).promoted
 
 
-def _pending_hpo_targets(config: Config) -> list[tuple[str, str]]:
-    """(ticker, side) pairs that have no per-asset HPO study yet, in config order.
+def _pending_hpo_targets(config: Config) -> list[tuple[str, str, str]]:
+    """(ticker, side, strategy) triples that have no per-asset HPO study yet, in config order.
 
-    This is the queue's work-list: assets whose models still run on default params. Reusing the
-    status scanner's trial counts means the queue is naturally resumable — a pair drops off the
-    list as soon as its study has trials, so re-running the job continues where it left off.
+    This is the queue's work-list: (asset, exit strategy) pairs whose models still run on default
+    params. Reusing the status scanner's per-strategy trial counts means the queue is naturally
+    resumable — a triple drops off as soon as its study has trials, so re-running continues where
+    it left off, and every strategy gets its own first deep HPO.
     """
     from berich.training.status import _hpo_trial_counts, _hpo_trials_for  # noqa: PLC0415
 
     counts = _hpo_trial_counts(config.optuna_db)
     return [
-        (ticker, side)
+        (ticker, side, strategy)
         for ticker in config.tradeable_tickers()
         for side in config.zoo.ticker_sides
-        if _hpo_trials_for(counts, ticker, None, side) == 0
+        for strategy in config.zoo.ticker_exit_strategies
+        if _hpo_trials_for(counts, ticker, None, side, strategy) == 0
     ]
 
 
@@ -488,13 +506,15 @@ def ticker_hpo_queue_job(config: Config, *, max_assets: int = 1) -> dict[str, ob
     processed: list[str] = []
     promoted = 0
     failed = 0
-    for ticker, side in pending[:max_assets]:
+    for ticker, side, strategy in pending[:max_assets]:
         try:
-            if _hpo_and_tournament(config, ticker, side, n_trials):
+            if _hpo_and_tournament(config, ticker, side, n_trials, strategy):
                 promoted += 1
-            processed.append(f"{ticker}/{side}")
+            processed.append(f"{ticker}/{side}/{strategy}")
         except Exception:  # noqa: BLE001 — one bad asset must not stall the queue
-            logger.warning("ticker_hpo_queue: %s/%s failed", ticker, side, exc_info=True)
+            logger.warning(
+                "ticker_hpo_queue: %s/%s/%s failed", ticker, side, strategy, exc_info=True
+            )
             failed += 1
     # Keep /signals in lock-step with the model set we just changed.
     refreshed = refresh_signals(config) if processed else 0
@@ -522,13 +542,20 @@ def ticker_initial_sweep_job(config: Config) -> dict[str, int]:
     failed = 0
     for ticker in config.tradeable_tickers():
         for side in config.zoo.ticker_sides:
-            try:
-                if _hpo_and_tournament(config, ticker, side, n_trials):
-                    promoted += 1
-                swept += 1
-            except Exception:  # noqa: BLE001 — one bad ticker must not abort the weekend sweep
-                logger.warning("ticker_initial_sweep: %s/%s failed", ticker, side, exc_info=True)
-                failed += 1
+            for strategy in config.zoo.ticker_exit_strategies:
+                try:
+                    if _hpo_and_tournament(config, ticker, side, n_trials, strategy):
+                        promoted += 1
+                    swept += 1
+                except Exception:  # noqa: BLE001 — one bad ticker must not abort the weekend sweep
+                    logger.warning(
+                        "ticker_initial_sweep: %s/%s/%s failed",
+                        ticker,
+                        side,
+                        strategy,
+                        exc_info=True,
+                    )
+                    failed += 1
     summary = {"swept": swept, "promoted": promoted, "failed": failed}
     logger.info("ticker_initial_sweep: %s", summary)
     return summary

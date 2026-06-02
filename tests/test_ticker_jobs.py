@@ -36,9 +36,10 @@ def _config(tmp_path, ticker: str = "AAA") -> Config:
     store.save(ticker, _ohlcv())
     store.save("SPY", _ohlcv(seed=1))
     cfg = Config(data_dir=tmp_path, watchlist=[ticker], universes={"us_stocks": [ticker]})
-    # Keep the sweep tiny + deterministic: one side, lgbm only (no deep GPU models).
+    # Keep the sweep tiny + deterministic: one side, one strategy, lgbm only (no deep GPU models).
     cfg.zoo.ticker_sides = ["long"]
     cfg.zoo.ticker_tournament_models = ["lgbm"]
+    cfg.zoo.ticker_exit_strategies = ["fixed"]
     return cfg
 
 
@@ -125,19 +126,37 @@ def test_hpo_queue_processes_one_asset_at_a_time(tmp_path, monkeypatch):
     cfg = Config(data_dir=tmp_path, universes={"us_stocks": ["AAA", "BBB"]})
     cfg.zoo.ticker_sides = ["long"]
     cfg.zoo.ticker_tournament_models = ["lgbm"]
+    cfg.zoo.ticker_exit_strategies = ["fixed"]
 
     calls: list[tuple] = []
-    monkeypatch.setattr(
-        jobs_mod,
-        "_hpo_and_tournament",
-        lambda config, ticker, side, n_trials: calls.append((ticker, side)) or False,  # noqa: ARG005
-    )
 
-    # max_assets=1 => only the first pending pair is processed; the rest stay queued.
+    def _record(config, ticker, side, n_trials, strategy):  # noqa: ARG001
+        calls.append((ticker, side, strategy))
+        return False
+
+    monkeypatch.setattr(jobs_mod, "_hpo_and_tournament", _record)
+
+    # max_assets=1 => only the first pending triple is processed; the rest stay queued.
     out = jobs_mod.ticker_hpo_queue_job(cfg, max_assets=1)
-    assert out["processed"] == ["AAA/long"]
+    assert out["processed"] == ["AAA/long/fixed"]
     assert out["remaining"] == 1
-    assert calls == [("AAA", "long")]
+    assert calls == [("AAA", "long", "fixed")]
+
+
+def test_initial_sweep_covers_every_exit_strategy(tmp_path, monkeypatch):
+    cfg = _config(tmp_path)
+    cfg.zoo.ticker_exit_strategies = ["fixed", "trailing"]
+    calls: list[tuple] = []
+
+    def _record(config, ticker, side, n_trials, strategy):  # noqa: ARG001
+        calls.append((ticker, side, strategy))
+        return False
+
+    monkeypatch.setattr(jobs_mod, "_hpo_and_tournament", _record)
+    out = ticker_initial_sweep_job(cfg)
+    # One ticker x one side x two strategies => both strategies swept.
+    assert out["swept"] == 2
+    assert calls == [("AAA", "long", "fixed"), ("AAA", "long", "trailing")]
 
 
 def test_cmd_train_tournament_single_ticker(tmp_path, monkeypatch):

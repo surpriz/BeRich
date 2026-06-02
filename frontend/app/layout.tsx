@@ -3,6 +3,7 @@ import { Bricolage_Grotesque, Hanken_Grotesk, JetBrains_Mono } from "next/font/g
 import "./globals.css";
 import { I18nProvider } from "./lib/i18n";
 import { LevelProvider } from "./lib/level";
+import { StrategyProvider } from "./lib/strategy";
 import { HealthFooter } from "./components/HealthFooter";
 import { TopNav } from "./components/TopNav";
 
@@ -33,9 +34,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <I18nProvider>
           <LevelProvider>
-            <TopNav />
-            {children}
-            <HealthFooter />
+            <StrategyProvider>
+              <TopNav />
+              {children}
+              <HealthFooter />
+            </StrategyProvider>
           </LevelProvider>
         </I18nProvider>
       </body>

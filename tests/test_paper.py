@@ -382,6 +382,32 @@ def test_trailing_open_position_exposes_live_trail_stop(tmp_path):
     assert pos.trail_stop == pytest.approx(106.0)  # high 111 - trail 5, ratcheted up from 98
 
 
+def test_fixed_and_trailing_books_coexist_and_filter(tmp_path):
+    # The same asset can be paper-traded under both strategies as separate books, and the
+    # metrics/positions read can be scoped to one book (the dashboard toggle).
+    config = _trail_config(tmp_path)
+    store = OhlcvStore(config.ohlcv_dir)
+    df = _trail_ohlcv()
+    _save_ohlcv(store, "AAA", df)
+    entry_date = df.index[5]
+    sigstore = SignalStore(config.db_path)
+    sigstore.save(
+        [
+            _signal(entry_date, "AAA", entry=100.0, stop=98.0, target=102.0, exit_strategy="fixed"),
+            _signal(
+                entry_date, "AAA", entry=100.0, stop=98.0, target=102.0, exit_strategy="trailing"
+            ),
+        ]
+    )
+    assert open_new_trades(config, store, sigstore) == 2  # one trade per book
+    update_open_trades(config, store)
+    all_trades = PaperStore(config.db_path).all_trades()
+    assert set(all_trades["exit_strategy"]) == {"fixed", "trailing"}
+    # Scoped reads return only the requested book.
+    fixed_only = PaperStore(config.db_path).all_trades("fixed")
+    assert set(fixed_only["exit_strategy"]) == {"fixed"}
+
+
 def test_trailing_idempotent_after_close(tmp_path):
     config = _trail_config(tmp_path)
     store = OhlcvStore(config.ohlcv_dir)

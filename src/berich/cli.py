@@ -760,11 +760,14 @@ def _cmd_hpo(args: argparse.Namespace) -> int:
     from berich.training.hpo import run_ticker_hpo
 
     config = Config.load(args.config)
-    study = run_ticker_hpo(config, args.ticker, args.model, args.side, n_trials=args.trials)
+    strategy = getattr(args, "strategy", "fixed")
+    study = run_ticker_hpo(
+        config, args.ticker, args.model, args.side, strategy=strategy, n_trials=args.trials
+    )
     best = study.best_trial
     params = {k: v for k, v in best.params.items() if not k.startswith("feat_")}
     print(  # noqa: T201
-        f"HPO {args.ticker}/{args.model}/{args.side}: best value={study.best_value:.4f} "
+        f"HPO {args.ticker}/{args.model}/{args.side}/{strategy}: best value={study.best_value:.4f} "
         f"over {len(study.trials)} trials.\n  params: {params}"
     )
     return 0
@@ -1080,6 +1083,12 @@ def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — flat subcomm
         help="Framework to search (default: %(default)s).",
     )
     p_hpo.add_argument("--side", choices=["long", "short"], default="long")
+    p_hpo.add_argument(
+        "--strategy",
+        choices=["fixed", "trailing", "trailing_tp"],
+        default="fixed",
+        help="Exit strategy to optimize (re-labels the objective). Default: fixed.",
+    )
     p_hpo.add_argument(
         "--trials",
         type=int,

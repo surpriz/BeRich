@@ -97,21 +97,22 @@ def _direction_pnl(
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS paper_trades (
-    date_open    DATE    NOT NULL,
-    ticker       VARCHAR NOT NULL,
-    signal       VARCHAR NOT NULL,
-    entry        DOUBLE  NOT NULL,
-    stop         DOUBLE  NOT NULL,
-    target       DOUBLE  NOT NULL,
-    size_shares  BIGINT  NOT NULL,
-    status       VARCHAR NOT NULL DEFAULT 'open',
-    date_close   DATE,
-    exit_price   DOUBLE,
-    pnl_pct      DOUBLE,
-    pnl_eur      DOUBLE,
-    created_at   TIMESTAMP DEFAULT now(),
-    updated_at   TIMESTAMP DEFAULT now(),
-    PRIMARY KEY (date_open, ticker)
+    date_open     DATE    NOT NULL,
+    ticker        VARCHAR NOT NULL,
+    signal        VARCHAR NOT NULL,
+    entry         DOUBLE  NOT NULL,
+    stop          DOUBLE  NOT NULL,
+    target        DOUBLE  NOT NULL,
+    size_shares   BIGINT  NOT NULL,
+    status        VARCHAR NOT NULL DEFAULT 'open',
+    date_close    DATE,
+    exit_price    DOUBLE,
+    pnl_pct       DOUBLE,
+    pnl_eur       DOUBLE,
+    exit_strategy VARCHAR NOT NULL DEFAULT 'fixed',
+    created_at    TIMESTAMP DEFAULT now(),
+    updated_at    TIMESTAMP DEFAULT now(),
+    PRIMARY KEY (date_open, ticker, exit_strategy)
 );
 """
 
@@ -147,6 +148,32 @@ _TRADE_COLUMNS = (
     "pnl_eur",
     "exit_strategy",
 )
+
+
+def _upgrade_paper_pk(con: duckdb.DuckDBPyConnection) -> None:
+    """Rebuild a legacy ``(date_open, ticker)`` PK as ``(date_open, ticker, exit_strategy)``.
+
+    Lets the fixed and trailing books hold a trade on the same asset/day. Preserves every row
+    (legacy rows carry ``exit_strategy='fixed'``); no-op once the key already includes it.
+    """
+    pk = con.execute(
+        "SELECT constraint_column_names FROM duckdb_constraints() "
+        "WHERE table_name = 'paper_trades' AND constraint_type = 'PRIMARY KEY'"
+    ).fetchall()
+    if not pk or "exit_strategy" in list(pk[0][0]):
+        return
+    old_cols = [r[0] for r in con.execute("DESCRIBE paper_trades").fetchall()]
+    con.execute("ALTER TABLE paper_trades RENAME TO _paper_trades_old")
+    con.execute(_SCHEMA)
+    con.execute(_MIGRATION_SOURCE_COLUMN)
+    con.execute(_MIGRATION_EXIT_STRATEGY_COLUMN)
+    new_cols = {r[0] for r in con.execute("DESCRIBE paper_trades").fetchall()}
+    common = ", ".join(c for c in old_cols if c in new_cols)
+    con.execute(
+        f"INSERT INTO paper_trades ({common}) "  # noqa: S608 — identifiers from DESCRIBE, not user input
+        f"SELECT {common} FROM _paper_trades_old"
+    )
+    con.execute("DROP TABLE _paper_trades_old")
 
 
 @dataclass
@@ -205,13 +232,20 @@ class PaperStore:
             con.execute(_SCHEMA)
             con.execute(_MIGRATION_SOURCE_COLUMN)
             con.execute(_MIGRATION_EXIT_STRATEGY_COLUMN)
+            _upgrade_paper_pk(con)
 
     def _connect(self) -> duckdb.DuckDBPyConnection:
         return duckdb.connect(str(self.db_path))
 
-    def all_trades(self) -> pd.DataFrame:
+    def all_trades(self, exit_strategy: str | None = None) -> pd.DataFrame:
+        sql = "SELECT * FROM paper_trades"
+        params: list[object] = []
+        if exit_strategy is not None:
+            sql += " WHERE exit_strategy = ?"
+            params.append(exit_strategy)
+        sql += " ORDER BY date_open, ticker"
         with self._connect() as con:
-            return con.execute("SELECT * FROM paper_trades ORDER BY date_open, ticker").df()
+            return con.execute(sql, params).df()
 
     def open_trades(self) -> pd.DataFrame:
         with self._connect() as con:
@@ -220,17 +254,25 @@ class PaperStore:
                 [OPEN],
             ).df()
 
-    def closed_trades(self, limit: int | None = None) -> pd.DataFrame:
-        query = "SELECT * FROM paper_trades WHERE status <> ? ORDER BY date_close DESC, ticker"
+    def closed_trades(
+        self, limit: int | None = None, exit_strategy: str | None = None
+    ) -> pd.DataFrame:
+        query = "SELECT * FROM paper_trades WHERE status <> ?"
+        params: list[object] = [OPEN]
+        if exit_strategy is not None:
+            query += " AND exit_strategy = ?"
+            params.append(exit_strategy)
+        query += " ORDER BY date_close DESC, ticker"
         if limit is not None:
             query += f" LIMIT {int(limit)}"
         with self._connect() as con:
-            return con.execute(query, [OPEN]).df()
+            return con.execute(query, params).df()
 
     def insert_new(self, rows: pd.DataFrame) -> int:
-        """Insert new (date_open, ticker) rows; skip those already present.
+        """Insert new (date_open, ticker, exit_strategy) rows; skip those already present.
 
-        Idempotent: re-running on the same input opens nothing the second time.
+        Idempotent: re-running on the same input opens nothing the second time. Keying on the
+        exit strategy too lets the fixed and trailing books hold a trade on the same asset/day.
         """
         if rows.empty:
             return 0
@@ -240,6 +282,9 @@ class PaperStore:
                 rows[col] = None
         rows = rows[list(_TRADE_COLUMNS)]
         rows["date_open"] = pd.to_datetime(rows["date_open"]).dt.date
+        # exit_strategy is part of the PK and NOT NULL — coerce missing/NaN to the fixed default
+        # so legacy callers that don't set it still open a (fixed-book) trade.
+        rows["exit_strategy"] = rows["exit_strategy"].fillna("fixed")
         # _TRADE_COLUMNS is a module-level constant of identifier strings, never user
         # input — safe to interpolate into SQL.
         cols_csv = ", ".join(_TRADE_COLUMNS)
@@ -248,7 +293,8 @@ class PaperStore:
             f"SELECT {cols_csv} FROM incoming "
             "WHERE NOT EXISTS ("
             "  SELECT 1 FROM paper_trades p "
-            "  WHERE p.date_open = incoming.date_open AND p.ticker = incoming.ticker"
+            "  WHERE p.date_open = incoming.date_open AND p.ticker = incoming.ticker "
+            "    AND p.exit_strategy = incoming.exit_strategy"
             ")"
         )
         with self._connect() as con:
@@ -268,13 +314,14 @@ class PaperStore:
         status: str,
         pnl_pct: float,
         pnl_eur: float,
+        exit_strategy: str = "fixed",
     ) -> None:
         with self._connect() as con:
             con.execute(
                 "UPDATE paper_trades SET "
                 "status = ?, date_close = ?, exit_price = ?, "
                 "pnl_pct = ?, pnl_eur = ?, updated_at = now() "
-                "WHERE date_open = ? AND ticker = ? AND status = ?",
+                "WHERE date_open = ? AND ticker = ? AND exit_strategy = ? AND status = ?",
                 [
                     status,
                     pd.Timestamp(date_close).date(),
@@ -283,6 +330,7 @@ class PaperStore:
                     pnl_eur,
                     pd.Timestamp(date_open).date(),
                     ticker,
+                    exit_strategy,
                     OPEN,
                 ],
             )
@@ -608,16 +656,24 @@ def update_open_trades(
             status=status,
             pnl_pct=float(pnl_pct),
             pnl_eur=float(pnl_eur),
+            exit_strategy=strategy,
         )
         closed_count += 1
     logger.info("paper.update_open_trades: %d trades closed", closed_count)
     return closed_count
 
 
-def get_open_positions(config: Config, store: OhlcvStore) -> list[OpenPosition]:
-    """Return open paper trades enriched with the latest-close MTM (and live trailing stop)."""
+def get_open_positions(
+    config: Config, store: OhlcvStore, *, exit_strategy: str | None = None
+) -> list[OpenPosition]:
+    """Return open paper trades enriched with the latest-close MTM (and live trailing stop).
+
+    ``exit_strategy`` filters to one book (the dashboard toggle's selection); ``None`` = all.
+    """
     paper = PaperStore(config.db_path)
     df = paper.open_trades()
+    if exit_strategy is not None and "exit_strategy" in df.columns:
+        df = df[df["exit_strategy"].fillna("fixed") == exit_strategy]
     cfg = _LabelConfig(**config.labeling.model_dump())
     out: list[OpenPosition] = []
     today = _ts(pd.Timestamp.today()).normalize()
@@ -688,15 +744,18 @@ def _open_trail_stop(
 # ---------------------------------------------------------------- equity curve ----
 
 
-def get_equity_curve(config: Config, store: OhlcvStore) -> pd.DataFrame:
+def get_equity_curve(
+    config: Config, store: OhlcvStore, *, exit_strategy: str | None = None
+) -> pd.DataFrame:
     """Build a daily paper-equity series alongside an equal-capital SPY buy & hold.
 
     Equity = ``capital + cumulative realized P&L + sum of open-trade MTM``. SPY
     benchmark is the same starting capital held in SPY from the first paper-trade
-    date onward. Returns an empty frame if no paper trades have ever been opened.
+    date onward. ``exit_strategy`` restricts the book to one strategy (toggle); ``None`` = all.
+    Returns an empty frame if no paper trades have ever been opened.
     """
     paper = PaperStore(config.db_path)
-    trades = paper.all_trades()
+    trades = paper.all_trades(exit_strategy)
     if trades.empty:
         return pd.DataFrame(columns=pd.Index(["date", "equity_paper", "equity_spy"]))
 
@@ -767,12 +826,17 @@ def get_equity_curve(config: Config, store: OhlcvStore) -> pd.DataFrame:
 # ------------------------------------------------------ summary metrics for UI ----
 
 
-def get_paper_metrics(config: Config, store: OhlcvStore) -> dict[str, float | int]:
-    """Compact summary used by the dashboard card: returns, win rate, drawdowns, n."""
+def get_paper_metrics(
+    config: Config, store: OhlcvStore, *, exit_strategy: str | None = None
+) -> dict[str, float | int]:
+    """Compact summary used by the dashboard card: returns, win rate, drawdowns, n.
+
+    ``exit_strategy`` restricts the book to one strategy (the dashboard toggle); ``None`` = all.
+    """
     paper = PaperStore(config.db_path)
-    trades = paper.all_trades()
+    trades = paper.all_trades(exit_strategy)
     capital = float(config.signals.capital)
-    equity = get_equity_curve(config, store)
+    equity = get_equity_curve(config, store, exit_strategy=exit_strategy)
 
     n_open = int((trades["status"] == OPEN).sum()) if not trades.empty else 0
     closed = trades[trades["status"].isin(CLOSED_STATUSES)] if not trades.empty else trades

@@ -267,9 +267,18 @@ def _ticker_side_model(config: Config, ticker: str, side: str) -> _SideModel | N
     strategy = _select_strategy(config, ticker, side)
     if strategy is None:
         return None
+    return _ticker_side_model_for(config, ticker, side, strategy)
+
+
+def _ticker_side_model_for(
+    config: Config, ticker: str, side: str, strategy: str
+) -> _SideModel | None:
+    """Load the per-asset model for a SPECIFIC exit strategy namespace (promoted winner if any,
+    else best optimized candidate). ``None`` when that (side, strategy) has no artifact.
+    """
     registry_dir = config.model_dir_for_ticker(ticker, side, strategy)
     loaded = load_best(registry_dir)
-    if loaded is None:  # defensive: _select_strategy already confirmed an artifact
+    if loaded is None:
         return None
     model, meta = loaded
     cal = load_calibrator(registry_dir / meta.name)
@@ -282,6 +291,20 @@ def _ticker_side_model(config: Config, ticker: str, side: str) -> _SideModel | N
         meta.horizon_days,
         exit_strategy=meta.exit_strategy,
     )
+
+
+def _strategies_with_long(config: Config, ticker: str) -> list[str]:
+    """Exit strategies that have a long model trained for ``ticker`` (fixed/trailing/trailing_tp).
+
+    The signal service emits one signal per available strategy so the dashboard's toggle can
+    show fixed vs trailing advice for the same asset. A strategy with only a short model is
+    skipped (we never emit a stand-alone short with no long context here).
+    """
+    return [
+        strategy
+        for strategy in ("fixed", "trailing", "trailing_tp")
+        if load_best(config.model_dir_for_ticker(ticker, "long", strategy)) is not None
+    ]
 
 
 def _optimized_tickers(config: Config) -> list[str]:
@@ -310,12 +333,12 @@ def _load_meta_labeler(config: Config) -> Model | None:
 
 
 def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
-    """Emit one signal per **optimized** asset, served only from that asset's own models.
+    """Emit signals per **optimized** asset — one per available exit strategy, from its own models.
 
-    "Optimized" = the asset has had its per-asset HPO run (see :func:`_optimized_tickers`). An
-    asset with no per-asset model (not yet worked on) produces no signal — the dashboard stays
-    clean and only shows assets we've actually tuned. Each asset is scored with its own long
-    (and, if present, short) model; there is no generic/global fallback.
+    "Optimized" = the asset has had its per-asset HPO run (see :func:`_optimized_tickers`). For
+    each such asset we emit ONE signal per trained exit strategy (fixed / trailing / trailing_tp),
+    each scored with that strategy's own long (and, if present, short) model — so the dashboard's
+    strategy toggle can show both ways of trading the same asset. No generic/global fallback.
     """
     label_cfg = LabelConfig(**config.labeling.model_dump())
     meta_model = _load_meta_labeler(config)
@@ -328,49 +351,52 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
         df = store.load(ticker)
         if df is None or df.empty:
             continue
-        per_long = _ticker_side_model(config, ticker, "long")
-        if per_long is None:
-            continue  # only a short model exists for an asset we'd never go long on; skip long
-        per_short = _ticker_side_model(config, ticker, "short")
-
         asset_class = config.asset_class_for(ticker)
         ref = market_reference_for(asset_class)
         if ref not in market_cache:
             market_cache[ref] = store.load(ref)
         market = market_cache[ref]
 
-        all_cols = [*per_long.cols, *(per_short.cols if per_short else [])]
-        with_earnings = _needs_earnings(all_cols)
-        with_news = _needs_news(all_cols)
-        earnings_df = (
-            earnings_store.load(ticker) if (with_earnings and earnings_store is not None) else None
-        )
-        news_df = news_store.load(ticker) if (with_news and news_store is not None) else None
-        signal = _signal_for_ticker(
-            ticker,
-            df,
-            per_long.model,
-            config,
-            label_cfg,
-            market=market,
-            earnings=earnings_df,
-            news=news_df,
-            with_earnings=with_earnings,
-            with_news=with_news,
-            feature_cols=per_long.cols,
-            calibrator=per_long.calibrator,
-            meta_model=meta_model,
-            short_model=per_short.model if per_short else None,
-            short_feature_cols=per_short.cols if per_short else None,
-            short_calibrator=per_short.calibrator if per_short else None,
-            long_promoted=per_long.promoted,
-            short_promoted=per_short.promoted if per_short else False,
-            horizon_days=per_long.horizon_days,
-            long_exit_strategy=per_long.exit_strategy,
-            short_exit_strategy=per_short.exit_strategy if per_short else "fixed",
-        )
-        if signal is not None:
-            signals.append(signal)
+        for strategy in _strategies_with_long(config, ticker):
+            per_long = _ticker_side_model_for(config, ticker, "long", strategy)
+            if per_long is None:
+                continue
+            per_short = _ticker_side_model_for(config, ticker, "short", strategy)
+
+            all_cols = [*per_long.cols, *(per_short.cols if per_short else [])]
+            with_earnings = _needs_earnings(all_cols)
+            with_news = _needs_news(all_cols)
+            earnings_df = (
+                earnings_store.load(ticker)
+                if (with_earnings and earnings_store is not None)
+                else None
+            )
+            news_df = news_store.load(ticker) if (with_news and news_store is not None) else None
+            signal = _signal_for_ticker(
+                ticker,
+                df,
+                per_long.model,
+                config,
+                label_cfg,
+                market=market,
+                earnings=earnings_df,
+                news=news_df,
+                with_earnings=with_earnings,
+                with_news=with_news,
+                feature_cols=per_long.cols,
+                calibrator=per_long.calibrator,
+                meta_model=meta_model,
+                short_model=per_short.model if per_short else None,
+                short_feature_cols=per_short.cols if per_short else None,
+                short_calibrator=per_short.calibrator if per_short else None,
+                long_promoted=per_long.promoted,
+                short_promoted=per_short.promoted if per_short else False,
+                horizon_days=per_long.horizon_days,
+                long_exit_strategy=per_long.exit_strategy,
+                short_exit_strategy=per_short.exit_strategy if per_short else strategy,
+            )
+            if signal is not None:
+                signals.append(signal)
     return signals
 
 

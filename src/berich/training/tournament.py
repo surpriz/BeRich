@@ -122,10 +122,10 @@ def train_candidate(
     ``(model, metadata, calibrator_or_None, candidate_result)``. Nothing is saved or promoted
     here — that is the tournament's job once it has picked a winner.
     """
-    params, features = best_for_ticker(config, ticker, model_name, side)
+    params, features = best_for_ticker(config, ticker, model_name, side, strategy)
     # Reuse the HPO-chosen triple-barrier horizon so the candidate is trained, backtested AND
     # later served on the same horizon it was optimized for. None => the configured default.
-    horizon = best_horizon_for_ticker(config, ticker, model_name, side)
+    horizon = best_horizon_for_ticker(config, ticker, model_name, side, strategy)
     dataset, prices = _ticker_dataset(
         config, ticker, side, horizon_days=horizon, exit_mode=strategy
     )
