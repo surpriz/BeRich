@@ -69,6 +69,30 @@ CLOSED_TARGET = "closed_target"
 CLOSED_TIME = "closed_time"
 CLOSED_STATUSES: tuple[str, ...] = (CLOSED_STOP, CLOSED_TARGET, CLOSED_TIME)
 
+# Signal labels that open a position, by direction. The paper book opens both
+# sides (promoted long + promoted short); ``signal`` on each row records which.
+LONG_OPEN: tuple[str, ...] = ("LONG", "BUY")
+SHORT_OPEN: tuple[str, ...] = ("SHORT",)
+
+
+def _is_short(signal: object) -> bool:
+    """True for a short trade. Direction is derived from the stored ``signal``."""
+    return str(signal).upper() in SHORT_OPEN
+
+
+def _direction_pnl(
+    entry: float, exit_price: float, shares: int, *, short: bool
+) -> tuple[float, float]:
+    """Return ``(pnl_pct, pnl_eur)`` for a long or short leg.
+
+    Short P&L is the mirror of long: you profit when price falls, so the per-unit
+    move is ``entry - exit`` instead of ``exit - entry``.
+    """
+    move = (entry - exit_price) if short else (exit_price - entry)
+    pnl_pct = move / entry if entry else 0.0
+    return pnl_pct, move * shares
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS paper_trades (
     date_open    DATE    NOT NULL,
@@ -120,6 +144,7 @@ class OpenPosition:
 
     date_open: pd.Timestamp
     ticker: str
+    direction: str
     entry: float
     stop: float
     target: float
@@ -133,6 +158,7 @@ class OpenPosition:
         return {
             "date_open": _ts(self.date_open).date().isoformat(),
             "ticker": self.ticker,
+            "direction": self.direction,
             "entry": self.entry,
             "stop": self.stop,
             "target": self.target,
@@ -253,12 +279,18 @@ def _resolve_paper_exit(
     horizon_days: int,
     stop: float,
     target: float,
+    *,
+    short: bool = False,
 ) -> tuple[int, float, str] | None:
     """Mirror ``backtest.engine._resolve_exit`` but return ``None`` when not enough bars.
 
     Same conservative tie-break: if both stop and target are touched inside the
     same bar, the stop wins (we'd rather assume the worst). When the cache hasn't
     accumulated enough bars to reach the time barrier yet, the trade stays open.
+
+    Direction-aware: a long stops out when ``low`` breaks below ``stop`` and takes
+    profit when ``high`` breaks above ``target``; a short is the mirror — stop is
+    *above* the entry (touched by ``high``) and target *below* (touched by ``low``).
     """
     n = len(df)
     time_exit_idx = entry_idx + horizon_days
@@ -271,11 +303,13 @@ def _resolve_paper_exit(
     close = df["close"]
 
     for j in range(entry_idx + 1, last_walkable + 1):
-        hit_stop = float(low.iloc[j]) <= stop
-        hit_target = float(high.iloc[j]) >= target
-        if hit_stop and hit_target:
-            return j, stop, CLOSED_STOP
-        if hit_stop:
+        if short:
+            hit_stop = float(high.iloc[j]) >= stop
+            hit_target = float(low.iloc[j]) <= target
+        else:
+            hit_stop = float(low.iloc[j]) <= stop
+            hit_target = float(high.iloc[j]) >= target
+        if hit_stop:  # stop wins the same-bar tie (conservative)
             return j, stop, CLOSED_STOP
         if hit_target:
             return j, target, CLOSED_TARGET
@@ -302,28 +336,29 @@ def open_new_trades(
     latest = signal_store.latest()
     if latest.empty:
         return 0
-    # Paper book is long-only for now: open a trade for each LONG (or legacy BUY) call.
-    # Directional shorts are emitted by the signal service but not yet paper-traded.
-    buys = latest[latest["signal"].isin(["LONG", "BUY"])]
-    buys = buys[buys["size_shares"] > 0]
+    # Open both directions: a LONG (or legacy BUY) opens a long leg, a SHORT opens a short
+    # leg. Each row's ``signal`` records the direction; the stop/target the signal service
+    # emitted are already mirrored for shorts (stop above entry, target below).
+    actionable = latest[latest["signal"].isin([*LONG_OPEN, *SHORT_OPEN])]
+    actionable = actionable[actionable["size_shares"] > 0]
     # Only paper-trade PROMOTED assets — those whose per-asset model cleared the guard. The
     # book must measure the validated strategy, not advisory (optimized-but-unproven) signals.
     # Legacy rows predating the column have promoted=NULL; treat missing as not-promoted.
-    if "promoted" in buys.columns:
-        buys = buys[buys["promoted"].fillna(value=False).astype(bool)]
+    if "promoted" in actionable.columns:
+        actionable = actionable[actionable["promoted"].fillna(value=False).astype(bool)]
     else:
-        buys = buys.iloc[0:0]  # no column yet => nothing is known-promoted => open nothing
-    if buys.empty:
+        actionable = actionable.iloc[0:0]  # no column yet => nothing known-promoted => open nothing
+    if actionable.empty:
         return 0
     rows = pd.DataFrame(
         {
-            "date_open": buys["date"],
-            "ticker": buys["ticker"],
-            "signal": buys["signal"],
-            "entry": buys["entry"],
-            "stop": buys["stop_loss"],
-            "target": buys["take_profit"],
-            "size_shares": buys["size_shares"],
+            "date_open": actionable["date"],
+            "ticker": actionable["ticker"],
+            "signal": actionable["signal"],
+            "entry": actionable["entry"],
+            "stop": actionable["stop_loss"],
+            "target": actionable["take_profit"],
+            "size_shares": actionable["size_shares"],
             "status": OPEN,
         }
     )
@@ -366,20 +401,21 @@ def update_open_trades(
             )
             continue
         entry_idx = int(ohlcv.index.get_loc(date_open))
+        short = _is_short(row["signal"])
         resolved = _resolve_paper_exit(
             ohlcv,
             entry_idx=entry_idx,
             horizon_days=cfg.horizon_days,
             stop=float(row["stop"]),
             target=float(row["target"]),
+            short=short,
         )
         if resolved is None:
             continue
         exit_idx, exit_price, status = resolved
         entry = float(row["entry"])
         shares = int(row["size_shares"])
-        pnl_pct = (exit_price - entry) / entry if entry else 0.0
-        pnl_eur = (exit_price - entry) * shares
+        pnl_pct, pnl_eur = _direction_pnl(entry, float(exit_price), shares, short=short)
         paper.close_trade(
             date_open=date_open,
             ticker=ticker,
@@ -408,14 +444,15 @@ def get_open_positions(config: Config, store: OhlcvStore) -> list[OpenPosition]:
         current_price = float(ohlcv["close"].iloc[-1])
         entry = float(row["entry"])
         shares = int(row["size_shares"])
+        short = _is_short(row["signal"])
         date_open = _ts(row["date_open"])
         days_held = max(0, int(np.busday_count(date_open.date(), today.date())))
-        mtm_pct = (current_price - entry) / entry if entry else 0.0
-        mtm_eur = (current_price - entry) * shares
+        mtm_pct, mtm_eur = _direction_pnl(entry, current_price, shares, short=short)
         out.append(
             OpenPosition(
                 date_open=date_open,
                 ticker=ticker,
+                direction="short" if short else "long",
                 entry=entry,
                 stop=float(row["stop"]),
                 target=float(row["target"]),
@@ -479,7 +516,9 @@ def get_equity_curve(config: Config, store: OhlcvStore) -> pd.DataFrame:
         if len(active) == 0:
             continue
         closes = ticker_df["close"].reindex(active).ffill()
-        mtm = (closes - float(row["entry"])) * int(row["size_shares"])
+        entry_px = float(row["entry"])
+        move = (entry_px - closes) if _is_short(row["signal"]) else (closes - entry_px)
+        mtm = move * int(row["size_shares"])
         unrealized.loc[active] += mtm.fillna(0.0).to_numpy()
 
     equity_paper = capital + cum_realized + unrealized

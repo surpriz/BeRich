@@ -91,6 +91,7 @@ export type Backtest = {
 export type PaperPosition = {
   date_open: string;
   ticker: string;
+  direction?: "long" | "short";
   entry: number;
   stop: number;
   target: number;

@@ -121,7 +121,20 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
           <tbody>
             {positions.map((p) => (
               <tr key={`${p.date_open}-${p.ticker}`} className="border-b border-[var(--color-line)]/50 last:border-0">
-                <td className="px-5 py-2 font-display text-sm font-bold">{p.ticker}</td>
+                <td className="px-5 py-2 font-display text-sm font-bold">
+                  <span className="flex items-center gap-2">
+                    {p.ticker}
+                    {p.direction === "short" ? (
+                      <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--color-bear)] ring-1 ring-[var(--color-bear)]/40">
+                        short
+                      </span>
+                    ) : (
+                      <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--color-bull)] ring-1 ring-[var(--color-bull)]/40">
+                        long
+                      </span>
+                    )}
+                  </span>
+                </td>
                 <td className="tabular px-3 py-2 text-right">{fmt(p.entry)}</td>
                 <td className="tabular px-3 py-2 text-right">{fmt(p.current_price)}</td>
                 <td className={`tabular px-3 py-2 text-right ${pnlColor(p.mtm_pct)}`}>

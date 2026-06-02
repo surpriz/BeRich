@@ -27,7 +27,7 @@ from berich.signals.paper import (
     CLOSED_TIME,
     OPEN,
 )
-from berich.signals.service import BUY, Signal
+from berich.signals.service import BUY, SHORT, Signal
 from berich.signals.store import SignalStore
 
 
@@ -112,6 +112,81 @@ def _seed_signal_table(
     store = SignalStore(config.db_path)
     store.save([_signal(date, "AAA", entry=entry, stop=stop, target=target)])
     return store
+
+
+def _short_signal(
+    date: pd.Timestamp,
+    ticker: str,
+    entry: float,
+    stop: float,
+    target: float,
+    *,
+    promoted: bool = True,
+) -> Signal:
+    # A short mirrors a long: stop is *above* entry, target *below*.
+    return Signal(
+        date=date,
+        ticker=ticker,
+        signal=SHORT,
+        proba=0.65,
+        entry=entry,
+        stop_loss=stop,
+        take_profit=target,
+        size_shares=10,
+        notional=entry * 10,
+        promoted=promoted,
+        direction="short",
+    )
+
+
+def test_short_downtrend_closes_at_target(config, ohlcv_store):
+    # Short entry 100, target 90 (below), stop 105 (above). A slide to 80 hits the
+    # target first and the short is profitable (price fell as predicted).
+    df = _ramp(start=100.0, end=80.0, n=20, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    sigstore = SignalStore(config.db_path)
+    sigstore.save([_short_signal(df.index[0], "AAA", entry=100.0, stop=105.0, target=90.0)])
+
+    opened = open_new_trades(config, ohlcv_store, sigstore)
+    closed = update_open_trades(config, ohlcv_store)
+
+    assert opened == 1
+    assert closed == 1
+    trade = PaperStore(config.db_path).all_trades().iloc[0]
+    assert trade["status"] == CLOSED_TARGET
+    assert trade["exit_price"] == pytest.approx(90.0)
+    assert trade["pnl_pct"] > 0  # short profits when price falls
+    assert trade["pnl_eur"] == pytest.approx((100.0 - 90.0) * 10)
+
+
+def test_short_uptrend_closes_at_stop(config, ohlcv_store):
+    # Short entry 100, stop 105 (above), target 90 (below). A climb to 120 hits the
+    # stop first and the short loses.
+    df = _ramp(start=100.0, end=120.0, n=20, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    sigstore = SignalStore(config.db_path)
+    sigstore.save([_short_signal(df.index[0], "AAA", entry=100.0, stop=105.0, target=90.0)])
+
+    open_new_trades(config, ohlcv_store, sigstore)
+    closed = update_open_trades(config, ohlcv_store)
+
+    assert closed == 1
+    trade = PaperStore(config.db_path).all_trades().iloc[0]
+    assert trade["status"] == CLOSED_STOP
+    assert trade["exit_price"] == pytest.approx(105.0)
+    assert trade["pnl_pct"] < 0
+
+
+def test_advisory_short_opens_no_paper_trade(config, ohlcv_store):
+    # An advisory (non-promoted) SHORT must not open a paper trade either.
+    df = _ramp(start=100.0, end=80.0, n=20, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    sigstore = SignalStore(config.db_path)
+    sigstore.save(
+        [_short_signal(df.index[0], "AAA", entry=100.0, stop=105.0, target=90.0, promoted=False)]
+    )
+    assert open_new_trades(config, ohlcv_store, sigstore) == 0
+    assert PaperStore(config.db_path).all_trades().empty
 
 
 def test_advisory_signal_opens_no_paper_trade(config, ohlcv_store):
