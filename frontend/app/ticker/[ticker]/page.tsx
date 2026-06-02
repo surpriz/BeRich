@@ -195,12 +195,6 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
         </Show>
       )}
 
-      {klass !== "us_stocks" && klass !== "unknown" && (
-        <div className="mb-6 rounded-lg border border-[var(--color-neutral)]/30 bg-[var(--color-neutral)]/[0.06] px-4 py-3 text-sm text-[var(--color-neutral)]">
-          {t("banner.experimental")}
-        </div>
-      )}
-
       {error && (
         <div className="card p-6 text-[var(--color-bear)]">
           {t("error.api")} ({error})

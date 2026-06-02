@@ -6,15 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
   BeRich is a personal swing-trading advisory tool. ML predicts a **trend probability**
   (triple-barrier label: did the upper barrier hit before the lower one within N bars),
-  not a price. Long-only, daily bars, US equities for v1.
+  not a price. Daily bars; per-asset models across US/FR/forex/crypto/commodities, each
+  carrying a **long and a short** side (Phase 12). The triple-barrier label and backtest
+  engine are direction-aware.
 
   ## Non-negotiable design rules
 
-  1. **The guard rule.** A model is only trusted / promoted if it beats **both** the
-     LightGBM baseline **and** equal-weight buy & hold, walk-forward, out-of-sample, with
-     realistic fees + slippage. The model registry (`src/berich/models/registry.py`)
-     enforces this: `promote()` refuses any artifact whose metadata says
-     `beats_buy_hold = False` (unless `force=True`).
+  1. **The guard rule.** A model is only trusted / promoted if it clears its strategy's
+     bar, walk-forward, out-of-sample, with realistic fees + slippage. The registry
+     (`src/berich/models/registry.py`) enforces it in `_gate_failure` / `promote()`:
+     **long** must beat that asset's buy & hold (`beats_buy_hold = True`); **short** has
+     no buy-&-hold benchmark, so it needs a positive, significant Sharpe vs cash
+     (deflated Sharpe ≥ 0.95, p < 0.05); market-neutral uses the same significance test.
+     `promote()` refuses anything that fails (unless `force=True`). A side that fails
+     stays advisory-only (no `active.json`).
   2. **No lookahead, ever.** Features are causal (see `src/berich/features/indicators.py`).
      Scalers fit on the train fold only (`src/berich/datasets/scaling.py`). Walk-forward
      splits keep an embargo gap equal to the label horizon.
@@ -28,21 +33,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   ## Architecture (modules behind the `Model` protocol)
 
   src/berich/
-    data/          yfinance OHLCV + earnings + Alpha Vantage news, Parquet/cache
-    features/      causal indicators, canonical FEATURE_COLUMNS, earnings/news features
-    labeling/      triple-barrier labels with sample weights
+    data/          yfinance OHLCV + earnings + fundamentals + Alpha Vantage news, Parquet/cache
+    features/      causal indicators, FEATURE_COLUMNS, earnings/news/microstructure/fundamental features
+    labeling/      direction-aware triple-barrier labels (long/short) with sample weights
     datasets/      walk-forward splits, sequence windowing, StandardScaler
     models/        base.py Model protocol + lightgbm_model.py, lstm.py, finbert_scorer.py, registry.py
-    training/      walk_forward.py (OOS probs), deep.py (LSTM), pead.py (event model)
-    backtest/      engine.py (triple-barrier), pead_engine.py, portfolio.py, strategies.py, metrics.py
-    signals/       service.py (daily signals), calibration.py, paper.py (paper book), store.py (DuckDB)
+    training/      walk_forward.py (OOS), deep.py, hpo.py (Optuna), tournament.py (per-asset),
+                   status.py (training inventory), pead.py, cross_sectional.py, gpu_pool.py
+    backtest/      engine.py (direction-aware triple-barrier), pead_engine.py, portfolio.py, significance.py, metrics.py
+    signals/       service.py (dual long/short daily signals), calibration.py, paper.py, store.py (DuckDB)
     risk/          gating.py, sizing.py, sizing_strategy.py (risk-based position sizing)
     monitoring/    PSI + KS feature drift
-    notifications/ email.py (digest)
-    scheduler/     APScheduler jobs (daily signals, weekly drift, ingestion)
-    api/           FastAPI backend (signals, explain, universes, health)
-  frontend/        Next.js dashboard — multi-asset universe tabs, ticker drill-down
-                   (lightweight-charts), EN/FR i18n, health footer
+    notifications/ email.py (signal digest + send_alert_email for job-failure alerts)
+    scheduler/     APScheduler jobs.py + runner.py (EVENT_JOB_ERROR -> email alert)
+    api/           FastAPI backend (signals, explain, training, ops, universes, health)
+    ops.py         live machine-status collectors (GPU/jobs/HPO/logs) for /api/ops
+    backup.py      rotating local tar.gz of data/ (studies, models, signals DB)
+  frontend/        Next.js dashboard — multi-asset tabs, ticker drill-down (lightweight-charts),
+                   /training (per-asset model inventory), /ops (live machine status),
+                   EN/FR i18n, health footer
 
   `models/base.py` defines a 2-method `Model` protocol: `fit(x, y, sample_weight=None)`
   and `predict_proba(x) -> np.ndarray`. Every model implements it so training,
@@ -55,7 +64,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
   ## CLI surface
 
-  `berich data | news | backtest | signals | longshort | drift | pead | paper | train | hpo | models | serve | schedule`
+  `berich data | news | backtest | signals | longshort | drift | pead | paper | train | hpo | models | backup | serve | schedule`
   (defined in `src/berich/cli.py`). The `train` command runs the walk-forward OOS,
   fits a final model on all labeled history, saves it to `data/models/<name>/`, and
   tries to promote it through the guard. As of Phase 12 `train` also drives the
@@ -63,16 +72,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   trains LightGBM/LSTM/PatchTST/TFT for one asset+side and keeps the walk-forward winner
   under `data/models/tickers/<TICKER>/<side>/`; `--all-tickers` sweeps every configured
   asset. `berich hpo --ticker ... --model ... --side ... --trials N` runs a per-asset
-  Optuna study (params + feature-group toggles, incl. news/FinBERT). `news` runs the
-  Alpha Vantage fetch + FinBERT GPU scoring pipeline; `pead` runs the event-driven
-  Post-Earnings Drift model; `paper` drives the paper-trading book. The CLI uses lazy
-  imports inside subcommands to keep startup fast (hence the `PLC0415` ruff ignore).
+  Optuna study (params + feature-group toggles, incl. news/FinBERT;
+  `zoo.ticker_initial_hpo_trials = 100`). `berich backup [--keep N]` archives the
+  training state. `news` runs the Alpha Vantage fetch + FinBERT GPU scoring; `pead`
+  runs the event-driven Post-Earnings Drift model; `longshort` is the market-neutral
+  cross-sectional ranker (Phase 10); `paper` drives the paper-trading book. The CLI uses
+  lazy imports inside subcommands to keep startup fast (hence the `PLC0415` ruff ignore).
 
   ## Common commands
 
   - **Lint / format / types / tests** (run before claiming a task done):
     `uv run ruff format src/ tests/` · `uv run ruff check src/ tests/` ·
-    `uv run ty check src/` · `uv run pytest -q` (149 tests).
+    `uv run ty check src/` · `uv run pytest -q` (264 tests).
   - **Single test**: `uv run pytest tests/test_pead.py -q` or
     `uv run pytest tests/test_signals.py::test_name -q`.
   - **Frontend** (`frontend/`): `npm run build` · `npm run dev` · `npm run lint`.
@@ -82,30 +93,50 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
   ## Current state (read before changing things)
 
-  **v0.4.0 — advisory infrastructure, no edge claim.** Phases 0–9 are done and
-  tested (149 pytest passing, ruff + ty clean, frontend builds). Across nine phases
-  — OHLCV + cross-asset macro, earnings surprises, FinBERT news sentiment, mid/small-cap
-  universes, short horizons, post-earnings drift (PEAD), a risk-management overlay,
-  and a core-satellite portfolio reframe — **no combination beats buy & hold**
-  walk-forward with realistic fees + slippage on the US daily long-only universe.
+  **v0.4.0 — advisory infrastructure, no edge claim.** (Suite is now 264 tests, ruff +
+  ty clean, frontend builds.) Across nine phases — OHLCV + cross-asset macro, earnings
+  surprises, FinBERT news sentiment, mid/small-cap universes, short horizons,
+  post-earnings drift (PEAD), a risk-management overlay, and a core-satellite portfolio
+  reframe — **no combination beats buy & hold** walk-forward with realistic fees +
+  slippage on the US daily long-only universe.
   The PEAD event book (AUC ≈ 0.535, trade-level Sharpe ≈ 0.849, max DD ≈ -6.7 %) is
   the closest to a usable signal but still does not clear the benchmark once blended.
   The guard rule (`promote()`) refuses every variant; the dashboard surfaces an
   "advisory only" banner. This is shipped on purpose.
 
   **Phase 12 — per-asset tournament + directional shorts (architecture, not an edge
-  claim).** Training/HPO moved from per-class to **per-asset**: each configured asset
-  (US/FR/forex/crypto/commodities) gets its own Optuna studies per `(ticker, model,
-  side)` and a tournament (`training/tournament.py`) that keeps the walk-forward winner
-  among LightGBM/LSTM/PatchTST/TFT. The label + backtest are now direction-aware, so each
-  asset can carry a **long and a short model**; the signal service emits LONG/SHORT/NEUTRAL
-  with mirrored TP/SL. The per-asset guard is unchanged in spirit — long beats that
-  asset's buy & hold OOS; short needs a positive, significant Sharpe vs cash — and assets
-  that fail stay advisory-only (served via the existing fallback behind the experimental
-  banner). Given ~400 labeled windows/asset, expect many assets to remain advisory-only;
-  that is the honest outcome, not a bug. Scheduler: `ticker_initial_sweep_job` (Sat 14:00,
-  deep, GPU pool) + `ticker_nightly_refresh_job` (23:30, light) replace the old per-class
-  nightly retrains. See `docs/RESULTS.md` "Phase 12" for the full framing.
+  claim; shipped + deployed).** Training/HPO moved from per-class to **per-asset**: each
+  configured asset (US/FR/forex/crypto/commodities) gets its own Optuna studies per
+  `(ticker, model, side)` and a tournament (`training/tournament.py`) that keeps the
+  walk-forward winner among LightGBM/LSTM/PatchTST/TFT. The label + backtest are
+  direction-aware, so each asset can carry a **long and a short model**; the signal
+  service (`signals/service.py`, `_decide`) emits LONG/SHORT/NEUTRAL with mirrored TP/SL
+  and absolute-distance sizing capped at capital (no leverage). The per-asset guard is as
+  in rule 1. Given ~400 labeled windows/asset, **expect most assets to stay
+  advisory-only** — that is the honest outcome, not a bug.
+
+  Current promoted set after the first 40-trial sweep: 4 forex long (lgbm), BNP.PA +
+  TTE.PA long (tft/patchtst), USDCAD short (lstm) = 7. The forex "wins" beat a flat
+  buy & hold (Sharpe ≈ 0), so the edge is weak — treat all 7 as paper-trade candidates,
+  not validated. AAPL long *and* short re-run at 160 trials still fail the guard,
+  confirming the daily long-only US universe is hard.
+
+  **Observability & ops (deployed).** Scheduler jobs (`scheduler/runner.py`):
+  `ticker_initial_sweep_job` (Sat 14:00, deep, GPU pool), `ticker_nightly_refresh_job`
+  (23:30, light), **`ticker_hpo_queue_job`** (every 2h — sequential first-HPO queue, one
+  un-searched `(ticker, side)` at a time so deep HPO never overlaps; resumable), and a
+  daily **`backup_job`** (21:00). An `EVENT_JOB_ERROR` listener emails an alert
+  (`send_alert_email`) when a job crashes (needs `NOTIFY_EMAIL`/`SMTP_*` in
+  `/etc/berich/env`). Two dashboard tabs back this: **`/training`** (`/api/training` ←
+  `training/status.py`: per-asset status, winner, guard metrics, HPO trial count) and
+  **`/ops`** (`/api/ops` ← `ops.py`: live GPU/jobs/HPO-queue/logs, 5 s refresh).
+
+  **Known wrinkle (by design, flagged):** when an asset has no promoted per-side model,
+  `service.py` falls back to the global `lgbm-hpo` (whose `beats_buy_hold = False`), so
+  the paper book can open positions on advisory-only assets. The per-asset *promotion*
+  guard holds; the *serving* fallback does not. Decide explicitly before relying on the
+  paper book as a validation signal. LightGBM now pins `random_state=42` so served P(win)
+  is reproducible. See `docs/RESULTS.md` "Phase 12" for the full framing.
 
   ## Exploration history & guardrails (read `docs/RESULTS.md` first)
 

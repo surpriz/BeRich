@@ -109,7 +109,6 @@ export default function Dashboard() {
   }, [s.signals, s.universes, activeUniverse]);
 
   const asOf = filtered?.[0]?.date ?? s.signals?.[0]?.date;
-  const showExperimental = activeUniverse !== "us_stocks";
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-12">
@@ -131,8 +130,22 @@ export default function Dashboard() {
         )}
       </header>
 
-      <div className="mb-3 rounded-lg border border-[var(--color-neutral)]/30 bg-[var(--color-neutral)]/[0.06] px-4 py-3 text-sm text-[var(--color-neutral)]">
-        {t("banner.advisory")}
+      <div className="mb-3 rounded-lg border border-[var(--color-line)] bg-white/[0.02] px-4 py-3 text-sm">
+        <div className="mb-1 font-semibold text-[var(--color-fg)]">{t("legend.title")}</div>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-start gap-2">
+            <span className="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-bull)] ring-1 ring-[var(--color-bull)]/40">
+              {t("signal.validated")}
+            </span>
+            <span className="text-[var(--color-muted)]">{t("legend.validated")}</span>
+          </div>
+          <div className="flex items-start gap-2">
+            <span className="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-faint)] ring-1 ring-[var(--color-line)]">
+              {t("signal.advisory")}
+            </span>
+            <span className="text-[var(--color-muted)]">{t("legend.advisory")}</span>
+          </div>
+        </div>
       </div>
 
       <div className="mb-8 rounded-lg border border-[var(--color-line)] bg-white/[0.02] px-4 py-3 text-sm text-[var(--color-muted)]">
@@ -155,11 +168,6 @@ export default function Dashboard() {
               active={activeUniverse}
               onChange={setActiveUniverse}
             />
-            {showExperimental && (
-              <div className="mb-4 rounded-lg border border-[var(--color-neutral)]/30 bg-[var(--color-neutral)]/[0.06] px-4 py-3 text-sm text-[var(--color-neutral)]">
-                {t("banner.experimental")}
-              </div>
-            )}
             <h2 className="mb-3 font-display text-xl font-bold">
               {t("dashboard.todaySignals")}
             </h2>
