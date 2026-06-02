@@ -237,6 +237,7 @@ export type OpsJob = { id: string; next_run: string | null };
 export type OpsHpoRecent = {
   ticker: string;
   side: string;
+  strategy?: string;
   status: string;
   trained_at: string | null;
   hpo_trials: number;

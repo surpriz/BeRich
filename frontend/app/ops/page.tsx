@@ -126,8 +126,8 @@ export default function OpsPage() {
                     {t("ops.recentTrained")}
                   </div>
                   {snap.hpo.recent.map((r) => (
-                    <div key={`${r.ticker}-${r.side}`} className="mt-1 flex justify-between text-xs">
-                      <span>{r.ticker}/{r.side}</span>
+                    <div key={`${r.ticker}-${r.side}-${r.strategy ?? "fixed"}`} className="mt-1 flex justify-between text-xs">
+                      <span>{r.ticker}/{r.side}{r.strategy && r.strategy !== "fixed" ? `/${r.strategy}` : ""}</span>
                       <span className={r.status === "promoted" ? "text-[var(--color-bull)]" : "text-[var(--color-faint)]"}>
                         {r.status} · {relTime(r.trained_at)}
                       </span>

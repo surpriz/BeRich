@@ -109,42 +109,64 @@ def scheduled_jobs(config: Config) -> list[dict[str, object]]:
 
 
 def hpo_progress(config: Config) -> dict[str, object]:
-    """First-HPO queue progress: done / pending / promoted, derived from training status."""
+    """First-HPO queue progress at the (ticker, side, exit strategy) grain: done/pending/promoted.
+
+    Each exit strategy (fixed / trailing / trailing_tp) is its own HPO+tournament unit — the same
+    granularity the sweep drains — so the bar reflects the real work-list (tickers x sides x
+    strategies), not just the legacy ticker-by-side count.
+    """
     try:
-        from berich.training.status import training_status  # noqa: PLC0415
+        from berich.training.status import (  # noqa: PLC0415
+            _hpo_trial_counts,
+            _hpo_trials_for,
+            training_status,
+        )
 
         rows = training_status(config)
+        counts = _hpo_trial_counts(config.optuna_db)
     except Exception:  # noqa: BLE001 — degrade to empty rather than break the dashboard
         logger.warning("ops: training_status failed", exc_info=True)
-        return {"total": 0, "hpo_done": 0, "pending": 0, "promoted": 0, "advisory": 0}
-    total = len(rows)
-    # The bar is about the per-asset HPO queue, so promoted/advisory are counted *within* the
-    # HPO-done set — never mixing in the legacy assets promoted before HPO existed (which would
-    # make "promoted" and "done" look contradictory). hpo_done = (ticker, side) pairs searched.
-    done_rows = [r for r in rows if cast("int", r.get("hpo_trials", 0)) > 0]
-    hpo_done = len(done_rows)
-    promoted = sum(1 for r in done_rows if r.get("status") == "promoted")
-    advisory = sum(1 for r in done_rows if r.get("status") == "advisory_only")
-    # Most-recently-trained few, for "last finished" context.
-    trained = [r for r in rows if r.get("trained_at")]
-    trained.sort(key=lambda r: str(r.get("trained_at")), reverse=True)
-    recent = [
-        {
-            "ticker": r["ticker"],
-            "side": r["side"],
-            "status": r["status"],
-            "trained_at": r["trained_at"],
-            "hpo_trials": r["hpo_trials"],
-        }
-        for r in trained[:5]
+        return {"total": 0, "hpo_done": 0, "pending": 0, "promoted": 0, "advisory": 0, "recent": []}
+
+    # Per-(ticker, side, strategy) status, from each row's strategy slate.
+    status_by: dict[tuple[str, str, str], dict] = {}
+    for r in rows:
+        for s in cast("list[dict]", r.get("strategies", [])):
+            status_by[(str(r["ticker"]), str(r["side"]), str(s["strategy"]))] = s
+
+    units = [
+        (ticker, side, strategy)
+        for ticker in config.tradeable_tickers()
+        for side in config.zoo.ticker_sides
+        for strategy in config.zoo.ticker_exit_strategies
     ]
+    total = len(units)
+    done = [u for u in units if _hpo_trials_for(counts, u[0], None, u[1], u[2]) > 0]
+    hpo_done = len(done)
+    promoted = sum(1 for u in done if status_by.get(u, {}).get("status") == "promoted")
+    advisory = sum(1 for u in done if status_by.get(u, {}).get("status") == "advisory_only")
+
+    # Most-recently-trained few (per strategy), for "last finished" context.
+    trained = [
+        {
+            "ticker": t,
+            "side": side,
+            "strategy": strategy,
+            "status": status_by[(t, side, strategy)].get("status"),
+            "trained_at": status_by[(t, side, strategy)].get("trained_at"),
+            "hpo_trials": _hpo_trials_for(counts, t, None, side, strategy),
+        }
+        for (t, side, strategy) in done
+        if status_by.get((t, side, strategy), {}).get("trained_at")
+    ]
+    trained.sort(key=lambda r: str(r.get("trained_at")), reverse=True)
     return {
         "total": total,
         "hpo_done": hpo_done,
         "pending": total - hpo_done,
         "promoted": promoted,
         "advisory": advisory,
-        "recent": recent,
+        "recent": trained[:5],
     }
 
 
