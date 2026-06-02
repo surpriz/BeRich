@@ -14,6 +14,7 @@ import {
   type PaperEquity,
   type PaperPositions,
   type Signal,
+  type SignalConfig,
   type Universes,
 } from "@/app/lib/api";
 import { SignalsTable } from "./components/SignalsTable";
@@ -38,6 +39,7 @@ type State = {
   universes?: Universes;
   longshortBasket?: LongShortLeg[];
   longshortEquity?: LongShortEquity;
+  cfg?: SignalConfig;
   error?: string;
 };
 
@@ -62,6 +64,7 @@ export default function Dashboard() {
           universes,
           longshortBasket,
           longshortEquity,
+          cfg,
         ] = await Promise.all([
           api.signals(),
           api.drift(),
@@ -73,6 +76,7 @@ export default function Dashboard() {
           api.universes().catch(() => undefined),
           api.longshortBasket().catch(() => [] as LongShortLeg[]),
           api.longshortEquity().catch(() => undefined),
+          api.signalConfig().catch(() => undefined),
         ]);
         if (alive)
           setS({
@@ -86,6 +90,7 @@ export default function Dashboard() {
             universes,
             longshortBasket,
             longshortEquity,
+            cfg,
           });
       } catch (e) {
         if (alive) setS({ error: e instanceof Error ? e.message : "request failed" });
@@ -158,7 +163,7 @@ export default function Dashboard() {
             <h2 className="mb-3 font-display text-xl font-bold">
               {t("dashboard.todaySignals")}
             </h2>
-            {filtered ? <SignalsTable signals={filtered} /> : <Skeleton h={280} />}
+            {filtered ? <SignalsTable signals={filtered} cfg={s.cfg} /> : <Skeleton h={280} />}
           </section>
 
           <Show min="standard">

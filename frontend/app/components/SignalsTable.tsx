@@ -2,13 +2,40 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import type { Signal } from "@/app/lib/api";
+import type { Signal, SignalConfig } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
 import { SignalBadge } from "./SignalBadge";
 import { Show } from "./Show";
 import { Info } from "./Term";
 
 const DEFAULT_COST_BPS = 6;
+const CLOSE_GAP = 0.05; // within 5 pts of threshold = "close to firing"
+
+/** One-line plain-language reason for the row's signal (mirrors SignalAdvice, terse). */
+function MiniAdvice({ s, cfg, t }: { s: Signal; cfg?: SignalConfig; t: (k: string) => string }) {
+  if (!cfg) return null;
+  const pctp = (x: number | null | undefined) => (x == null ? "—" : `${Math.round(x * 100)}%`);
+  if (s.signal === "LONG" || s.signal === "BUY") {
+    return <span className="text-[var(--color-bull)]/80">{t("advice.mini.long")}</span>;
+  }
+  if (s.signal === "SHORT") {
+    return <span className="text-[var(--color-bear)]/80">{t("advice.mini.short")}</span>;
+  }
+  // NEUTRAL: show the two probas vs threshold + flag the side closest to firing.
+  const longGap = s.proba_long == null ? Infinity : cfg.buy_threshold - s.proba_long;
+  const shortGap =
+    s.proba_short == null || !cfg.enable_short ? Infinity : cfg.short_threshold - s.proba_short;
+  let tail = "";
+  if (longGap <= CLOSE_GAP && longGap <= shortGap) tail = " · " + t("advice.mini.closeLong");
+  else if (shortGap <= CLOSE_GAP) tail = " · " + t("advice.mini.closeShort");
+  return (
+    <span className="text-[var(--color-faint)]">
+      {t("advice.mini.neutral")} ({t("advice.probUp")} {pctp(s.proba_long)} · {t("advice.probDown")}{" "}
+      {pctp(s.proba_short)})
+      {tail && <span className="text-[var(--color-neutral)]">{tail}</span>}
+    </span>
+  );
+}
 
 /** Expected return as a % string, net of a user-supplied round-trip cost (bps). */
 function ExpReturn({ s, costBps }: { s: Signal; costBps: number }) {
@@ -68,7 +95,7 @@ const SLTP_LABEL: Record<string, string> = {
   atr_fixed: "ATR",
 };
 
-export function SignalsTable({ signals }: { signals: Signal[] }) {
+export function SignalsTable({ signals, cfg }: { signals: Signal[]; cfg?: SignalConfig }) {
   const { t } = useI18n();
   const defaultCost = signals.find((s) => s.cost_bps_roundtrip != null)?.cost_bps_roundtrip;
   const [costBps, setCostBps] = useState<number>(defaultCost ?? DEFAULT_COST_BPS);
@@ -142,6 +169,9 @@ export function SignalsTable({ signals }: { signals: Signal[] }) {
                     }`}
                   >
                     {s.promoted ? t("signal.validated") : t("signal.advisory")}
+                  </span>
+                  <span className="mt-1 block max-w-[16rem] text-[10px] leading-tight">
+                    <MiniAdvice s={s} cfg={cfg} t={t} />
                   </span>
                 </Link>
               </td>
