@@ -50,8 +50,14 @@ class LabelingConfig(BaseModel):
     # variants use the two params below; "fixed" ignores them, so existing configs are
     # unchanged. See docs/RESULTS.md "Trailing stop".
     exit_mode: Literal["fixed", "trailing", "trailing_tp"] = "fixed"
-    # Trailing-stop distance, in entry-frozen ATRs, once the trail is armed.
+    # Trailing-stop distance, in entry-frozen ATRs, once armed — for the PURE "trailing" variant.
+    # Wide (2.5) on purpose: trend-following wants to ride pullbacks without being shaken out.
     trailing_atr: float = 2.5
+    # Trailing-stop distance for the "trailing_tp" hybrid. Tight (1.0) on purpose: with the TP cap
+    # at take_profit_atr (2.0), a tight trail moves the stop to ~breakeven at +1 ATR and locks in
+    # profit on the way up to the cap — otherwise (trail >= TP) the cap fires first and trailing_tp
+    # would collapse onto the fixed strategy. Keep trailing_tp_atr < take_profit_atr for it to bite.
+    trailing_tp_atr: float = 1.0
     # The trail only arms after price moves favorably by this many entry-frozen ATRs; before
     # that the initial fixed stop (stop_loss_atr) holds. 0 arms immediately.
     trailing_activation_atr: float = 1.0

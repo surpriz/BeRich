@@ -212,6 +212,7 @@ def objective_for(
                 direction=direction,
                 exit_mode=lcfg.exit_mode,
                 trailing_atr=lcfg.trailing_atr,
+                trailing_tp_atr=lcfg.trailing_tp_atr,
                 trailing_activation_atr=lcfg.trailing_activation_atr,
             ),
         )

@@ -386,11 +386,12 @@ def _resolve_paper_exit(
 
 
 def _trail_scalars(
-    df: pd.DataFrame, entry_idx: int, cfg: _LabelConfig, *, short: bool
+    df: pd.DataFrame, entry_idx: int, cfg: _LabelConfig, strategy: str, *, short: bool
 ) -> tuple[float, float, float] | None:
     """Return ``(entry_ref, trail_dist, activation_level)`` for a trailing trade, or ``None``.
 
-    The trail distance is the entry-frozen ATR (``trailing_atr``*ATR at the entry bar) and the
+    The trail distance is the entry-frozen ATR (the per-strategy multiple at the entry bar — wide
+    ``trailing_atr`` for pure trailing, tight ``trailing_tp_atr`` for trailing_tp) and the
     activation sits ``trailing_activation_atr``*ATR on the favorable side of the entry close —
     the same construction the backtest/label use. ``None`` when ATR isn't warmed at the entry
     bar (caller then falls back to the fixed stop).
@@ -399,7 +400,8 @@ def _trail_scalars(
     if pd.isna(a):
         return None
     entry_ref = float(df["close"].iloc[entry_idx])
-    trail_dist = cfg.trailing_atr * a
+    trail_mult = cfg.trailing_tp_atr if strategy == "trailing_tp" else cfg.trailing_atr
+    trail_dist = trail_mult * a
     activation_level = (
         entry_ref - cfg.trailing_activation_atr * a
         if short
@@ -527,7 +529,7 @@ def _resolve_trade_exit(
             target=target,
             short=short,
         )
-    scal = _trail_scalars(df, entry_idx, cfg, short=short)
+    scal = _trail_scalars(df, entry_idx, cfg, strategy, short=short)
     if scal is None:
         return _resolve_paper_exit(
             df,
@@ -727,7 +729,7 @@ def _open_trail_stop(
     if strategy == "fixed" or date_open not in ohlcv.index:
         return None
     entry_idx = int(ohlcv.index.get_loc(date_open))
-    scal = _trail_scalars(ohlcv, entry_idx, cfg, short=short)
+    scal = _trail_scalars(ohlcv, entry_idx, cfg, strategy, short=short)
     if scal is None:
         return None
     _entry_ref, trail_dist, activation_level = scal

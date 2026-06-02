@@ -157,6 +157,7 @@ def train_candidate(
             direction=side,
             exit_mode=strategy,
             trailing_atr=label_cfg.trailing_atr,
+            trailing_tp_atr=label_cfg.trailing_tp_atr,
             trailing_activation_atr=label_cfg.trailing_activation_atr,
         ),
     )

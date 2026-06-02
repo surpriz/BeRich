@@ -9,6 +9,7 @@ import { StrategySwitch } from "./StrategySwitch";
 
 const TABS = [
   { href: "/", key: "nav.signals" },
+  { href: "/strategies", key: "nav.strategies" },
   { href: "/training", key: "nav.training" },
   { href: "/ops", key: "nav.ops" },
   { href: "/how-it-works", key: "nav.help" },

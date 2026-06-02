@@ -213,6 +213,35 @@ def test_resolve_exit_trailing_pre_activation_stop_is_plain_stop():
     assert price == 96.0
 
 
+def test_backtest_config_effective_trail_atr_per_mode():
+    base = BacktestConfig(trailing_atr=2.5, trailing_tp_atr=1.0)
+    assert base.model_copy(update={"exit_mode": "trailing"}).effective_trail_atr == 2.5
+    assert base.model_copy(update={"exit_mode": "trailing_tp"}).effective_trail_atr == 1.0
+
+
+def test_trailing_tp_tight_trail_locks_profit_before_cap():
+    # Rise to +1.5 ATR (arms the trail) then pull back. A TIGHT trail (1 ATR = 2 pts) ratchets the
+    # stop into profit (101) and exits there; a WIDE trail (2.5 ATR = 5 pts) leaves the stop below
+    # entry, so it would not exit on the pullback. This is what makes trailing_tp distinct.
+    high = pd.Series([100.0, 103.0, 102.0])
+    low = pd.Series([100.0, 101.0, 100.5])
+    close = pd.Series([100.0, 102.0, 101.0])
+    common = {
+        "start": 1,
+        "time_exit": 2,
+        "entry": 100.0,
+        "init_stop": 98.0,
+        "target": 104.0,
+        "activation_level": 102.0,
+    }
+    _idx_t, price_t, reason_t = _resolve_exit_trailing(high, low, close, **common, trail_dist=2.0)
+    assert reason_t == "trailing"
+    assert price_t == 101.0  # locked in profit above the 100 entry, below the 104 cap
+    # The wide trail does not bite on the same pullback (stop stays at the initial 98 → time exit).
+    _idx_w, _price_w, reason_w = _resolve_exit_trailing(high, low, close, **common, trail_dist=5.0)
+    assert reason_w == "time"
+
+
 def test_simulate_ticker_trailing_captures_more_than_fixed_on_uptrend():
     df = _ramp()
     proba = pd.Series(0.9, index=df.index)

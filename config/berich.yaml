@@ -309,7 +309,8 @@ labeling:
   # Exit strategy the label/backtest simulate: fixed (TP/SL barrier, the baseline),
   # trailing (ratcheting stop, no TP — let winners run) or trailing_tp (TP cap + ratchet).
   exit_mode: fixed
-  trailing_atr: 2.5             # trailing-stop distance, in entry-frozen ATRs, once armed
+  trailing_atr: 2.5             # pure-trailing trail distance (wide: let winners run)
+  trailing_tp_atr: 1.0          # trailing_tp trail distance (tight: lock profit before the +2 ATR cap)
   trailing_activation_atr: 1.0  # arm the trail after a favorable move of this many ATRs
 
 # Daily signal generation & position sizing (Phase 4).

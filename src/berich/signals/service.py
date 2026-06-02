@@ -179,6 +179,13 @@ def _size_position(entry: float, stop: float, config: Config) -> tuple[int, floa
     return shares, shares * entry
 
 
+def _served_trail_atr(label_cfg: LabelConfig, strategy: str) -> float | None:
+    """Trail distance (in ATRs) persisted on a signal: the per-strategy multiple, None for fixed."""
+    if strategy == "fixed":
+        return None
+    return label_cfg.trailing_tp_atr if strategy == "trailing_tp" else label_cfg.trailing_atr
+
+
 def _expected_return(p_win: float, entry: float, stop: float, target: float) -> float:
     """Triple-barrier expectancy as a fraction of entry: P(win)*reward - (1-P(win))*risk.
 
@@ -576,7 +583,7 @@ def _signal_for_ticker(  # noqa: C901, PLR0912, PLR0915
         sigma_horizon=None if sigma_h is None else round(sigma_h, 6),
         sltp_method=sltp_method,
         exit_strategy=acted_strategy,
-        trail_atr=label_cfg.trailing_atr if acted_strategy != "fixed" else None,
+        trail_atr=_served_trail_atr(label_cfg, acted_strategy),
         trail_activation_atr=(
             label_cfg.trailing_activation_atr if acted_strategy != "fixed" else None
         ),

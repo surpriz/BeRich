@@ -41,8 +41,14 @@ class LabelConfig(BaseModel):
     # drops the TP and rides a ratcheting stop; "trailing_tp" keeps the TP as a cap. The two
     # params below only matter for the trailing variants.
     exit_mode: Literal["fixed", "trailing", "trailing_tp"] = "fixed"
-    trailing_atr: float = 2.5
+    trailing_atr: float = 2.5  # pure-trailing trail distance (wide: let winners run)
+    trailing_tp_atr: float = 1.0  # trailing_tp trail distance (tight: locks profit before the cap)
     trailing_activation_atr: float = 1.0
+
+    @property
+    def effective_trail_atr(self) -> float:
+        """Trail distance for this config's exit mode (tight for trailing_tp, wide for trailing)."""
+        return self.trailing_tp_atr if self.exit_mode == "trailing_tp" else self.trailing_atr
 
 
 # Adaptive barrier scaling is clipped to this band so a single noisy vol estimate can't
@@ -233,7 +239,7 @@ def _trailing_touch(
     exit is ``1``), matching the "did this trade make money" target the trailing model predicts.
     """
     short = config.direction == "short"
-    trail_dist = config.trailing_atr * atr_entry
+    trail_dist = config.effective_trail_atr * atr_entry
     activation = config.trailing_activation_atr * atr_entry
     init_stop = (
         entry + config.stop_loss_atr * atr_entry

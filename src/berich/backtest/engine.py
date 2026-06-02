@@ -56,8 +56,14 @@ class BacktestConfig(BaseModel):
     # Exit strategy: "fixed" = the historical TP/SL barrier; "trailing" rides a ratcheting stop
     # with no TP; "trailing_tp" keeps the TP as a cap. Trailing uses the two params below.
     exit_mode: str = "fixed"
-    trailing_atr: float = 2.5
+    trailing_atr: float = 2.5  # pure-trailing trail distance (wide)
+    trailing_tp_atr: float = 1.0  # trailing_tp trail distance (tight, locks before the TP cap)
     trailing_activation_atr: float = 1.0
+
+    @property
+    def effective_trail_atr(self) -> float:
+        """Trail distance for this config's exit mode (tight for trailing_tp, wide for trailing)."""
+        return self.trailing_tp_atr if self.exit_mode == "trailing_tp" else self.trailing_atr
 
 
 @dataclass
@@ -233,7 +239,7 @@ def _simulate_ticker(
                 entry=ref,
                 init_stop=stop,
                 target=target if config.exit_mode == "trailing_tp" else None,
-                trail_dist=config.trailing_atr * a,
+                trail_dist=config.effective_trail_atr * a,
                 activation_level=activation,
                 direction=direction,
             )
