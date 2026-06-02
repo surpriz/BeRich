@@ -243,8 +243,41 @@ export type OpsHpoRecent = {
   hpo_trials: number;
 };
 
+export type OpsSystem = {
+  cpu_pct?: number | null;
+  load1?: number;
+  load5?: number;
+  load15?: number;
+  n_cpus?: number;
+  load_ratio?: number;
+  mem_used_pct?: number | null;
+  mem_used_gb?: number;
+  mem_total_gb?: number;
+  disk_used_pct?: number | null;
+  disk_used_gb?: number;
+  disk_total_gb?: number;
+};
+
+export type OpsSweep = {
+  running: boolean;
+  current: string | null;
+  last_activity: string | null;
+  idle_seconds: number | null;
+  avg_seconds: number | null;
+  gave_up: number;
+};
+
+export type OpsLogLine = {
+  time: string;
+  message: string;
+  level: "info" | "warning" | "error";
+  source?: string;
+};
+
 export type OpsSnapshot = {
   gpus: OpsGpu[];
+  system: OpsSystem;
+  sweep: OpsSweep;
   scheduler: { unit: string; state: string; active_since: string | null };
   jobs: OpsJob[];
   hpo: {
@@ -255,7 +288,8 @@ export type OpsSnapshot = {
     advisory: number;
     recent: OpsHpoRecent[];
   };
-  logs: { time: string; message: string }[];
+  alerts: OpsLogLine[];
+  logs: OpsLogLine[];
 };
 
 // One exit strategy's verdict for a (ticker, side): fixed / trailing / trailing_tp.

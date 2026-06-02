@@ -10,9 +10,15 @@ empty/neutral payload rather than raising, so one missing tool never breaks the 
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
+import re
+import shutil
 import subprocess
+import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -22,6 +28,9 @@ logger = logging.getLogger(__name__)
 
 _SCHEDULER_UNIT = "berich-scheduler"
 _TIMEOUT = 5  # seconds — never let a hung subprocess stall the dashboard
+_SWEEP_LOG = "sweep.log"  # under config.data_dir — the background training drainer's output
+_SWEEP_PROC = "run_full_sweep.py"
+_TS_RE = re.compile(r"(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d:\d\d)")
 
 
 def _run(cmd: list[str]) -> str | None:
@@ -33,6 +42,131 @@ def _run(cmd: list[str]) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout if out.returncode == 0 else None
+
+
+def _log_level(message: str) -> str:
+    """Classify a log line as error / warning / info from its text (best-effort)."""
+    upper = message.upper()
+    if "ERROR" in upper or "TRACEBACK" in upper or "FAILED" in upper or "EXCEPTION" in upper:
+        return "error"
+    if "WARNING" in upper or "GIVING UP" in upper or "SKIPPED" in upper:
+        return "warning"
+    return "info"
+
+
+def system_metrics(config: Config) -> dict[str, object]:
+    """CPU / RAM / disk utilization so the box can be seen as well-used (not idle, not maxed).
+
+    No extra dependency: CPU% from a short /proc/stat sample, load average from os, memory from
+    /proc/meminfo, disk from the data partition (where models + the Optuna RDB grow).
+    """
+    out: dict[str, object] = {}
+    try:
+        idle0, total0 = _cpu_times()
+        time.sleep(0.12)
+        idle1, total1 = _cpu_times()
+        dt = total1 - total0
+        out["cpu_pct"] = round(100.0 * (1.0 - (idle1 - idle0) / dt)) if dt > 0 else 0
+    except (OSError, ValueError):
+        out["cpu_pct"] = None
+    try:
+        la = os.getloadavg()
+        n = os.cpu_count() or 1
+        out["load1"] = round(la[0], 2)
+        out["load5"] = round(la[1], 2)
+        out["load15"] = round(la[2], 2)
+        out["n_cpus"] = n
+        out["load_ratio"] = round(la[0] / n, 2)
+    except (OSError, ValueError):
+        pass
+    try:
+        total_kb, avail_kb = _meminfo()
+        used_kb = total_kb - avail_kb
+        out["mem_total_gb"] = round(total_kb / 1e6, 1)
+        out["mem_used_gb"] = round(used_kb / 1e6, 1)
+        out["mem_used_pct"] = round(100.0 * used_kb / total_kb) if total_kb else None
+    except (OSError, ValueError):
+        pass
+    try:
+        du = shutil.disk_usage(str(config.data_dir))
+        out["disk_total_gb"] = round(du.total / 1e9, 1)
+        out["disk_used_gb"] = round(du.used / 1e9, 1)
+        out["disk_used_pct"] = round(100.0 * du.used / du.total) if du.total else None
+    except OSError:
+        pass
+    return out
+
+
+def _cpu_times() -> tuple[float, float]:
+    """Return (idle_jiffies, total_jiffies) from the aggregate ``cpu`` line of /proc/stat."""
+    with Path("/proc/stat").open(encoding="utf-8") as fh:
+        parts = [float(x) for x in fh.readline().split()[1:]]
+    idle = parts[3] + (parts[4] if len(parts) > 4 else 0.0)  # idle + iowait  # noqa: PLR2004
+    return idle, sum(parts)
+
+
+def _meminfo() -> tuple[float, float]:
+    """Return (MemTotal_kB, MemAvailable_kB) from /proc/meminfo."""
+    total = avail = 0.0
+    with Path("/proc/meminfo").open(encoding="utf-8") as fh:
+        for line in fh:
+            if line.startswith("MemTotal:"):
+                total = float(line.split()[1])
+            elif line.startswith("MemAvailable:"):
+                avail = float(line.split()[1])
+    return total, avail
+
+
+def _sweep_log_path(config: Config) -> Path:
+    return config.data_dir / _SWEEP_LOG
+
+
+def sweep_status(config: Config) -> dict[str, object]:
+    """Liveness + progress of the background training sweep (the run_full_sweep.py drainer).
+
+    Reads the drainer's own log so /ops shows what it's actually doing — it runs as a standalone
+    process, not under the scheduler, so journald alone can't see it. Returns whether the process
+    is alive, the triple in flight, how long since the last log line (staleness), the average
+    per-triple duration (for ETA), and how many assets it gave up on.
+    """
+    running = bool((_run(["pgrep", "-f", _SWEEP_PROC]) or "").strip())
+    status: dict[str, object] = {
+        "running": running,
+        "current": None,
+        "last_activity": None,
+        "idle_seconds": None,
+        "avg_seconds": None,
+        "gave_up": 0,
+    }
+    log = _sweep_log_path(config)
+    if not log.exists():
+        return status
+    tail = _run(["tail", "-n", "800", str(log)]) or ""
+    durations: list[float] = []
+    gave_up = 0
+    last_ts: str | None = None
+    for line in tail.splitlines():
+        m = _TS_RE.search(line)
+        if m:
+            last_ts = f"{m.group(1)}T{m.group(2)}"
+        if "] start " in line:
+            status["current"] = line.split("] start ", 1)[1].strip()
+        if " done " in line and " in " in line and "promoted=" in line:
+            with contextlib.suppress(ValueError, IndexError):
+                durations.append(float(line.split(" in ", 1)[1].split("s", 1)[0]))
+        if "giving up" in line.lower():
+            gave_up += 1
+    status["gave_up"] = gave_up
+    if durations:
+        status["avg_seconds"] = round(sum(durations) / len(durations))
+    if last_ts:
+        status["last_activity"] = last_ts
+        try:
+            delta = datetime.now() - datetime.fromisoformat(last_ts)  # noqa: DTZ005 — local log clock
+            status["idle_seconds"] = max(0, int(delta.total_seconds()))
+        except ValueError:
+            pass
+    return status
 
 
 def gpus() -> list[dict[str, object]]:
@@ -170,8 +304,8 @@ def hpo_progress(config: Config) -> dict[str, object]:
     }
 
 
-def recent_logs(lines: int = 20) -> list[dict[str, str]]:
-    """Recent scheduler log lines (timestamp + message), newest last (best-effort)."""
+def _scheduler_log_lines(lines: int) -> list[dict[str, str]]:
+    """Recent scheduler journald lines as {time, message, level} (best-effort)."""
     raw = _run(
         ["journalctl", "-u", _SCHEDULER_UNIT, "-n", str(lines), "-o", "short-iso", "--no-pager"]
     )
@@ -181,19 +315,57 @@ def recent_logs(lines: int = 20) -> list[dict[str, str]]:
     for line in raw.strip().splitlines():
         # Each short-iso line is: <iso-timestamp> <host> <unit[pid]>: <level> <logger>: <message>
         ts, _, rest = line.partition(" ")
-        msg = rest.split(": ", 1)[-1] if ": " in rest else rest
-        out.append({"time": ts, "message": msg.strip()})
+        msg = (rest.split(": ", 1)[-1] if ": " in rest else rest).strip()
+        m = _TS_RE.search(ts)
+        norm = f"{m.group(1)}T{m.group(2)}" if m else ts
+        out.append({"time": norm, "message": msg, "level": _log_level(msg), "source": "scheduler"})
     return out
+
+
+def _sweep_log_lines(config: Config, lines: int) -> list[dict[str, str]]:
+    """Recent sweep-drainer log lines (its own structured ones, skipping Optuna per-trial spam)."""
+    log = _sweep_log_path(config)
+    if not log.exists():
+        return []
+    raw = _run(["tail", "-n", "400", str(log)]) or ""
+    out: list[dict[str, str]] = []
+    for line in raw.splitlines():
+        # Keep the drainer's own "sweep:" lines + any error/traceback; drop Optuna "[I ...] Trial".
+        is_sweep = " sweep:" in line
+        level = _log_level(line)
+        if not is_sweep and level == "info":
+            continue
+        m = _TS_RE.search(line)
+        if not m:
+            continue
+        msg = line.split(" sweep: ", 1)[-1].strip() if is_sweep else line.strip()
+        ts = f"{m.group(1)}T{m.group(2)}"
+        out.append(
+            {"time": ts, "message": msg, "level": level, "source": "sweep"}
+        )
+    return out[-lines:]
+
+
+def recent_logs(config: Config, lines: int = 24) -> list[dict[str, str]]:
+    """Merged recent activity from the scheduler and the sweep drainer, oldest→newest by time."""
+    merged = _scheduler_log_lines(lines) + _sweep_log_lines(config, lines)
+    merged.sort(key=lambda r: r["time"])
+    return merged[-lines:]
 
 
 def ops_snapshot(config: Config) -> dict[str, object]:
     """Full machine-status payload for the /ops dashboard (all collectors, best-effort)."""
+    logs = recent_logs(config)
+    alerts = [line_log for line_log in logs if line_log["level"] in ("error", "warning")]
     return {
         "gpus": gpus(),
+        "system": system_metrics(config),
+        "sweep": sweep_status(config),
         "scheduler": scheduler_status(),
         "jobs": scheduled_jobs(config),
         "hpo": hpo_progress(config),
-        "logs": recent_logs(),
+        "alerts": alerts[-6:],
+        "logs": logs,
     }
 
 
