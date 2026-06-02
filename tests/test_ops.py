@@ -50,11 +50,15 @@ def test_sweep_status_parses_drainer_log(monkeypatch, tmp_path):
         encoding="utf-8",
     )
 
+    lines = log.read_text(encoding="utf-8").splitlines()
+
     def _fake_run(cmd):
         if cmd[0] == "pgrep":
             return "12345\n"  # process alive
-        if cmd[0] == "tail":
-            return log.read_text(encoding="utf-8")
+        if cmd[0] == "grep":  # structured drainer lines
+            return "\n".join(line for line in lines if " sweep: " in line)
+        if cmd[0] == "tail":  # last line, for liveness
+            return lines[-1]
         return None
 
     monkeypatch.setattr("berich.ops._run", _fake_run)

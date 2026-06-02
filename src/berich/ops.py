@@ -141,14 +141,12 @@ def sweep_status(config: Config) -> dict[str, object]:
     log = _sweep_log_path(config)
     if not log.exists():
         return status
-    tail = _run(["tail", "-n", "800", str(log)]) or ""
+    # The drainer's structured lines are buried under ~300 Optuna per-trial lines per triple, so
+    # grep them out directly (a plain tail would scroll them off the window).
+    sweep_lines = (_run(["grep", " sweep: ", str(log)]) or "").splitlines()
     durations: list[float] = []
     gave_up = 0
-    last_ts: str | None = None
-    for line in tail.splitlines():
-        m = _TS_RE.search(line)
-        if m:
-            last_ts = f"{m.group(1)}T{m.group(2)}"
+    for line in sweep_lines[-80:]:
         if "] start " in line:
             status["current"] = line.split("] start ", 1)[1].strip()
         if " done " in line and " in " in line and "promoted=" in line:
@@ -157,6 +155,11 @@ def sweep_status(config: Config) -> dict[str, object]:
         if "giving up" in line.lower():
             gave_up += 1
     status["gave_up"] = gave_up
+    # Liveness: the timestamp of the very last log line (any kind), so a live Optuna trial counts
+    # as activity even mid-triple.
+    last_line = (_run(["tail", "-n", "1", str(log)]) or "").strip()
+    m = _TS_RE.search(last_line)
+    last_ts = f"{m.group(1)}T{m.group(2)}" if m else None
     if durations:
         status["avg_seconds"] = round(sum(durations) / len(durations))
     if last_ts:
@@ -316,6 +319,10 @@ def _scheduler_log_lines(lines: int) -> list[dict[str, str]]:
         # Each short-iso line is: <iso-timestamp> <host> <unit[pid]>: <level> <logger>: <message>
         ts, _, rest = line.partition(" ")
         msg = (rest.split(": ", 1)[-1] if ": " in rest else rest).strip()
+        # Keep only application log lines (they carry a Python level token); drop systemd
+        # lifecycle noise (Started/Stopped/Failed/Consumed) so an intentional stop isn't an "error".
+        if not any(f"{lvl}" in msg for lvl in ("INFO", "WARNING", "ERROR", "CRITICAL", "DEBUG")):
+            continue
         m = _TS_RE.search(ts)
         norm = f"{m.group(1)}T{m.group(2)}" if m else ts
         out.append({"time": norm, "message": msg, "level": _log_level(msg), "source": "scheduler"})
