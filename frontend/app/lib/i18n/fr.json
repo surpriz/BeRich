@@ -129,6 +129,7 @@
   "training.acrossModels": "sur 4 modèles",
   "training.defaultParams": "params par défaut (pas encore de HPO)",
   "training.exitStrategies": "sorties",
+  "training.model": "Modèle",
   "training.status.promoted": "Promu",
   "training.status.advisory_only": "Advisory only",
   "training.status.never_trained": "Non entraîné",

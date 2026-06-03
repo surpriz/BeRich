@@ -59,7 +59,11 @@ function SideCell({ s, t }: { s: TrainingStatus | undefined; t: (k: string) => s
       <span className={`inline-block w-fit rounded border px-2 py-0.5 text-[11px] uppercase tracking-wider ${STATUS_STYLE[s.status]}`}>
         {t(`training.status.${s.status}`)}
       </span>
-      {s.winner && <span className="text-xs text-[var(--color-muted)]">{s.winner}</span>}
+      {s.framework && s.status !== "never_trained" && (
+        <span className="text-xs text-[var(--color-muted)]">
+          {t("training.model")}: <span className="font-medium text-[var(--color-fg)]">{s.framework}</span>
+        </span>
+      )}
       {s.horizon_days != null && s.status !== "never_trained" && (
         <span className="text-[11px] text-[var(--color-faint)]">
           {t("training.horizon")}: {s.horizon_days}
@@ -89,10 +93,13 @@ function SideCell({ s, t }: { s: TrainingStatus | undefined; t: (k: string) => s
               return (
                 <span
                   key={st.strategy}
-                  title={`${st.status}${served ? " · served" : ""}`}
+                  title={`${st.status}${st.framework ? ` · ${st.framework}` : ""}${served ? " · served" : ""}`}
                   className={`rounded border px-1.5 py-0.5 text-[10px] ${STRATEGY_CHIP[st.status]} ${served ? "ring-1 ring-[var(--color-bull)]/40" : ""}`}
                 >
                   {STRATEGY_LABEL[st.strategy] ?? st.strategy} {STRATEGY_MARK[st.status]}
+                  {st.framework && st.status !== "never_trained" ? (
+                    <span className="ml-1 text-[var(--color-faint)]">{st.framework}</span>
+                  ) : null}
                 </span>
               );
             })}

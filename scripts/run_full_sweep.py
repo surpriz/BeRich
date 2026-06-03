@@ -14,6 +14,7 @@ Run it as a long-lived background process while the scheduler's competing hpo_qu
 
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import sys
@@ -22,6 +23,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from berich.config import Config
+from berich.data import update_watchlist
 from berich.scheduler.jobs import (
     _hpo_and_tournament,
     _pending_hpo_targets,
@@ -45,6 +47,15 @@ log = logging.getLogger("sweep")
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="BeRich training sweep / continuous retrainer")
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Never stop: after draining, perpetually retrain every asset with fresh data and "
+        "deeper HPO (keeps the rented machine fully used and models always current).",
+    )
+    args = parser.parse_args()
+
     config = Config.load("config/berich.yaml")
     # Single-driver guarantee: hold the cross-process HPO lock for the whole run so the scheduler's
     # HPO jobs yield to us (no Optuna/registry write races). Retry a while in case a scheduler job
@@ -60,9 +71,71 @@ def main() -> int:
         log.error("could not acquire HPO lock after 30 min; exiting")
         return 1
     try:
-        return _drain(config)
+        return _continuous(config) if args.continuous else _drain(config)
     finally:
         os.close(lock)
+
+
+def _continuous(config: Config) -> int:
+    """Perpetual retraining loop: cycle through EVERY (ticker, side, strategy) forever.
+
+    Each cycle refreshes the latest OHLCV, then re-runs HPO + tournament for every combo — so
+    Optuna studies deepen over time (more trials = better hyperparameters), models re-fit on the
+    freshest bars, and the guard re-promotes the honest winner. The rented GPUs never idle. Runs
+    under systemd (Restart=always); the cross-process lock keeps the scheduler's HPO jobs yielding.
+    """
+    n_trials = config.zoo.ticker_initial_hpo_trials
+    combos = [
+        (ticker, side, strategy)
+        for ticker in config.tradeable_tickers()
+        for side in config.zoo.ticker_sides
+        for strategy in config.zoo.ticker_exit_strategies
+    ]
+    cycle = 0
+    while True:
+        cycle += 1
+        c0 = time.time()
+        try:
+            update_watchlist(config)
+            log.info("cycle %d: OHLCV refreshed", cycle)
+        except Exception:
+            log.exception("cycle %d: data refresh failed (training on cached bars)", cycle)
+        promoted = 0
+        for i, (ticker, side, strategy) in enumerate(combos):
+            log.info(
+                "[cycle %d, %d/%d] start %s/%s/%s",
+                cycle,
+                i + 1,
+                len(combos),
+                ticker,
+                side,
+                strategy,
+            )
+            t0 = time.time()
+            try:
+                ok = _hpo_and_tournament(config, ticker, side, n_trials, strategy)
+                promoted += int(bool(ok))
+                log.info(
+                    "done %s/%s/%s in %.0fs promoted=%s",
+                    ticker,
+                    side,
+                    strategy,
+                    time.time() - t0,
+                    ok,
+                )
+            except Exception:
+                log.exception("retrain failed %s/%s/%s", ticker, side, strategy)
+            try:
+                refresh_signals(config)
+            except Exception:
+                log.exception("refresh_signals failed after %s/%s/%s", ticker, side, strategy)
+        log.info(
+            "cycle %d COMPLETE: %d combos, %d promoted, %.0f min",
+            cycle,
+            len(combos),
+            promoted,
+            (time.time() - c0) / 60.0,
+        )
 
 
 def _drain(config: Config) -> int:
