@@ -696,6 +696,12 @@ for the levers explored. Plausible next environments:
   ~10 %/yr equity beta from the benchmark, making "edge" possible
   even with thin AUC).
 
+The **crypto / 1-hour intraday** pivot is now scoped in a dedicated study —
+[`INTRADAY_FEASIBILITY.md`](INTRADAY_FEASIBILITY.md): the engine is already
+bar-agnostic, the blockers are concentrated (store `.normalize()`, `sqrt(252)`
+annualization, calendar/gap features), data is free (Binance/ccxt), and the verdict
+is *go for a narrow BTC/USDT 1h POC* through the existing guard.
+
 The v0.2.0+ infrastructure (data layer with multi-universe + earnings
 + news + GPU FinBERT, walk-forward backtest with realistic costs,
 event-level PEAD + risk overlay, registry guard, paper book,
