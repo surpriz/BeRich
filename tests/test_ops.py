@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 from berich.config import Config
-from berich.ops import gpus, ops_snapshot, recent_logs, scheduled_jobs, sweep_status, system_metrics
+from berich.ops import (
+    _log_level,
+    gpus,
+    ops_snapshot,
+    recent_logs,
+    scheduled_jobs,
+    sweep_status,
+    system_metrics,
+)
 
 
 def test_gpus_parses_nvidia_smi(monkeypatch):
@@ -68,6 +76,14 @@ def test_sweep_status_parses_drainer_log(monkeypatch, tmp_path):
     assert st["avg_seconds"] == 530
     assert st["gave_up"] == 0
     assert st["last_activity"] == "2026-06-02T16:01:00"
+
+
+def test_log_level_classifies_by_real_level_not_keywords():
+    # An INFO summary that merely contains the dict key 'failed' is NOT an error (the bug).
+    assert _log_level("INFO berich.scheduler.jobs: ticker_hpo_queue: {'failed': 0}") == "info"
+    assert _log_level("WARNING berich.scheduler.jobs: refresh_signals failed") == "warning"
+    assert _log_level("ERROR sweep: FAILED AAA/long/trailing") == "error"
+    assert _log_level("Traceback (most recent call last):") == "error"
 
 
 def test_system_metrics_has_core_fields(tmp_path):

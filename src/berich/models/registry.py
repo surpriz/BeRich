@@ -18,6 +18,7 @@ works, including future PyTorch wrappers.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from berich.models.base import Model
+
+logger = logging.getLogger(__name__)
 
 MODEL_FILE = "model.joblib"
 META_FILE = "metadata.json"
@@ -75,11 +78,23 @@ def save_model(
     *,
     registry_dir: Path,
 ) -> Path:
-    """Persist ``model`` and its metadata under ``registry_dir/<name>``; return that dir."""
+    """Persist ``model`` and its metadata under ``registry_dir/<name>``; return that dir.
+
+    Written atomically (temp file + ``os.replace``), and the metadata last: a process killed
+    mid-save can never leave a half-written ``metadata.json`` that breaks serving — a reader
+    sees either no metadata yet (artifact skipped) or the complete previous one.
+    """
     artifact_dir = registry_dir / metadata.name
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, artifact_dir / MODEL_FILE)
-    (artifact_dir / META_FILE).write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
+    # Write each file to a temp sibling then atomically rename onto the final name (Path.replace
+    # is an atomic rename on POSIX). Metadata is written LAST, so a kill mid-save leaves either no
+    # metadata (artifact skipped by list_models) or a complete, valid one — never a partial file.
+    model_tmp = artifact_dir / (MODEL_FILE + ".tmp")
+    joblib.dump(model, model_tmp)
+    model_tmp.replace(artifact_dir / MODEL_FILE)
+    meta_tmp = artifact_dir / (META_FILE + ".tmp")
+    meta_tmp.write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
+    meta_tmp.replace(artifact_dir / META_FILE)
     return artifact_dir
 
 
@@ -95,11 +110,18 @@ def list_models(registry_dir: Path) -> list[ModelMetadata]:
     """Return metadata for every artifact in the registry, newest first."""
     if not registry_dir.exists():
         return []
-    metas = [
-        ModelMetadata.model_validate_json((d / META_FILE).read_text(encoding="utf-8"))
-        for d in registry_dir.iterdir()
-        if (d / META_FILE).exists()
-    ]
+    metas: list[ModelMetadata] = []
+    for d in registry_dir.iterdir():
+        if not (d / META_FILE).exists():
+            continue
+        try:
+            metas.append(
+                ModelMetadata.model_validate_json((d / META_FILE).read_text(encoding="utf-8"))
+            )
+        except (OSError, ValueError):
+            # A single unreadable/invalid artifact must never break serving — skip it. (ValueError
+            # covers pydantic's ValidationError, e.g. a legacy metadata with a non-finite metric.)
+            logger.warning("skipping unreadable model metadata at %s", d, exc_info=True)
     return sorted(metas, key=lambda m: m.created_at, reverse=True)
 
 

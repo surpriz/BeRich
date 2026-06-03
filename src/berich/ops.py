@@ -45,11 +45,15 @@ def _run(cmd: list[str]) -> str | None:
 
 
 def _log_level(message: str) -> str:
-    """Classify a log line as error / warning / info from its text (best-effort)."""
-    upper = message.upper()
-    if "ERROR" in upper or "TRACEBACK" in upper or "FAILED" in upper or "EXCEPTION" in upper:
+    """Classify a log line by its actual level token (word-boundary), not loose keywords.
+
+    Matching the standard logging level as a *word* avoids false alarms like an INFO summary that
+    merely contains a dict key ``'failed': 0`` — that is not an error. A genuine record is tagged
+    by the WARNING/ERROR/CRITICAL the logger emitted (present in the journald/sweep line).
+    """
+    if re.search(r"\b(ERROR|CRITICAL)\b", message) or "Traceback" in message:
         return "error"
-    if "WARNING" in upper or "GIVING UP" in upper or "SKIPPED" in upper:
+    if re.search(r"\bWARNING\b", message):
         return "warning"
     return "info"
 

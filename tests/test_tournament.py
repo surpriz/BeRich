@@ -21,9 +21,20 @@ from berich.training.hpo import (
 from berich.training.tournament import (
     CandidateResult,
     TournamentResult,
+    _finite_metrics,
     train_candidate,
     train_ticker_tournament,
 )
+
+
+def test_finite_metrics_coerces_none_and_nonfinite_to_zero():
+    out = _finite_metrics(
+        {"auc": 0.55, "sharpe": float("nan"), "deflated_sharpe": None, "p": float("inf")}
+    )
+    assert out["auc"] == 0.55
+    assert out["sharpe"] == 0.0  # NaN -> 0
+    assert out["deflated_sharpe"] == 0.0  # None -> 0
+    assert out["p"] == 0.0  # Inf -> 0
 
 
 def _ohlcv(n: int = 500, seed: int = 0) -> pd.DataFrame:

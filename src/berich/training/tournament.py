@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, cast
@@ -52,6 +53,18 @@ _FRAMEWORK = {
     "patchtst": "patchtst",
     "tft": "tft",
 }
+
+
+def _finite_metrics(metrics: dict[str, float]) -> dict[str, float]:
+    """Coerce any None/NaN/Inf metric to 0.0 so the stored metadata is always valid floats.
+
+    A degenerate short (too few trades → undefined deflated Sharpe) used to persist a None
+    metric, which both broke ``ModelMetadata`` deserialization and the significance guard. 0.0
+    fails the guard, which is the correct verdict for "significance couldn't be established".
+    """
+    return {
+        k: (float(v) if v is not None and math.isfinite(v) else 0.0) for k, v in metrics.items()
+    }
 
 
 @dataclass
@@ -172,12 +185,14 @@ def train_candidate(
             and sig.p_value < MAX_SHARPE_PVALUE
             and auc > AUC_FLOOR
         )
-        metrics = {
-            "auc": auc,
-            "sharpe": sig.sharpe,
-            "deflated_sharpe": sig.deflated_sharpe,
-            "sharpe_pvalue": sig.p_value,
-        }
+        metrics = _finite_metrics(
+            {
+                "auc": auc,
+                "sharpe": sig.sharpe,
+                "deflated_sharpe": sig.deflated_sharpe,
+                "sharpe_pvalue": sig.p_value,
+            }
+        )
         benchmark_sharpe = 0.0  # a short's benchmark is cash
         beats_buy_hold = False
         notes = (
@@ -186,11 +201,13 @@ def train_candidate(
         )
     else:
         beats_guard = bool(bt.beats_buy_hold) and auc > AUC_FLOOR
-        metrics = {
-            "auc": auc,
-            "sharpe": bt.strategy.sharpe,
-            "benchmark_sharpe": bt.benchmark.sharpe,
-        }
+        metrics = _finite_metrics(
+            {
+                "auc": auc,
+                "sharpe": bt.strategy.sharpe,
+                "benchmark_sharpe": bt.benchmark.sharpe,
+            }
+        )
         benchmark_sharpe = bt.benchmark.sharpe
         beats_buy_hold = bool(bt.beats_buy_hold)
         notes = (

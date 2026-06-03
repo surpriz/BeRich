@@ -71,6 +71,22 @@ def test_list_models(tmp_path):
     assert names == {"a", "b"}
 
 
+def test_list_models_skips_invalid_metadata(tmp_path):
+    # A valid-JSON but schema-invalid metadata (a non-finite metric serialized as null) must NOT
+    # break the scan — it is skipped so serving keeps working. Regression for the recurring
+    # "refresh_signals failed: ValidationError for ModelMetadata" alert.
+    save_model(_trained_model(), _meta("good", beats=True), registry_dir=tmp_path)
+    bad_dir = tmp_path / "bad"
+    bad_dir.mkdir()
+    (bad_dir / "metadata.json").write_text(
+        '{"name": "bad", "framework": "tft", "feature_columns": [], '
+        '"metrics": {"sharpe": 0.1, "deflated_sharpe": null, "sharpe_pvalue": null}}',
+        encoding="utf-8",
+    )
+    names = {m.name for m in list_models(tmp_path)}
+    assert names == {"good"}  # the invalid artifact is skipped, not raised
+
+
 def _mn_meta(name: str, *, sharpe: float, dsr: float, pval: float) -> ModelMetadata:
     return ModelMetadata(
         name=name,
