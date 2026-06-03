@@ -344,6 +344,12 @@ universes:
     - XOM
     - JNJ
     - SPY
+    - TSLA         # Tesla
+    - BRK-B        # Berkshire Hathaway B
+    - V            # Visa
+    - UNH          # UnitedHealth
+    - WMT          # Walmart
+    - HD           # Home Depot
   fr_stocks:
     - AIR.PA       # Airbus
     - MC.PA        # LVMH
@@ -353,17 +359,32 @@ universes:
     - TTE.PA       # TotalEnergies
     - SU.PA        # Schneider Electric
     - DG.PA        # Vinci
+    - AI.PA        # Air Liquide
+    - SAF.PA       # Safran
+    - EL.PA        # EssilorLuxottica
+    - CAP.PA       # Capgemini
   forex:
     - EURUSD=X
     - GBPUSD=X
     - USDJPY=X
     - AUDUSD=X
     - USDCAD=X
+    - NZDUSD=X
+    - EURGBP=X
+    - USDCHF=X
   crypto:
     - BTC-USD
     - ETH-USD
     - SOL-USD
+    - XRP-USD
+    - ADA-USD
+    - DOGE-USD
+    - BNB-USD
   commodities:
     - GC=F         # gold front-month
     - CL=F         # WTI crude front-month
     - SI=F         # silver front-month
+    - NG=F         # natural gas
+    - HG=F         # copper
+    - ZC=F         # corn
+    - PL=F         # platinum
