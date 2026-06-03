@@ -83,21 +83,26 @@ def _continuous(config: Config) -> int:
     Optuna studies deepen over time (more trials = better hyperparameters), models re-fit on the
     freshest bars, and the guard re-promotes the honest winner. The rented GPUs never idle. Runs
     under systemd (Restart=always); the cross-process lock keeps the scheduler's HPO jobs yielding.
+
+    The config is reloaded at the top of every cycle, so newly added tickers / strategies / tuned
+    params are picked up automatically on the next pass — no restart needed.
     """
-    n_trials = config.zoo.ticker_initial_hpo_trials
-    combos = [
-        (ticker, side, strategy)
-        for ticker in config.tradeable_tickers()
-        for side in config.zoo.ticker_sides
-        for strategy in config.zoo.ticker_exit_strategies
-    ]
+    del config  # reloaded fresh each cycle (below)
     cycle = 0
     while True:
         cycle += 1
         c0 = time.time()
+        config = Config.load("config/berich.yaml")
+        n_trials = config.zoo.ticker_initial_hpo_trials
+        combos = [
+            (ticker, side, strategy)
+            for ticker in config.tradeable_tickers()
+            for side in config.zoo.ticker_sides
+            for strategy in config.zoo.ticker_exit_strategies
+        ]
         try:
             update_watchlist(config)
-            log.info("cycle %d: OHLCV refreshed", cycle)
+            log.info("cycle %d: OHLCV refreshed, %d combos", cycle, len(combos))
         except Exception:
             log.exception("cycle %d: data refresh failed (training on cached bars)", cycle)
         promoted = 0
