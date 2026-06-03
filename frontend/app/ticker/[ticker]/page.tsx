@@ -17,6 +17,7 @@ import { TickerChart } from "@/app/components/TickerChart";
 import { Show } from "@/app/components/Show";
 import { Info } from "@/app/components/Term";
 import { useTranslate } from "@/app/lib/i18n";
+import { useStrategy } from "@/app/lib/strategy";
 
 const ASSET_CLASS_LABEL: Record<AssetClass, string> = {
   us_stocks: "US Stock",
@@ -48,6 +49,7 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
   const { ticker: raw } = use(params);
   const ticker = raw.toUpperCase();
   const t = useTranslate();
+  const { strategy } = useStrategy();
   const [bars, setBars] = useState<PriceBar[] | undefined>();
   const [history, setHistory] = useState<Signal[] | undefined>();
   const [explain, setExplain] = useState<SignalExplain | null | undefined>();
@@ -85,7 +87,10 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
     };
   }, [ticker]);
 
-  const latest = history?.[0];
+  // One signal row per (date, exit strategy); show only the toggle's selected strategy so the
+  // history reads one row per date (not three) and matches the rest of the dashboard.
+  const shown = history?.filter((s) => (s.exit_strategy ?? "fixed") === strategy);
+  const latest = shown?.[0];
   const klass = classify(ticker, universes);
 
   return (
@@ -149,7 +154,7 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
             <div className="text-[11px] uppercase tracking-widest text-[var(--color-faint)]">
               {t("ticker.asOf")}
             </div>
-            <div className="tabular text-lg">{latest.date}</div>
+            <div className="tabular text-lg">{latest.date.slice(0, 10)}</div>
           </div>
         )}
       </header>
@@ -203,7 +208,7 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
 
       <section className="card mb-8 p-4">
         {bars ? (
-          <TickerChart bars={bars} signals={history ?? []} />
+          <TickerChart bars={bars} signals={shown ?? []} />
         ) : (
           <div className="h-[540px] animate-pulse" />
         )}
@@ -303,11 +308,11 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
 
       <section className="card p-5">
         <h2 className="mb-3 font-display text-lg font-bold">{t("ticker.history")}</h2>
-        {!history && <div className="h-24 animate-pulse rounded bg-white/[0.03]" />}
-        {history && history.length === 0 && (
+        {!shown && <div className="h-24 animate-pulse rounded bg-white/[0.03]" />}
+        {shown && shown.length === 0 && (
           <p className="text-sm text-[var(--color-faint)]">{t("ticker.noHistory")}</p>
         )}
-        {history && history.length > 0 && (
+        {shown && shown.length > 0 && (
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-[var(--color-line)] text-left text-xs uppercase tracking-widest text-[var(--color-faint)]">
@@ -326,12 +331,12 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
               </tr>
             </thead>
             <tbody>
-              {history.map((s) => (
+              {shown.map((s) => (
                 <tr
-                  key={`${s.date}-${s.ticker}`}
+                  key={`${s.date}-${s.exit_strategy ?? "fixed"}`}
                   className="border-b border-[var(--color-line)]/40 last:border-0"
                 >
-                  <td className="tabular px-2 py-2">{s.date}</td>
+                  <td className="tabular px-2 py-2">{s.date.slice(0, 10)}</td>
                   <td className="px-2 py-2">
                     <SignalBadge signal={s.signal} />
                   </td>

@@ -112,6 +112,7 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
           <thead>
             <tr className="border-b border-[var(--color-line)] text-left text-[11px] uppercase tracking-widest text-[var(--color-faint)]">
               <th className="px-5 py-2 font-medium">Ticker</th>
+              <th className="px-3 py-2 font-medium">Opened</th>
               <th className="px-3 py-2 text-right font-medium">Entry</th>
               <th className="px-3 py-2 text-right font-medium">Current</th>
               <th className="px-3 py-2 text-right font-medium">Stop</th>
@@ -141,6 +142,7 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
                     ) : null}
                   </span>
                 </td>
+                <td className="tabular px-3 py-2 text-xs text-[var(--color-muted)]">{p.date_open.slice(0, 10)}</td>
                 <td className="tabular px-3 py-2 text-right">{fmt(p.entry)}</td>
                 <td className="tabular px-3 py-2 text-right">{fmt(p.current_price)}</td>
                 <td className="tabular px-3 py-2 text-right text-[var(--color-muted)]">
