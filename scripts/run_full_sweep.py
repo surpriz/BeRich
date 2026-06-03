@@ -30,6 +30,7 @@ from berich.scheduler.jobs import (
     acquire_hpo_lock,
     refresh_signals,
 )
+from berich.training.status import _hpo_trial_counts, _hpo_trials_for
 
 _LOG_PATH = Path("data/sweep.log")
 _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -77,15 +78,23 @@ def main() -> int:
 
 
 def _continuous(config: Config) -> int:
-    """Perpetual retraining loop: cycle through EVERY (ticker, side, strategy) forever.
+    """Perpetual, *smart* retraining loop: cycle through every (ticker, side, strategy) forever.
 
-    Each cycle refreshes the latest OHLCV, then re-runs HPO + tournament for every combo — so
-    Optuna studies deepen over time (more trials = better hyperparameters), models re-fit on the
-    freshest bars, and the guard re-promotes the honest winner. The rented GPUs never idle. Runs
-    under systemd (Restart=always); the cross-process lock keeps the scheduler's HPO jobs yielding.
+    It is not a dumb redo-the-same-thing loop. Two things keep it useful, not wasteful:
 
-    The config is reloaded at the top of every cycle, so newly added tickers / strategies / tuned
-    params are picked up automatically on the next pass — no restart needed.
+    - **Fresh data every cycle.** OHLCV is refreshed up front, so each re-fit learns on the latest
+      bars — the market is what changed, even when the model "stays the same".
+    - **Tapered search.** A new/shallow study gets the full deep HPO (``ticker_initial_hpo_trials``)
+      to find good hyperparameters; once a study is already deep it switches to a light top-up
+      (``ticker_nightly_hpo_trials``) and mostly just re-fits on fresh data — no pointlessly
+      re-searching a converged space, so the GPUs aren't burned on redundant work and the Optuna
+      DB grows slowly.
+
+    Priority: un-trained combos are processed FIRST, so a newly added asset is trained ahead of
+    re-deepening existing ones. Config is reloaded each cycle, so new tickers / strategies / tuned
+    params are picked up automatically (a restart just makes it immediate).
+
+    Runs under systemd (Restart=always); the cross-process lock keeps the scheduler's jobs yielding.
     """
     del config  # reloaded fresh each cycle (below)
     cycle = 0
@@ -93,7 +102,8 @@ def _continuous(config: Config) -> int:
         cycle += 1
         c0 = time.time()
         config = Config.load("config/berich.yaml")
-        n_trials = config.zoo.ticker_initial_hpo_trials
+        deep_trials = config.zoo.ticker_initial_hpo_trials
+        topup_trials = config.zoo.ticker_nightly_hpo_trials
         combos = [
             (ticker, side, strategy)
             for ticker in config.tradeable_tickers()
@@ -105,16 +115,23 @@ def _continuous(config: Config) -> int:
             log.info("cycle %d: OHLCV refreshed, %d combos", cycle, len(combos))
         except Exception:
             log.exception("cycle %d: data refresh failed (training on cached bars)", cycle)
+        # Priority: un-searched combos (new assets) first, then deepen the rest.
+        counts = _hpo_trial_counts(config.optuna_db)
+        combos.sort(key=lambda c: _hpo_trials_for(counts, c[0], None, c[1], c[2]) > 0)
         promoted = 0
         for i, (ticker, side, strategy) in enumerate(combos):
+            existing = _hpo_trials_for(counts, ticker, None, side, strategy)
+            n_trials = deep_trials if existing < deep_trials else topup_trials
             log.info(
-                "[cycle %d, %d/%d] start %s/%s/%s",
+                "[cycle %d, %d/%d] start %s/%s/%s (%d trials, %d existing)",
                 cycle,
                 i + 1,
                 len(combos),
                 ticker,
                 side,
                 strategy,
+                n_trials,
+                existing,
             )
             t0 = time.time()
             try:
