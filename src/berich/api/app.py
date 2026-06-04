@@ -139,6 +139,8 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
             "horizon_days": config.labeling.horizon_days,
             "take_profit_atr": config.labeling.take_profit_atr,
             "stop_loss_atr": config.labeling.stop_loss_atr,
+            "max_ticker_exposure_pct": s.max_ticker_exposure_pct,
+            "max_book_exposure_pct": s.max_book_exposure_pct,
         }
 
     @router.get("/universes", dependencies=guard)

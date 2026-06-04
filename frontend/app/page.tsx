@@ -184,6 +184,7 @@ export default function Dashboard() {
                 equity={s.paperEquity}
                 positions={s.paperPositions.positions}
                 closed={s.paperClosed}
+                cfg={s.cfg}
               />
             ) : (
               <Skeleton h={600} />

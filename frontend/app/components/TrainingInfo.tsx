@@ -8,6 +8,7 @@ import {
   type TrainingStatus,
 } from "@/app/lib/api";
 import { useTranslate } from "@/app/lib/i18n";
+import { ProbaGauge } from "@/app/components/bars";
 
 // Compact "Training & HPO" panel for the ticker drill-down: last training, last HPO, trial
 // count, promotion status and today's per-side signal, split long vs short. Training facts are
@@ -62,16 +63,20 @@ function SignalCell({
   }
   const fires = proba >= threshold;
   const dirLabel = side === "long" ? t("directionLong") : t("directionShort");
-  const color = side === "long" ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]";
+  const textColor = side === "long" ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]";
+  const fillColor = side === "long" ? "var(--color-bull)" : "var(--color-bear)";
   return (
-    <span className="tabular">
-      {proba.toFixed(3)}{" "}
-      {fires ? (
-        <span className={color}>· {dirLabel}</span>
-      ) : (
-        <span className="text-[var(--color-faint)]">· {t("ticker.sigBelow")}</span>
-      )}
-    </span>
+    <div className="flex flex-col items-end gap-1">
+      <span className="tabular">
+        {proba.toFixed(3)}{" "}
+        {fires ? (
+          <span className={textColor}>· {dirLabel}</span>
+        ) : (
+          <span className="text-[var(--color-faint)]">· {t("ticker.sigBelow")}</span>
+        )}
+      </span>
+      <ProbaGauge proba={proba} threshold={threshold} color={fillColor} />
+    </div>
   );
 }
 

@@ -209,6 +209,8 @@ export type SignalConfig = {
   horizon_days: number;
   take_profit_atr: number;
   stop_loss_atr: number;
+  max_ticker_exposure_pct?: number;
+  max_book_exposure_pct?: number;
 };
 
 export type TournamentCandidate = {

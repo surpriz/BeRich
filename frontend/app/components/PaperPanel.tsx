@@ -1,5 +1,6 @@
-import type { PaperClosedTrade, PaperEquity, PaperPosition } from "@/app/lib/api";
+import type { PaperClosedTrade, PaperEquity, PaperPosition, SignalConfig } from "@/app/lib/api";
 import { PaperEquityChart } from "./PaperEquityChart";
+import { BudgetBar, RangeBar } from "./bars";
 
 const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pct = (n: number) => `${(n * 100).toFixed(2)}%`;
@@ -24,10 +25,12 @@ export function PaperPanel({
   equity,
   positions,
   closed,
+  cfg,
 }: {
   equity: PaperEquity;
   positions: PaperPosition[];
   closed: PaperClosedTrade[];
+  cfg?: SignalConfig;
 }) {
   const m = equity.metrics;
   const paperReturn = m.total_return_paper;
@@ -35,6 +38,11 @@ export function PaperPanel({
   // ``total_return_spy`` is NaN when SPY isn't in the cache or no trades exist yet.
   const spyHas = Number.isFinite(spyReturn);
   const delta = spyHas ? paperReturn - spyReturn : 0;
+  // Open exposure measured at cost basis (entry × shares) vs. the book cap — mirrors the
+  // server-side exposure-cap budget. positions are already the selected strategy's book.
+  const usedExposure = positions.reduce((acc, p) => acc + p.entry * p.size_shares, 0);
+  const bookBudget = m.capital * (cfg?.max_book_exposure_pct ?? 1);
+  const exposurePct = bookBudget > 0 ? (usedExposure / bookBudget) * 100 : 0;
 
   return (
     <section className="flex flex-col gap-6">
@@ -58,6 +66,16 @@ export function PaperPanel({
           valueClass={spyHas ? pnlColor(delta) : ""}
         />
         <Stat label="Win rate" value={pct(m.win_rate)} sublabel={`${m.n_closed} closed`} />
+      </div>
+
+      <div className="card px-5 py-3">
+        <div className="mb-2 flex items-center justify-between text-xs">
+          <span className="uppercase tracking-widest text-[var(--color-muted)]">Book exposure</span>
+          <span className="tabular text-[var(--color-faint)]">
+            €{fmt(usedExposure)} / €{fmt(bookBudget)} · {exposurePct.toFixed(0)}%
+          </span>
+        </div>
+        <BudgetBar used={usedExposure} budget={bookBudget} />
       </div>
 
       <div className="card p-5">
@@ -118,6 +136,7 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
               <th className="px-3 py-2 text-right font-medium">Entry</th>
               <th className="px-3 py-2 text-right font-medium">Current</th>
               <th className="px-3 py-2 text-right font-medium">Stop</th>
+              <th className="px-3 py-2 text-center font-medium">Stop → Target</th>
               <th className="px-3 py-2 text-right font-medium">MTM</th>
               <th className="px-5 py-2 text-right font-medium">Days</th>
             </tr>
@@ -149,6 +168,20 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
                 <td className="tabular px-3 py-2 text-right">{fmt(p.current_price)}</td>
                 <td className="tabular px-3 py-2 text-right text-[var(--color-muted)]">
                   {fmt(p.trail_stop ?? p.stop)}
+                </td>
+                <td className="px-3 py-2">
+                  {p.target > 0 ? (
+                    <div className="flex justify-center">
+                      <RangeBar
+                        low={p.trail_stop ?? p.stop}
+                        high={p.target}
+                        value={p.current_price}
+                        entry={p.entry}
+                      />
+                    </div>
+                  ) : (
+                    <div className="text-center text-[var(--color-faint)]">—</div>
+                  )}
                 </td>
                 <td className={`tabular px-3 py-2 text-right ${pnlColor(p.mtm_pct)}`}>
                   {pct(p.mtm_pct)}

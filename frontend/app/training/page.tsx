@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import { api, type TournamentCandidate, type TrainingStatus } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
 import { Show } from "@/app/components/Show";
-import { Info } from "@/app/components/Term";
 
 const STATUS_STYLE: Record<TrainingStatus["status"], string> = {
   promoted: "text-[var(--color-bull)] border-[var(--color-bull)]",
@@ -151,6 +150,89 @@ function CandidatesTable({
   );
 }
 
+function bestStatus(g: Grouped): TrainingStatus["status"] {
+  const statuses = [g.long?.status, g.short?.status];
+  if (statuses.includes("promoted")) return "promoted";
+  if (statuses.includes("advisory_only")) return "advisory_only";
+  return "never_trained";
+}
+
+function lastTrained(g: Grouped): string | null {
+  return [g.long?.trained_at, g.short?.trained_at].filter(Boolean).sort().pop() ?? null;
+}
+
+const DOT_STYLE: Record<TrainingStatus["status"], string> = {
+  promoted: "bg-[var(--color-bull)]",
+  advisory_only: "border border-[var(--color-muted)]",
+  never_trained: "bg-[var(--color-faint)]/40",
+};
+
+const DOT_KEY: Record<TrainingStatus["status"], string> = {
+  promoted: "training.dotPromoted",
+  advisory_only: "training.dotAdvisory",
+  never_trained: "training.dotNever",
+};
+
+// Coverage at a glance: how many of the configured assets are trained / have a promoted side,
+// a promoted-share progress bar, and one clickable status dot per asset (ring = trained <24h).
+function CoverageBanner({ grouped, t }: { grouped: Grouped[]; t: (k: string) => string }) {
+  const total = grouped.length;
+  const trained = grouped.filter((g) => bestStatus(g) !== "never_trained").length;
+  const promoted = grouped.filter((g) => bestStatus(g) === "promoted").length;
+  const pct = total > 0 ? (promoted / total) * 100 : 0;
+  return (
+    <div className="card mt-4 p-5">
+      <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
+        <span className="text-xs uppercase tracking-widest text-[var(--color-muted)]">
+          {t("training.coverage")}
+        </span>
+        <span className="tabular text-sm text-[var(--color-faint)]">
+          <span className="text-[var(--color-fg)]">
+            {trained}/{total}
+          </span>{" "}
+          {t("training.trainedCount")} ·{" "}
+          <span className="text-[var(--color-bull)]">
+            {promoted}/{total}
+          </span>{" "}
+          {t("training.promotedAssets")}
+        </span>
+      </div>
+      <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--color-line)]">
+        <div className="h-full rounded-full bg-[var(--color-bull)]" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="mt-4 flex flex-wrap gap-1.5">
+        {grouped.map((g) => {
+          const status = bestStatus(g);
+          const ts = lastTrained(g);
+          const fresh = ts != null && Date.now() - Date.parse(ts) < 86_400_000;
+          return (
+            <Link
+              key={g.ticker}
+              href={`/ticker/${g.ticker}`}
+              title={`${g.ticker} — ${t(DOT_KEY[status])}${fresh ? ` · ${t("training.fresh")}` : ""}`}
+              className={`h-2.5 w-2.5 rounded-full ${DOT_STYLE[status]} ${fresh ? "ring-2 ring-[var(--color-bull)]/30" : ""}`}
+            />
+          );
+        })}
+      </div>
+      <div className="mt-3 flex gap-4 text-[10px] text-[var(--color-faint)]">
+        <span className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-[var(--color-bull)]" />
+          {t("training.dotPromoted")}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full border border-[var(--color-muted)]" />
+          {t("training.dotAdvisory")}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-[var(--color-faint)]/40" />
+          {t("training.dotNever")}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function TrainingPage() {
   const { t } = useI18n();
   const [rows, setRows] = useState<TrainingStatus[] | null>(null);
@@ -161,30 +243,13 @@ export default function TrainingPage() {
   }, []);
 
   const grouped = rows ? group(rows) : [];
-  const nAssets = grouped.length;
-  const nSides = rows?.length ?? 0;
-  const nPromoted = rows?.filter((r) => r.status === "promoted").length ?? 0;
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
       <h1 className="font-display text-3xl font-bold">{t("training.title")}</h1>
       <p className="mt-2 max-w-2xl text-sm text-[var(--color-muted)]">{t("training.intro")}</p>
 
-      {rows && (
-        <div className="mt-4 flex gap-6 text-sm text-[var(--color-muted)]">
-          <span>
-            {nAssets} {t("training.assets")}
-            <span className="text-[var(--color-faint)]">
-              {" "}
-              ({nSides} {t("training.sides")})
-            </span>
-          </span>
-          <span className="text-[var(--color-bull)]">
-            {nPromoted} {t("training.promotedCount")}
-            <Info id="promoted" />
-          </span>
-        </div>
-      )}
+      {rows && <CoverageBanner grouped={grouped} t={t} />}
 
       {err && <p className="mt-6 text-[var(--color-bear)]">{err}</p>}
       {!rows && !err && <p className="mt-6 text-[var(--color-muted)]">…</p>}
