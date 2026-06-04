@@ -5,6 +5,7 @@ from berich.monitoring.drift import (
     FeatureDrift,
     feature_drift,
     population_stability_index,
+    split_reference_recent,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "FeatureDrift",
     "feature_drift",
     "population_stability_index",
+    "split_reference_recent",
 ]

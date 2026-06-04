@@ -118,3 +118,24 @@ def feature_drift(
         )
         diagnostics.append(FeatureDrift(feature=col, psi=psi, ks_pvalue=float(ks.pvalue)))
     return DriftReport(features=diagnostics)
+
+
+def split_reference_recent(
+    feats: pd.DataFrame,
+    *,
+    recent_window: int = 60,
+    min_reference: int = 120,
+) -> tuple[pd.DataFrame, pd.DataFrame] | None:
+    """Split a causal feature frame into a training-era reference and a recent window.
+
+    Reference = everything before the last ``recent_window`` rows; recent = the tail. Returns
+    ``None`` when there isn't enough history (``< min_reference`` reference rows) for a meaningful
+    comparison — the caller then skips the asset rather than alarm on noise.
+    """
+    if len(feats) < min_reference + recent_window:
+        return None
+    reference = feats.iloc[:-recent_window]
+    recent = feats.iloc[-recent_window:]
+    if len(reference) < min_reference:
+        return None
+    return reference, recent

@@ -21,14 +21,20 @@ from berich.signals import (
     open_new_trades,
     update_open_trades,
 )
+from berich.signals import paper as paper_mod
 from berich.signals.paper import (
     CLOSED_STOP,
     CLOSED_TARGET,
     CLOSED_TIME,
     CLOSED_TRAIL,
+    OBSERVE_TIER,
     OPEN,
+    PROMOTED_TIER,
     _apply_exposure_caps,
+    _cap_open_positions,
+    _derisk_for_drawdown,
     get_open_positions,
+    get_paper_metrics,
 )
 from berich.signals.service import BUY, SHORT, Signal
 from berich.signals.store import SignalStore
@@ -89,6 +95,7 @@ def _signal(
     *,
     promoted: bool = True,
     exit_strategy: str = "fixed",
+    tier: str = "promoted",
 ) -> Signal:
     return Signal(
         date=date,
@@ -102,6 +109,7 @@ def _signal(
         notional=entry * 10,
         promoted=promoted,
         exit_strategy=exit_strategy,
+        tier=tier,
     )
 
 
@@ -205,6 +213,38 @@ def test_advisory_signal_opens_no_paper_trade(config, ohlcv_store):
     )
     assert open_new_trades(config, ohlcv_store, sigstore) == 0
     assert PaperStore(config.db_path).all_trades().empty
+
+
+def test_observe_signal_opens_into_shadow_book_only(config, ohlcv_store):
+    # An "observe"-tier (non-promoted near-miss) signal opens a paper trade tagged 'observe' that
+    # is tracked live but kept OUT of the committed-capital book — promoted-only reads don't see it.
+    df = _ramp(start=100.0, end=120.0, n=20, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    sigstore = SignalStore(config.db_path)
+    sigstore.save(
+        [
+            _signal(
+                df.index[0],
+                "AAA",
+                entry=100.0,
+                stop=95.0,
+                target=110.0,
+                promoted=False,
+                tier=OBSERVE_TIER,
+            )
+        ]
+    )
+    assert open_new_trades(config, ohlcv_store, sigstore) == 1
+
+    paper = PaperStore(config.db_path)
+    assert paper.all_trades(tier=PROMOTED_TIER).empty  # committed book untouched
+    observe = paper.all_trades(tier=OBSERVE_TIER)
+    assert len(observe) == 1
+    assert observe.iloc[0]["tier"] == OBSERVE_TIER
+
+    # Default metrics read the committed book -> no trades; the observe book is reported separately.
+    assert get_paper_metrics(config, ohlcv_store)["n_open"] == 0
+    assert get_paper_metrics(config, ohlcv_store, tier=OBSERVE_TIER)["n_open"] == 1
 
 
 def test_uptrend_closes_at_target(config, ohlcv_store):
@@ -496,3 +536,63 @@ def test_exposure_caps_separate_books_per_strategy():
     )
     # Both survive in full: the trailing book's budget is independent of the fixed book's.
     assert list(out["size_shares"]) == [100, 100]
+
+
+# ----------------------------------------------- Phase 2: money-management guardrails ----
+
+
+def _cls_of(forex: set[str]):
+    """Tiny class_of stub: tickers in ``forex`` are 'forex', everything else 'us_stocks'."""
+    return lambda t: "forex" if t in forex else "us_stocks"
+
+
+def test_exposure_caps_class_concentration_limit():
+    # Three forex names, each able to fund a full position, but the class cap (40% of 10_000 =
+    # 4_000) bounds their combined notional: the third is dropped once the bucket is full.
+    rows = pd.DataFrame(
+        [
+            _candidate("EURUSD", 100.0, 20),  # 2_000
+            _candidate("GBPUSD", 100.0, 20),  # 2_000 -> class now at 4_000
+            _candidate("USDJPY", 100.0, 20),  # would breach the 4_000 class cap -> dropped
+        ]
+    )
+    out = _apply_exposure_caps(
+        rows,
+        pd.DataFrame(),
+        capital=10_000.0,
+        max_ticker_pct=1.0,
+        max_book_pct=1.0,
+        max_class_pct=0.4,
+        class_of=_cls_of({"EURUSD", "GBPUSD", "USDJPY"}),
+    )
+    assert list(out["ticker"]) == ["EURUSD", "GBPUSD"]
+    assert out["size_shares"].sum() * 100.0 <= 4_000.0
+
+
+def test_cap_open_positions_limits_remaining_slots():
+    rows = pd.DataFrame([_candidate(f"T{i}", 100.0, 1) for i in range(5)])
+    # 3 already open, cap 4 -> only 1 new slot remains; the strongest (first) row is kept.
+    open_df = pd.DataFrame([_candidate(f"O{i}", 100.0, 1) for i in range(3)])
+    out = _cap_open_positions(rows, open_df, max_open=4)
+    assert len(out) == 1
+    assert out.iloc[0]["ticker"] == "T0"
+    # cap disabled with 0
+    assert len(_cap_open_positions(rows, open_df, max_open=0)) == 5
+
+
+def test_drawdown_kill_switch_halts_and_derisks(config, ohlcv_store, monkeypatch):
+    rows = pd.DataFrame([_candidate("AAA", 100.0, 10)])
+
+    # >= halt threshold (default 20%) -> nothing opens.
+    monkeypatch.setattr(paper_mod, "_committed_drawdown", lambda *_a, **_k: 0.25)
+    assert _derisk_for_drawdown(rows, config, ohlcv_store).empty
+
+    # between de-risk (10%) and halt -> sizes scaled by drawdown_derisk_factor (0.5).
+    monkeypatch.setattr(paper_mod, "_committed_drawdown", lambda *_a, **_k: 0.12)
+    derisked = _derisk_for_drawdown(rows, config, ohlcv_store)
+    assert int(derisked.iloc[0]["size_shares"]) == 5
+
+    # below de-risk -> full size.
+    monkeypatch.setattr(paper_mod, "_committed_drawdown", lambda *_a, **_k: 0.02)
+    full = _derisk_for_drawdown(rows, config, ohlcv_store)
+    assert int(full.iloc[0]["size_shares"]) == 10

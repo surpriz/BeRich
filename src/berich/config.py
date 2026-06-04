@@ -88,6 +88,20 @@ class SignalConfig(BaseModel):
     # at most one full allocation per name and the book never exceeds the account.
     max_ticker_exposure_pct: float = 1.0
     max_book_exposure_pct: float = 1.0
+    # Concentration cap per asset class (us_stocks / fr_stocks / forex / crypto / commodities) as a
+    # fraction of capital, enforced on the committed paper book. Stops the book loading up on a
+    # single correlated bucket (e.g. three USD pairs, or all tech) when many signals fire together.
+    # 1.0 disables the cap (back-compat); 0.4 = at most 40% of the book in any one class.
+    max_class_exposure_pct: float = 0.4
+    # Graduated drawdown kill-switch on the committed book's equity (peak-to-current). Above
+    # ``drawdown_halt`` no new trade opens; between ``derisk`` and ``halt`` new trades are sized at
+    # ``drawdown_derisk_factor``; below ``derisk`` sizing is full. 1.0/1.0 would disable it.
+    drawdown_derisk_threshold: float = 0.10
+    drawdown_halt_threshold: float = 0.20
+    drawdown_derisk_factor: float = 0.5
+    # Hard cap on concurrently open committed-book positions (monitoring + concentration bound).
+    # 0 disables the cap.
+    max_open_positions: int = 15
     # Round-trip transaction cost (fee + slippage, both sides) in basis points of notional,
     # used to turn a signal's GROSS expected return into a NET one. This is only the default
     # assumption shown on the dashboard — the UI lets a user override it for their own broker.
@@ -102,6 +116,19 @@ class SignalConfig(BaseModel):
     # downgraded to NEUTRAL if the meta model's P(signal correct) < meta_threshold.
     use_meta_label: bool = False
     meta_threshold: float = 0.5
+    # Volatility-regime CONDITIONING (Phase 3.3). NOT a new alpha feature — it conditions behavior:
+    # when the asset's recent realized vol sits in the top ``regime_high_vol_quantile`` of its own
+    # trailing history, the entry bar is raised by ``regime_threshold_bump`` (be more selective when
+    # the tape is wild). Strictly causal. Off by default until validated per the plan.
+    regime_conditioning: bool = False
+    regime_high_vol_quantile: float = 0.80
+    regime_threshold_bump: float = 0.05
+    regime_lookback_days: int = 252
+    # Serve-time ENSEMBLE (Phase 3.1): blend the top gate-passing frameworks per (ticker, side,
+    # strategy) instead of a single tournament winner, to cut single-model variance. Off by default
+    # until validated; ``ensemble_top_n`` caps the members.
+    ensemble_serving: bool = False
+    ensemble_top_n: int = 3
 
 
 class LongShortConfigModel(BaseModel):

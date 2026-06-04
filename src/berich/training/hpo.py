@@ -610,6 +610,35 @@ def best_for_ticker(
     return params, features
 
 
+def ticker_trial_count(
+    config: Config,
+    ticker: str,
+    model_name: str,
+    side: str = "long",
+    strategy: str = "fixed",
+    metric: str = "auc",
+) -> int:
+    """Number of completed HPO trials behind a per-ticker x model x side x strategy study.
+
+    Feeds the Deflated Sharpe's ``n_trials`` so the promotion gate corrects for the fact that the
+    served model is the best of many searched configs (anti data-mining). Returns 0 when no study
+    exists yet (a model trained on defaults, no search) — the caller floors the total at 1.
+    """
+    import optuna  # noqa: PLC0415
+
+    try:
+        study = optuna.load_study(
+            study_name=ticker_study_name(ticker, model_name, side, strategy, metric),
+            storage=f"sqlite:///{config.optuna_db}",
+        )
+    except (KeyError, ValueError):
+        return 0
+    except Exception:  # noqa: BLE001 — a missing/locked study must never break the retrain
+        logger.warning("could not count HPO trials for %s/%s", ticker, model_name)
+        return 0
+    return len(study.trials)
+
+
 def best_horizon_for_ticker(
     config: Config,
     ticker: str,
@@ -727,4 +756,5 @@ __all__ = [
     "run_longshort_hpo",
     "run_ticker_hpo",
     "ticker_study_name",
+    "ticker_trial_count",
 ]

@@ -211,6 +211,10 @@ export type SignalConfig = {
   stop_loss_atr: number;
   max_ticker_exposure_pct?: number;
   max_book_exposure_pct?: number;
+  max_class_exposure_pct?: number;
+  drawdown_derisk_threshold?: number;
+  drawdown_halt_threshold?: number;
+  max_open_positions?: number;
 };
 
 export type TournamentCandidate = {
@@ -335,6 +339,15 @@ export type Health = {
   n_open_positions: number;
 };
 
+// Build a query string from defined params only ("?a=1&b=2"); returns "" when none are set,
+// so callers can append it unconditionally without producing a dangling "?".
+function qs(params: Record<string, string | number | undefined>): string {
+  const parts = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== "")
+    .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`);
+  return parts.length ? `?${parts.join("&")}` : "";
+}
+
 async function get<T>(path: string): Promise<T> {
   const key = process.env.NEXT_PUBLIC_API_KEY;
   const res = await fetch(`${API_BASE}${path}`, {
@@ -352,14 +365,15 @@ export const api = {
   prices: (ticker: string, days = 365) => get<PriceBar[]>(`/prices/${ticker}?days=${days}`),
   drift: () => get<DriftReport>("/drift"),
   backtest: (threshold = 0.5) => get<Backtest>(`/backtest?threshold=${threshold}`),
-  paperPositions: (strategy?: string) =>
-    get<PaperPositions>(`/paper/positions${strategy ? `?strategy=${strategy}` : ""}`),
-  paperEquity: (strategy?: string) =>
-    get<PaperEquity>(`/paper/equity${strategy ? `?strategy=${strategy}` : ""}`),
-  paperClosed: (limit = 25, strategy?: string) =>
-    get<PaperClosedTrade[]>(
-      `/paper/closed-trades?limit=${limit}${strategy ? `&strategy=${strategy}` : ""}`,
-    ),
+  // ``tier`` selects the committed-capital book ("promoted", default) or the observation shadow
+  // book ("observe") — near-miss models tracked live without capital. The server defaults to
+  // "promoted" when omitted, so existing callers keep their committed-book semantics.
+  paperPositions: (strategy?: string, tier?: string) =>
+    get<PaperPositions>(`/paper/positions${qs({ strategy, tier })}`),
+  paperEquity: (strategy?: string, tier?: string) =>
+    get<PaperEquity>(`/paper/equity${qs({ strategy, tier })}`),
+  paperClosed: (limit = 25, strategy?: string, tier?: string) =>
+    get<PaperClosedTrade[]>(`/paper/closed-trades${qs({ limit, strategy, tier })}`),
   paperCalibration: () => get<PaperCalibration>("/paper/calibration"),
   universes: () => get<Universes>("/universes"),
   signalConfig: () => get<SignalConfig>("/config"),

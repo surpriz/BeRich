@@ -59,6 +59,7 @@ _MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("exit_strategy", "VARCHAR DEFAULT 'fixed'"),
     ("trail_atr", "DOUBLE"),
     ("trail_activation_atr", "DOUBLE"),
+    ("tier", "VARCHAR DEFAULT 'advisory'"),
 )
 
 _INSERT_COLUMNS = (
@@ -66,7 +67,7 @@ _INSERT_COLUMNS = (
     "proba_calibrated, meta_proba, acted, ret_q10, ret_q50, ret_q90, sigma_horizon, sltp_method, "
     "direction, proba_long, proba_short, promoted, "
     "exp_return_gross, exp_return_net, cost_bps_roundtrip, "
-    "exit_strategy, trail_atr, trail_activation_atr"
+    "exit_strategy, trail_atr, trail_activation_atr, tier"
 )
 
 

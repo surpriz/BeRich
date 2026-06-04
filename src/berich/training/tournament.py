@@ -29,12 +29,24 @@ from berich.backtest.significance import assess_sharpe
 from berich.data.store import OhlcvStore
 from berich.labeling.triple_barrier import LabelConfig
 from berich.models import ModelMetadata, promote, save_model
-from berich.models.registry import MAX_SHARPE_PVALUE, MIN_DEFLATED_SHARPE
-from berich.signals.calibration import ProbaCalibrator, fit_calibrator, save_calibrator
+from berich.models.registry import MAX_SHARPE_PVALUE, MIN_DEFLATED_SHARPE, MIN_TRADES
+from berich.signals.calibration import (
+    ProbaCalibrator,
+    fit_calibrator,
+    optimal_decision_threshold,
+    save_calibrator,
+)
 from berich.training import oof_predict
-from berich.training.hpo import _ticker_dataset, best_for_ticker, best_horizon_for_ticker
+from berich.training.hpo import (
+    _ticker_dataset,
+    best_for_ticker,
+    best_horizon_for_ticker,
+    ticker_trial_count,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from berich.config import Config
     from berich.models.base import Model
 
@@ -95,6 +107,11 @@ class TournamentResult:
     strategy: str = "fixed"
 
 
+if TYPE_CHECKING:
+    # One trained candidate: (fitted model, metadata, calibrator-or-None, OOS verdict).
+    _Trained = tuple[Model, ModelMetadata, ProbaCalibrator | None, CandidateResult]
+
+
 def _model_from_params(model_name: str, params: dict, *, device: str | None) -> Model:
     """Construct a fresh model of ``model_name`` from a flat params dict (deep cfgs lazy)."""
     if model_name == "lgbm":
@@ -127,11 +144,19 @@ def train_candidate(
     strategy: str = "fixed",
     device: str | None = None,
     calibrate: bool = True,
+    n_trials: int = 1,
+    factory_override: Callable[[], Model] | None = None,
+    framework_override: str | None = None,
 ) -> tuple[Model, ModelMetadata, ProbaCalibrator | None, CandidateResult]:
     """Train one framework for a ticker x side x strategy: OOS, backtest, gate, fit, calibrator.
 
     ``strategy`` ("fixed" | "trailing" | "trailing_tp") re-labels and backtests under that exit
-    rule so the model learns the target it will actually be served on. Returns
+    rule so the model learns the target it will actually be served on. ``n_trials`` is the size of
+    the search this candidate was selected from (HPO trials across the tournament's frameworks);
+    it deflates the Sharpe so the significance gate corrects for data-mining.
+    ``factory_override`` swaps in a custom model factory (e.g. an :class:`AveragingEnsemble`)
+    trained on the FULL feature set instead of the HPO-selected subset — for the serve-time
+    ensemble; ``framework_override`` then labels the artifact. Returns
     ``(model, metadata, calibrator_or_None, candidate_result)``. Nothing is saved or promoted
     here — that is the tournament's job once it has picked a winner.
     """
@@ -142,7 +167,9 @@ def train_candidate(
     dataset, prices = _ticker_dataset(
         config, ticker, side, horizon_days=horizon, exit_mode=strategy
     )
-    if features is not None:
+    # An ensemble member slices the full frame to its own columns, so the ensemble candidate trains
+    # on the FULL feature set; a single-model candidate keeps its HPO-selected subset.
+    if features is not None and factory_override is None:
         keep = [c for c in features if c in dataset.x.columns]
         dataset = replace(dataset, x=dataset.x[keep])
 
@@ -152,6 +179,8 @@ def train_candidate(
     label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(update=update)
 
     def factory() -> Model:
+        if factory_override is not None:
+            return factory_override()
         return _model_from_params(model_name, params, device=device)
 
     oof = oof_predict(dataset, factory, embargo=label_cfg.horizon_days)
@@ -175,12 +204,18 @@ def train_candidate(
         ),
     )
 
-    framework = _FRAMEWORK[model_name]
+    framework = framework_override or _FRAMEWORK[model_name]
     auc = oof.auc
+    n_trades = len(bt.trades)
+    enough_trades = n_trades >= MIN_TRADES
+    # Deflated Sharpe + p-value are computed for BOTH sides (the long gate stays beats-buy-&-hold,
+    # but storing significance lets the sweep-level FDR pass and the observation tier reason about
+    # longs too). ``n_trials`` corrects the DSR for the search this candidate was selected from.
+    sig = assess_sharpe(bt.strategy_returns, n_trials=max(n_trials, 1))
     if side == "short":
-        sig = assess_sharpe(bt.strategy_returns)
         beats_guard = (
-            sig.sharpe > 0
+            enough_trades
+            and sig.sharpe > 0
             and sig.deflated_sharpe >= MIN_DEFLATED_SHARPE
             and sig.p_value < MAX_SHARPE_PVALUE
             and auc > AUC_FLOOR
@@ -191,34 +226,49 @@ def train_candidate(
                 "sharpe": sig.sharpe,
                 "deflated_sharpe": sig.deflated_sharpe,
                 "sharpe_pvalue": sig.p_value,
+                "n_trades": float(n_trades),
+                "n_trials": float(max(n_trials, 1)),
             }
         )
         benchmark_sharpe = 0.0  # a short's benchmark is cash
         beats_buy_hold = False
         notes = (
             f"per-ticker short {model_name}: dsr={sig.deflated_sharpe:.3f} "
-            f"p={sig.p_value:.3f} AUC={auc:.3f}"
+            f"p={sig.p_value:.3f} AUC={auc:.3f} n={n_trades}"
         )
     else:
-        beats_guard = bool(bt.beats_buy_hold) and auc > AUC_FLOOR
+        beats_guard = bool(bt.beats_buy_hold) and auc > AUC_FLOOR and enough_trades
         metrics = _finite_metrics(
             {
                 "auc": auc,
                 "sharpe": bt.strategy.sharpe,
                 "benchmark_sharpe": bt.benchmark.sharpe,
+                "deflated_sharpe": sig.deflated_sharpe,
+                "sharpe_pvalue": sig.p_value,
+                "n_trades": float(n_trades),
+                "n_trials": float(max(n_trials, 1)),
             }
         )
         benchmark_sharpe = bt.benchmark.sharpe
         beats_buy_hold = bool(bt.beats_buy_hold)
         notes = (
             f"per-ticker long {model_name}: Sharpe={bt.strategy.sharpe:.3f} "
-            f"vs B&H {bt.benchmark.sharpe:.3f} AUC={auc:.3f}"
+            f"vs B&H {bt.benchmark.sharpe:.3f} AUC={auc:.3f} n={n_trades}"
         )
 
     model = factory().fit(dataset.x, dataset.y, sample_weight=dataset.weight)
+    oof_proba = oof.frame["proba"].to_numpy()
+    oof_y = oof.frame["y_true"].to_numpy()
     calibrator: ProbaCalibrator | None = None
     if calibrate:
-        calibrator = fit_calibrator(oof.frame["proba"].to_numpy(), oof.frame["y_true"].to_numpy())
+        calibrator = fit_calibrator(oof_proba, oof_y)
+
+    # Per-asset decision threshold on the CALIBRATED OOF scale (the scale serving compares against),
+    # tuned to this asset's payoff ratio. None => serving keeps the global threshold.
+    oof_cal = calibrator.transform(oof_proba) if calibrator is not None else oof_proba
+    decision_threshold = optimal_decision_threshold(
+        oof_cal, oof_y, reward=label_cfg.take_profit_atr, risk=label_cfg.stop_loss_atr
+    )
 
     meta = ModelMetadata(
         name=f"{model_name}-{side}",
@@ -227,6 +277,7 @@ def train_candidate(
         metrics=metrics,
         beats_buy_hold=beats_buy_hold,
         strategy_type="long_only",
+        decision_threshold=decision_threshold,
         side=cast("Literal['long', 'short']", side),
         ticker=ticker,
         horizon_days=label_cfg.horizon_days,
@@ -245,6 +296,72 @@ def train_candidate(
         n_features=len(dataset.x.columns),
     )
     return model, meta, calibrator, candidate
+
+
+def _maybe_train_ensemble(
+    config: Config,
+    store: OhlcvStore,
+    ticker: str,
+    side: str,
+    strategy: str,
+    trained: list[_Trained],
+    *,
+    rank_key: Callable[[_Trained], float],
+    device: str | None,
+    calibrate: bool,
+    n_trials: int,
+) -> _Trained | None:
+    """Build + evaluate an :class:`AveragingEnsemble` over the top frameworks; ``None`` if N/A.
+
+    Picks the best ``ensemble_top_n`` distinct frameworks by guard metric, rebuilds each as a
+    member (its HPO params + feature subset), and trains the ensemble through ``train_candidate`` so
+    it is gated/calibrated like a single model. Needs >= 2 distinct frameworks to be worthwhile.
+    """
+    from berich.models.ensemble import AveragingEnsemble, MemberSpec  # noqa: PLC0415
+
+    top_n = max(2, config.signals.ensemble_top_n)
+    ranked = sorted(trained, key=lambda t: (t[3].beats_guard, rank_key(t)), reverse=True)
+    chosen_names: list[str] = []
+    for t in ranked:
+        name = t[3].model_name
+        if name not in chosen_names:
+            chosen_names.append(name)
+        if len(chosen_names) >= top_n:
+            break
+    if len(chosen_names) < 2:  # noqa: PLR2004 — an "ensemble" of one is just that model
+        return None
+
+    specs: list[MemberSpec] = []
+    for name in chosen_names:
+        params_m, feats_m = best_for_ticker(config, ticker, name, side, strategy)
+
+        def _mk(mn: str = name, p: dict = params_m) -> Model:
+            return _model_from_params(mn, p, device=device)
+
+        specs.append((_mk, list(feats_m) if feats_m is not None else []))
+
+    def _ens_factory() -> Model:
+        return AveragingEnsemble(specs)
+
+    try:
+        return train_candidate(
+            config,
+            store,
+            ticker,
+            side,
+            "ensemble",
+            strategy=strategy,
+            device=device,
+            calibrate=calibrate,
+            n_trials=n_trials,
+            factory_override=_ens_factory,
+            framework_override="ensemble",
+        )
+    except Exception:  # noqa: BLE001 — a failed ensemble must not abort the tournament
+        logger.warning(
+            "ensemble candidate failed for %s/%s/%s", ticker, side, strategy, exc_info=True
+        )
+        return None
 
 
 def _write_status(config: Config, result: TournamentResult, *, stamp: str) -> None:
@@ -331,6 +448,13 @@ def _run_tournament(  # noqa: C901 — linear train/gate/promote flow, clearer i
     if len(probe) < MIN_LABELED_ROWS:
         return _skip(f"only {len(probe)} labeled rows (< {MIN_LABELED_ROWS})")
 
+    # The served winner is the best of every HPO trial across all the tournament's frameworks for
+    # this (ticker, side, strategy). Feeding that total into the Deflated Sharpe corrects the gate
+    # for the size of the search (anti data-mining). Floored at the framework count so a model
+    # trained on defaults (no study) still counts as one trial per framework.
+    search_trials = sum(ticker_trial_count(config, ticker, m, side, strategy) for m in model_names)
+    n_trials = max(search_trials, len(model_names))
+
     trained: list[tuple[Model, ModelMetadata, ProbaCalibrator | None, CandidateResult]] = []
     for model_name in model_names:
         try:
@@ -344,6 +468,7 @@ def _run_tournament(  # noqa: C901 — linear train/gate/promote flow, clearer i
                     strategy=strategy,
                     device=device,
                     calibrate=calibrate,
+                    n_trials=n_trials,
                 )
             )
         except Exception:  # noqa: BLE001 — one bad framework must not abort the tournament
@@ -367,6 +492,25 @@ def _run_tournament(  # noqa: C901 — linear train/gate/promote flow, clearer i
     ) -> float:
         meta = entry[1]
         return meta.metrics.get("deflated_sharpe" if side == "short" else "sharpe", 0.0)
+
+    # Serve-time ensemble (Phase 3.1): blend the top frameworks into one averaging candidate that
+    # competes for the winner slot under the same gate. Off unless ``ensemble_serving`` is set.
+    if config.signals.ensemble_serving:
+        ens = _maybe_train_ensemble(
+            config,
+            store,
+            ticker,
+            side,
+            strategy,
+            trained,
+            rank_key=_rank_key,
+            device=device,
+            calibrate=calibrate,
+            n_trials=n_trials,
+        )
+        if ens is not None:
+            trained.append(ens)
+            candidates.append(ens[3])
 
     passers = [t for t in trained if t[3].beats_guard]
     if passers:

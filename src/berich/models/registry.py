@@ -41,6 +41,13 @@ ACTIVE_POINTER = "active.json"
 MIN_DEFLATED_SHARPE = 0.95
 MAX_SHARPE_PVALUE = 0.05
 
+# A handful of lucky trades can post any Sharpe / beat any benchmark by chance. Below this many
+# closed OOS trades the walk-forward verdict is noise, so the gate refuses to promote regardless
+# of side — the honest "not enough evidence" outcome. ``n_trades`` is written by the tournament
+# from the backtest; legacy artifacts that predate the metric read 0.0 and so fail this floor
+# (correct: their evidence was never recorded).
+MIN_TRADES = 20
+
 
 class ModelMetadata(BaseModel):
     """Everything needed to serve and audit a saved model."""
@@ -69,6 +76,11 @@ class ModelMetadata(BaseModel):
     # (TP cap + ratcheting stop). Audit-only — the promotion gate is exit-strategy-agnostic (it
     # judges the resulting returns). Defaults to "fixed" so pre-existing artifacts are unchanged.
     exit_strategy: str = "fixed"
+    # Per-asset decision threshold on the CALIBRATED win probability, chosen at training to
+    # maximize OOS risk-adjusted expectancy for this (ticker, side). ``None`` => serve falls back
+    # to the global ``signals.buy_threshold`` / ``short_threshold``. Defaults to None so every
+    # pre-existing artifact keeps using the global threshold.
+    decision_threshold: float | None = None
     notes: str = ""
 
 
@@ -125,6 +137,14 @@ def list_models(registry_dir: Path) -> list[ModelMetadata]:
     return sorted(metas, key=lambda m: m.created_at, reverse=True)
 
 
+def _trade_count_failure(meta: ModelMetadata) -> str | None:
+    """Reject a model whose OOS trade count is too thin to trust (applies to every side)."""
+    n_trades = meta.metrics.get("n_trades", 0.0)
+    if n_trades < MIN_TRADES:
+        return f"only {n_trades:.0f} OOS trades (< {MIN_TRADES})"
+    return None
+
+
 def _significance_failure(meta: ModelMetadata) -> str | None:
     """Positive, statistically significant Sharpe gate (no buy-&-hold benchmark)."""
     sharpe = meta.metrics.get("sharpe", 0.0)
@@ -142,11 +162,15 @@ def _significance_failure(meta: ModelMetadata) -> str | None:
 def _gate_failure(meta: ModelMetadata) -> str | None:
     """Reason a model fails its promotion gate, or ``None`` if it passes.
 
+    - **every side** first clears a minimum OOS trade count (a few lucky trades prove nothing).
     - ``side="short"``: a directional short has no buy-&-hold benchmark, so its bar is a
       positive, significant Sharpe vs cash (same significance test as market-neutral).
     - ``long_only`` (long side): the historical rule — it must beat buy & hold.
     - ``market_neutral``: positive, significant Sharpe.
     """
+    thin = _trade_count_failure(meta)
+    if thin is not None:
+        return thin
     if meta.side == "short":
         return _significance_failure(meta)
     if meta.strategy_type == "long_only":
@@ -154,6 +178,26 @@ def _gate_failure(meta: ModelMetadata) -> str | None:
             return "it does not beat buy & hold"
         return None
     return _significance_failure(meta)
+
+
+def model_tier(meta: ModelMetadata, *, promoted: bool) -> str:
+    """Three-way trust tier used by serving and the paper book.
+
+    - ``"promoted"``: cleared the hardened guard (has an ``active.json``); the real-capital book
+      trades it.
+    - ``"observe"``: missed the guard but still shows a positive OOS Sharpe on enough trades — a
+      near-miss worth tracking live in a paper-only shadow book (no capital), so we keep collecting
+      forward evidence instead of discarding it.
+    - ``"advisory"``: not enough evidence (thin trades or non-positive Sharpe). Shown for inspection
+      only; never paper-traded.
+
+    Keeps the honest design: the real book only ever follows ``promoted`` models.
+    """
+    if promoted:
+        return "promoted"
+    if _trade_count_failure(meta) is None and meta.metrics.get("sharpe", 0.0) > 0:
+        return "observe"
+    return "advisory"
 
 
 def promote(name: str, *, registry_dir: Path, force: bool = False) -> ModelMetadata:
@@ -170,6 +214,21 @@ def promote(name: str, *, registry_dir: Path, force: bool = False) -> ModelMetad
         raise ValueError(msg)
     (registry_dir / ACTIVE_POINTER).write_text(json.dumps({"name": name}), encoding="utf-8")
     return meta
+
+
+def demote(registry_dir: Path) -> bool:
+    """Remove the active pointer so the asset is no longer promoted; return whether one existed.
+
+    The artifact stays on disk, so serving falls back to it as an *observe*/advisory candidate
+    (see :func:`load_best` / :func:`model_tier`) — demotion only revokes real-capital trust, it
+    never deletes a model. Used by the sweep-level FDR reconciliation to walk back promotions that
+    don't survive multiple-testing control.
+    """
+    pointer = registry_dir / ACTIVE_POINTER
+    if not pointer.exists():
+        return False
+    pointer.unlink()
+    return True
 
 
 def load_active(registry_dir: Path) -> tuple[Model, ModelMetadata] | None:

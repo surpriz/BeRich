@@ -612,7 +612,18 @@ def ticker_initial_sweep_job(config: Config) -> dict[str, int]:
                     )
                     failed += 1
     os.close(lock)
-    summary = {"swept": swept, "promoted": promoted, "failed": failed}
+    # Sweep-level multiple-testing control: walk back promotions that don't survive FDR across the
+    # whole batch (each tournament only corrected for its own search). Demoted models fall back to
+    # the observe tier, so nothing is lost — only real-capital trust is revoked.
+    from berich.training.promotion import reconcile_sweep_fdr  # noqa: PLC0415
+
+    fdr_demoted = reconcile_sweep_fdr(config)["demoted"]
+    summary = {
+        "swept": swept,
+        "promoted": promoted,
+        "failed": failed,
+        "fdr_demoted": fdr_demoted if isinstance(fdr_demoted, int) else 0,
+    }
     logger.info("ticker_initial_sweep: %s", summary)
     return summary
 
@@ -666,3 +677,72 @@ def check_drift_job(config: Config) -> DriftReport:
         report.should_retrain,
     )
     return report
+
+
+def ticker_drift_monitor_job(config: Config) -> dict[str, object]:
+    """Per-asset feature-drift watch over the optimized universe; alert on drifted promoted models.
+
+    For each optimized ticker, compares its recent feature window to the training-era distribution
+    (PSI + KS). When a promoted asset's inputs have shifted enough to recommend a retrain, it's
+    collected and an alert email is sent so a human can decide. This never silently changes serving
+    — the honest, no-surprise action is to flag, not to demote behind your back.
+    """
+    from berich.features.build import build_features, market_reference_for  # noqa: PLC0415
+    from berich.models import load_active  # noqa: PLC0415
+    from berich.monitoring import feature_drift, split_reference_recent  # noqa: PLC0415
+    from berich.signals.service import _optimized_tickers  # noqa: PLC0415
+
+    store = OhlcvStore(config.ohlcv_dir)
+    scanned = 0
+    drifted: list[tuple[str, float]] = []
+    for ticker in _optimized_tickers(config):
+        df = store.load(ticker)
+        if df is None or df.empty:
+            continue
+        # Only watch assets we'd actually trade: a promoted model on any side/strategy.
+        if not _has_promoted_model(config, ticker, load_active):
+            continue
+        market = store.load(market_reference_for(config.asset_class_for(ticker)))
+        feats = build_features(df, market=market).dropna()
+        split = split_reference_recent(feats)
+        if split is None:
+            continue
+        scanned += 1
+        reference, recent = split
+        report = feature_drift(reference, recent)
+        if report.should_retrain:
+            drifted.append((ticker, report.share_drifted))
+
+    if drifted:
+        _alert_drifted_assets(drifted)
+    summary: dict[str, object] = {
+        "scanned": scanned,
+        "drifted": len(drifted),
+        "tickers": [t for t, _ in drifted],
+    }
+    logger.info("ticker_drift_monitor: %s", summary)
+    return summary
+
+
+def _has_promoted_model(config: Config, ticker: str, load_active) -> bool:  # noqa: ANN001
+    """True if any (side, strategy) for ``ticker`` has a promoted (active) model."""
+    for side in config.zoo.ticker_sides:
+        for strategy in config.zoo.ticker_exit_strategies:
+            if load_active(config.model_dir_for_ticker(ticker, side, strategy)) is not None:
+                return True
+    return False
+
+
+def _alert_drifted_assets(drifted: list[tuple[str, float]]) -> None:
+    """Best-effort email listing promoted assets whose inputs have drifted (retrain candidates)."""
+    from berich.notifications.email import send_alert_email  # noqa: PLC0415
+
+    lines = "\n".join(f"  {tkr}: {share * 100:.0f}% of features drifted" for tkr, share in drifted)
+    send_alert_email(
+        subject=f"[BeRich] {len(drifted)} promoted asset(s) drifting — retrain recommended",
+        body=(
+            "Feature drift exceeded the retrain threshold on these promoted assets. Their served "
+            "models were trained on a different distribution; consider re-running their tournament:"
+            f"\n\n{lines}\n"
+        ),
+    )

@@ -47,6 +47,9 @@ type State = {
 export default function Dashboard() {
   const [s, setS] = useState<State>({});
   const [activeUniverse, setActiveUniverse] = useState<AssetClass>("us_stocks");
+  // Which paper book the panel shows: the committed-capital book (promoted models) or the
+  // observation shadow book (near-miss models tracked live without capital).
+  const [paperTier, setPaperTier] = useState<"promoted" | "observe">("promoted");
   const t = useTranslate();
   const { level } = useLevel();
   const { strategy } = useStrategy();
@@ -71,9 +74,9 @@ export default function Dashboard() {
           api.signals(),
           api.drift(),
           api.backtest(),
-          api.paperEquity(strategy),
-          api.paperPositions(strategy),
-          api.paperClosed(25, strategy),
+          api.paperEquity(strategy, paperTier),
+          api.paperPositions(strategy, paperTier),
+          api.paperClosed(25, strategy, paperTier),
           api.paperCalibration(),
           api.universes().catch(() => undefined),
           api.longshortBasket().catch(() => [] as LongShortLeg[]),
@@ -101,7 +104,7 @@ export default function Dashboard() {
     return () => {
       alive = false;
     };
-  }, [strategy]);
+  }, [strategy, paperTier]);
 
   const filtered = useMemo(() => {
     if (!s.signals) return undefined;
@@ -185,6 +188,8 @@ export default function Dashboard() {
                 positions={s.paperPositions.positions}
                 closed={s.paperClosed}
                 cfg={s.cfg}
+                tier={paperTier}
+                onTierChange={setPaperTier}
               />
             ) : (
               <Skeleton h={600} />

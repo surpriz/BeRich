@@ -32,7 +32,7 @@ from berich.features.microstructure import MICRO_FEATURE_COLUMNS
 from berich.features.news_features import NEWS_FEATURE_COLUMNS
 from berich.features.volatility import forecast_vol
 from berich.labeling.triple_barrier import LabelConfig, adaptive_barriers
-from berich.models import LGBMModel, load_active, load_best
+from berich.models import LGBMModel, load_active, load_best, model_tier
 from berich.models.meta_labeler import PRIMARY_PROBA_COL
 from berich.signals.calibration import ProbaCalibrator, load_calibrator
 
@@ -93,6 +93,10 @@ class Signal:
     # True when the acted side's per-asset model passed the guard (promoted); False = advisory
     # (served from the asset's own optimized-but-unpromoted candidate, never a generic fallback).
     promoted: bool = False
+    # Trust tier of the acted side: "promoted" (real paper book), "observe" (paper-only shadow
+    # book — a near-miss tracked live without capital), or "advisory" (inspection only). Mirrors
+    # ``promoted`` (promoted == (tier == "promoted")) but distinguishes observe from advisory.
+    tier: str = "advisory"
     # Expected return of the trade as a fraction of entry, from the triple-barrier expectancy:
     # P(win)*reward - (1-P(win))*risk. GROSS is the model's raw edge; NET subtracts the default
     # round-trip cost (config.signals.cost_bps_roundtrip). The UI can recompute net for any
@@ -119,24 +123,37 @@ def _classify(proba: float, config: Config) -> str:
 
 
 def _decide(
-    p_long: float | None, p_short: float | None, config: Config
+    p_long: float | None,
+    p_short: float | None,
+    config: Config,
+    *,
+    long_threshold: float | None = None,
+    short_threshold: float | None = None,
+    threshold_bump: float = 0.0,
 ) -> tuple[str, Literal["long", "short"]]:
     """Pick LONG / SHORT / NEUTRAL from the two calibrated win probabilities.
 
     Returns ``(signal, direction)``. With symmetric 2:1 barriers on both sides the
     expectancy ordering equals the probability ordering, so comparing probabilities is
-    the expectancy comparison. ``None`` means that side has no eligible model.
+    the expectancy comparison. ``None`` (proba) means that side has no eligible model.
+    ``long_threshold`` / ``short_threshold`` are the per-asset entry bars; ``None`` falls back to
+    the global ``signals.buy_threshold`` / ``short_threshold``. ``threshold_bump`` (>= 0) raises
+    BOTH bars — the volatility-regime conditioning makes entries stricter when the tape is wild.
     """
     sig = config.signals
+    long_base = long_threshold if long_threshold is not None else sig.buy_threshold
+    short_base = short_threshold if short_threshold is not None else sig.short_threshold
+    long_bar = long_base + threshold_bump
+    short_bar = short_base + threshold_bump
     long_ok = (
         p_long is not None
-        and p_long >= sig.buy_threshold
+        and p_long >= long_bar
         and (p_short is None or p_long >= p_short)  # tie favors long (deterministic)
     )
     short_ok = (
         sig.enable_short
         and p_short is not None
-        and p_short >= sig.short_threshold
+        and p_short >= short_bar
         and (p_long is None or p_short > p_long)
     )
     if long_ok:
@@ -144,6 +161,27 @@ def _decide(
     if short_ok:
         return SHORT, "short"
     return NEUTRAL, "long"
+
+
+def _regime_threshold_bump(close: pd.Series, as_of: pd.Timestamp, config: Config) -> float:
+    """Decision-threshold bump from the asset's own volatility regime (causal, conditioning only).
+
+    Returns ``regime_threshold_bump`` when the latest 20-day realized vol sits at/above the
+    ``regime_high_vol_quantile`` of its trailing ``regime_lookback_days`` history (a high-vol
+    regime → be more selective), else 0.0. NOT a predictive feature — it only tightens the entry
+    bar. Degenerate / too-short history returns 0.0 (no information, don't penalize).
+    """
+    sig = config.signals
+    if not sig.regime_conditioning:
+        return 0.0
+    hist = close.loc[:as_of]
+    rvol = np.log(hist / hist.shift(1)).rolling(20).std()
+    window = rvol.tail(sig.regime_lookback_days).dropna()
+    if len(window) < 20:  # noqa: PLR2004 — need at least a month of rvol to rank a regime
+        return 0.0
+    current = float(window.iloc[-1])
+    cutoff = float(window.quantile(sig.regime_high_vol_quantile))
+    return sig.regime_threshold_bump if current >= cutoff else 0.0
 
 
 def _price_decimals(price: float) -> int:
@@ -234,6 +272,11 @@ class _SideModel:
     promoted: bool
     horizon_days: int
     exit_strategy: str = "fixed"
+    # Trust tier of this served model: "promoted" (real book), "observe" (paper-only shadow book,
+    # near-miss worth tracking), or "advisory" (inspection only). See registry.model_tier.
+    tier: str = "advisory"
+    # Per-asset decision threshold on the calibrated win prob; None => use the global threshold.
+    decision_threshold: float | None = None
 
 
 def _select_strategy(config: Config, ticker: str, side: str) -> str | None:
@@ -297,6 +340,8 @@ def _ticker_side_model_for(
         promoted,
         meta.horizon_days,
         exit_strategy=meta.exit_strategy,
+        tier=model_tier(meta, promoted=promoted),
+        decision_threshold=meta.decision_threshold,
     )
 
 
@@ -398,6 +443,10 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
                 short_calibrator=per_short.calibrator if per_short else None,
                 long_promoted=per_long.promoted,
                 short_promoted=per_short.promoted if per_short else False,
+                long_tier=per_long.tier,
+                short_tier=per_short.tier if per_short else "advisory",
+                long_threshold=per_long.decision_threshold,
+                short_threshold=per_short.decision_threshold if per_short else None,
                 horizon_days=per_long.horizon_days,
                 long_exit_strategy=per_long.exit_strategy,
                 short_exit_strategy=per_short.exit_strategy if per_short else strategy,
@@ -435,6 +484,10 @@ def _signal_for_ticker(  # noqa: C901, PLR0912, PLR0915
     short_calibrator: ProbaCalibrator | None = None,
     long_promoted: bool = False,
     short_promoted: bool = False,
+    long_tier: str = "advisory",
+    short_tier: str = "advisory",
+    long_threshold: float | None = None,
+    short_threshold: float | None = None,
     horizon_days: int | None = None,
     long_exit_strategy: str = "fixed",
     short_exit_strategy: str = "fixed",
@@ -485,7 +538,14 @@ def _signal_for_ticker(  # noqa: C901, PLR0912, PLR0915
     if np.isnan(a):
         return None
 
-    decision, direction = _decide(p_long, p_short, config)
+    decision, direction = _decide(
+        p_long,
+        p_short,
+        config,
+        long_threshold=long_threshold,
+        short_threshold=short_threshold,
+        threshold_bump=_regime_threshold_bump(df["close"], last_date, config),
+    )
     acted_strategy = short_exit_strategy if direction == "short" else long_exit_strategy
 
     q10 = q50 = q90 = None
@@ -552,6 +612,7 @@ def _signal_for_ticker(  # noqa: C901, PLR0912, PLR0915
     acted_cal = p_short if decision == SHORT and p_short is not None else p_long
     acted_used_cal = (short_calibrator if decision == SHORT else calibrator) is not None
     acted_promoted = short_promoted if decision == SHORT else long_promoted
+    acted_tier = short_tier if decision == SHORT else long_tier
 
     # Expected return (gross/net) on the acted side; None for NEUTRAL (no trade taken).
     exp_gross: float | None = None
@@ -588,6 +649,7 @@ def _signal_for_ticker(  # noqa: C901, PLR0912, PLR0915
             label_cfg.trailing_activation_atr if acted_strategy != "fixed" else None
         ),
         promoted=acted_promoted,
+        tier=acted_tier,
         exp_return_gross=None if exp_gross is None else round(exp_gross, 5),
         exp_return_net=None if exp_net is None else round(exp_net, 5),
         cost_bps_roundtrip=None if exp_gross is None else cost_bps,

@@ -113,15 +113,25 @@ def test_tournament_promotes_when_candidate_passes(tmp_path, monkeypatch):
     # OOF probabilities depend on the global RNG state and so vary by test order). This isolates
     # the tournament's promote-the-winner logic from candidate-training nondeterminism.
     def _passing(
-        config, store, ticker, side, model_name, *, strategy="fixed", device=None, calibrate=True
+        config,
+        store,
+        ticker,
+        side,
+        model_name,
+        *,
+        strategy="fixed",
+        device=None,
+        calibrate=True,
+        n_trials=1,
     ):
-        del config, store, device, calibrate  # stubbed: only side/model_name/strategy are used
+        # stubbed: only side/model_name/strategy are used
+        del config, store, device, calibrate, n_trials
         model = LGBMModel().fit(pd.DataFrame({"f": [0.0, 1.0, 0.0, 1.0]}), pd.Series([0, 1, 0, 1]))
         meta = ModelMetadata(
             name=f"{model_name}-{side}",
             framework="lightgbm",
             feature_columns=["f"],
-            metrics={"auc": 0.6, "sharpe": 1.5, "benchmark_sharpe": 0.2},
+            metrics={"auc": 0.6, "sharpe": 1.5, "benchmark_sharpe": 0.2, "n_trades": 30.0},
             beats_buy_hold=True,
             strategy_type="long_only",
             side=side,

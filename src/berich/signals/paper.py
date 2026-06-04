@@ -32,6 +32,7 @@ from berich.features.indicators import atr
 from berich.labeling.triple_barrier import LabelConfig as _LabelConfig
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from berich.config import Config
@@ -111,6 +112,7 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     pnl_pct       DOUBLE,
     pnl_eur       DOUBLE,
     exit_strategy VARCHAR NOT NULL DEFAULT 'fixed',
+    tier          VARCHAR NOT NULL DEFAULT 'promoted',
     created_at    TIMESTAMP DEFAULT now(),
     updated_at    TIMESTAMP DEFAULT now(),
     PRIMARY KEY (date_open, ticker, exit_strategy)
@@ -134,6 +136,17 @@ _MIGRATION_EXIT_STRATEGY_COLUMN = (
     "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS exit_strategy VARCHAR DEFAULT 'fixed';"
 )
 
+# Trust tier of the trade: "promoted" trades make up the committed-capital book; "observe" trades
+# are a paper-only shadow book (no capital engaged) tracking near-miss models live. A safe no-op on
+# fresh tables; the default keeps every legacy row in the committed book (all prior trades were
+# promoted-only).
+_MIGRATION_TIER_COLUMN = (
+    "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS tier VARCHAR DEFAULT 'promoted';"
+)
+
+PROMOTED_TIER = "promoted"
+OBSERVE_TIER = "observe"
+
 _TRADE_COLUMNS = (
     "date_open",
     "ticker",
@@ -148,6 +161,7 @@ _TRADE_COLUMNS = (
     "pnl_pct",
     "pnl_eur",
     "exit_strategy",
+    "tier",
 )
 
 
@@ -168,6 +182,7 @@ def _upgrade_paper_pk(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(_SCHEMA)
     con.execute(_MIGRATION_SOURCE_COLUMN)
     con.execute(_MIGRATION_EXIT_STRATEGY_COLUMN)
+    con.execute(_MIGRATION_TIER_COLUMN)
     new_cols = {r[0] for r in con.execute("DESCRIBE paper_trades").fetchall()}
     common = ", ".join(c for c in old_cols if c in new_cols)
     con.execute(
@@ -233,36 +248,51 @@ class PaperStore:
             con.execute(_SCHEMA)
             con.execute(_MIGRATION_SOURCE_COLUMN)
             con.execute(_MIGRATION_EXIT_STRATEGY_COLUMN)
+            con.execute(_MIGRATION_TIER_COLUMN)
             _upgrade_paper_pk(con)
 
     def _connect(self) -> duckdb.DuckDBPyConnection:
         return duckdb.connect(str(self.db_path))
 
-    def all_trades(self, exit_strategy: str | None = None) -> pd.DataFrame:
+    def all_trades(
+        self, exit_strategy: str | None = None, *, tier: str | None = None
+    ) -> pd.DataFrame:
         sql = "SELECT * FROM paper_trades"
+        clauses: list[str] = []
         params: list[object] = []
         if exit_strategy is not None:
-            sql += " WHERE exit_strategy = ?"
+            clauses.append("exit_strategy = ?")
             params.append(exit_strategy)
+        if tier is not None:
+            clauses.append("tier = ?")
+            params.append(tier)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY date_open, ticker"
         with self._connect() as con:
             return con.execute(sql, params).df()
 
-    def open_trades(self) -> pd.DataFrame:
+    def open_trades(self, *, tier: str | None = None) -> pd.DataFrame:
+        sql = "SELECT * FROM paper_trades WHERE status = ?"
+        params: list[object] = [OPEN]
+        if tier is not None:
+            sql += " AND tier = ?"
+            params.append(tier)
+        sql += " ORDER BY date_open, ticker"
         with self._connect() as con:
-            return con.execute(
-                "SELECT * FROM paper_trades WHERE status = ? ORDER BY date_open, ticker",
-                [OPEN],
-            ).df()
+            return con.execute(sql, params).df()
 
     def closed_trades(
-        self, limit: int | None = None, exit_strategy: str | None = None
+        self, limit: int | None = None, exit_strategy: str | None = None, *, tier: str | None = None
     ) -> pd.DataFrame:
         query = "SELECT * FROM paper_trades WHERE status <> ?"
         params: list[object] = [OPEN]
         if exit_strategy is not None:
             query += " AND exit_strategy = ?"
             params.append(exit_strategy)
+        if tier is not None:
+            query += " AND tier = ?"
+            params.append(tier)
         query += " ORDER BY date_close DESC, ticker"
         if limit is not None:
             query += f" LIMIT {int(limit)}"
@@ -286,6 +316,8 @@ class PaperStore:
         # exit_strategy is part of the PK and NOT NULL — coerce missing/NaN to the fixed default
         # so legacy callers that don't set it still open a (fixed-book) trade.
         rows["exit_strategy"] = rows["exit_strategy"].fillna("fixed")
+        # tier is NOT NULL — a caller that doesn't set it opens into the committed (promoted) book.
+        rows["tier"] = rows["tier"].fillna(PROMOTED_TIER)
         # _TRADE_COLUMNS is a module-level constant of identifier strings, never user
         # input — safe to interpolate into SQL.
         cols_csv = ", ".join(_TRADE_COLUMNS)
@@ -564,22 +596,33 @@ def _apply_exposure_caps(
     capital: float,
     max_ticker_pct: float,
     max_book_pct: float,
+    max_class_pct: float = 1.0,
+    class_of: Callable[[str], str] | None = None,
 ) -> pd.DataFrame:
     """Scale down / drop candidate trades so open notional stays within the exposure budget.
 
     Pyramiding is allowed, but bounded: exposure is measured at cost basis (``entry * shares``)
-    and capped both per name (``capital * max_ticker_pct``) and across the whole book
-    (``capital * max_book_pct``). Caps are enforced PER exit-strategy book — each book gets its
-    own budget, consumed first by already-open trades, then by new candidates in row order. A
-    candidate that breaches a cap is shrunk to the remaining budget; one that can't fit a single
-    share is dropped. Returns the surviving rows with ``size_shares`` adjusted.
+    and capped per name (``capital * max_ticker_pct``), across the whole book
+    (``capital * max_book_pct``), and — when ``class_of`` is given — per asset class
+    (``capital * max_class_pct``), so the book can't pile into one correlated bucket (e.g. several
+    USD pairs, or all tech) when many signals fire at once. Caps are enforced PER exit-strategy
+    book — each book gets its own budget, consumed first by already-open trades, then by new
+    candidates in row order. A candidate that breaches a cap is shrunk to the remaining budget; one
+    that can't fit a single share is dropped. Returns the surviving rows with ``size_shares``
+    adjusted.
     """
     if rows.empty:
         return rows
     cap_ticker = capital * max_ticker_pct
     cap_book = capital * max_book_pct
+    cap_class = capital * max_class_pct
     book_used: dict[str, float] = {}
     ticker_used: dict[tuple[str, str], float] = {}
+    class_used: dict[tuple[str, str], float] = {}
+
+    def _cls(ticker: str) -> str:
+        return class_of(ticker) if class_of is not None else ""
+
     if not open_df.empty:
         has_strat = "exit_strategy" in open_df.columns
         for _, orow in open_df.iterrows():
@@ -592,12 +635,14 @@ def _apply_exposure_caps(
             notional = float(orow["entry"]) * float(orow["size_shares"])
             ticker_used[(strat, tkr)] = ticker_used.get((strat, tkr), 0.0) + notional
             book_used[strat] = book_used.get(strat, 0.0) + notional
+            class_used[(strat, _cls(tkr))] = class_used.get((strat, _cls(tkr)), 0.0) + notional
 
     kept_idx: list[object] = []
     new_shares: list[int] = []
     for idx, row in rows.iterrows():
         strat = str(row["exit_strategy"]) if pd.notna(row.get("exit_strategy")) else "fixed"
         tkr = str(row["ticker"])
+        cls = _cls(tkr)
         entry = float(row["entry"])
         want = int(row["size_shares"])
         if entry <= 0 or want <= 0:
@@ -606,6 +651,7 @@ def _apply_exposure_caps(
             want * entry,
             cap_ticker - ticker_used.get((strat, tkr), 0.0),
             cap_book - book_used.get(strat, 0.0),
+            cap_class - class_used.get((strat, cls), 0.0),
         )
         fit = min(want, math.floor(budget / entry)) if budget > 0 else 0
         if fit <= 0:
@@ -613,6 +659,7 @@ def _apply_exposure_caps(
         added = fit * entry
         ticker_used[(strat, tkr)] = ticker_used.get((strat, tkr), 0.0) + added
         book_used[strat] = book_used.get(strat, 0.0) + added
+        class_used[(strat, cls)] = class_used.get((strat, cls), 0.0) + added
         kept_idx.append(idx)
         new_shares.append(fit)
 
@@ -628,13 +675,12 @@ def open_new_trades(
 ) -> int:
     """Open a paper trade for each BUY signal on the latest signal date.
 
-    Already-open trades for the same ``(date_open, ticker)`` are left alone — this
-    is the idempotency guarantee that makes the scheduler safe to re-run. Candidates
-    are then passed through ``_apply_exposure_caps`` so pyramiding stays within the
-    per-name and total-book exposure budgets (a breaching candidate is scaled down,
-    or dropped when no budget remains).
+    Already-open trades for the same ``(date_open, ticker)`` are left alone — this is the
+    idempotency guarantee that makes the scheduler safe to re-run. Candidates pass through the
+    money-management guardrails before opening: a graduated drawdown kill-switch and a
+    max-concurrent-positions cap on the committed book (Phase 2 — protect real capital), then
+    ``_apply_exposure_caps`` (per-name, per-book and per-asset-class concentration limits).
     """
-    del store  # OhlcvStore not needed at open time; entry came from the signal
     latest = signal_store.latest()
     if latest.empty:
         return 0
@@ -643,47 +689,149 @@ def open_new_trades(
     # emitted are already mirrored for shorts (stop above entry, target below).
     actionable = latest[latest["signal"].isin([*LONG_OPEN, *SHORT_OPEN])]
     actionable = actionable[actionable["size_shares"] > 0]
-    # Only paper-trade PROMOTED assets — those whose per-asset model cleared the guard. The
-    # book must measure the validated strategy, not advisory (optimized-but-unproven) signals.
-    # Legacy rows predating the column have promoted=NULL; treat missing as not-promoted.
-    if "promoted" in actionable.columns:
-        actionable = actionable[actionable["promoted"].fillna(value=False).astype(bool)]
-    else:
-        actionable = actionable.iloc[0:0]  # no column yet => nothing known-promoted => open nothing
     if actionable.empty:
         return 0
-    exit_strategy = (
-        actionable["exit_strategy"].fillna("fixed")
-        if "exit_strategy" in actionable.columns
-        else "fixed"
-    )
-    rows = pd.DataFrame(
-        {
-            "date_open": actionable["date"],
-            "ticker": actionable["ticker"],
-            "signal": actionable["signal"],
-            "entry": actionable["entry"],
-            "stop": actionable["stop_loss"],
-            "target": actionable["take_profit"],
-            "size_shares": actionable["size_shares"],
-            "status": OPEN,
-            "exit_strategy": exit_strategy,
-        }
-    )
+
+    sig = config.signals
+    # Route by trust tier into two independent books, each with its OWN capital budget:
+    #   - committed book: PROMOTED models (cleared the guard) — this is the real-capital track.
+    #   - observation book: OBSERVE models (near-miss, paper-only) — tracks forward evidence with
+    #     NO capital engaged, so it never competes with or pollutes the committed book.
+    # Advisory rows are never opened. ``tier`` is authoritative; we fall back to the legacy
+    # ``promoted`` flag for rows written before the tier column existed.
+    tier = _signal_tiers(actionable)
     paper = PaperStore(config.db_path)
-    rows = _apply_exposure_caps(
-        rows,
-        paper.open_trades(),
-        capital=float(config.signals.capital),
-        max_ticker_pct=float(config.signals.max_ticker_exposure_pct),
-        max_book_pct=float(config.signals.max_book_exposure_pct),
-    )
-    if rows.empty:
-        logger.info("paper.open_new_trades: all candidates capped out by exposure limits")
-        return 0
-    opened = paper.insert_new(rows)
+    opened = 0
+    for book_tier in (PROMOTED_TIER, OBSERVE_TIER):
+        book = actionable[tier == book_tier]
+        if book.empty:
+            continue
+        rows = _candidate_rows(book, book_tier)
+        # The drawdown kill-switch and position cap protect REAL capital, so they apply to the
+        # committed book only; the observation book just tracks forward evidence.
+        if book_tier == PROMOTED_TIER:
+            rows = _derisk_for_drawdown(rows, config, store)
+            rows = _cap_open_positions(
+                rows, paper.open_trades(tier=book_tier), sig.max_open_positions
+            )
+            if rows.empty:
+                continue
+        rows = _apply_exposure_caps(
+            rows,
+            paper.open_trades(tier=book_tier),
+            capital=float(sig.capital),
+            max_ticker_pct=float(sig.max_ticker_exposure_pct),
+            max_book_pct=float(sig.max_book_exposure_pct),
+            max_class_pct=float(sig.max_class_exposure_pct),
+            class_of=config.asset_class_for,
+        )
+        if rows.empty:
+            continue
+        opened += paper.insert_new(rows)
     logger.info("paper.open_new_trades: %d new trades opened", opened)
     return opened
+
+
+def _committed_drawdown(config: Config, store: OhlcvStore) -> float:
+    """Current peak-to-now drawdown (>= 0) of the committed paper book, 0.0 with no history."""
+    eq = get_equity_curve(config, store, tier=PROMOTED_TIER)
+    if eq.empty:
+        return 0.0
+    series = pd.Series(eq["equity_paper"].to_numpy(), dtype=float).dropna()
+    if series.empty:
+        return 0.0
+    peak = float(series.cummax().iloc[-1])
+    current = float(series.iloc[-1])
+    if peak <= 0:
+        return 0.0
+    return max(0.0, 1.0 - current / peak)
+
+
+def _derisk_for_drawdown(rows: pd.DataFrame, config: Config, store: OhlcvStore) -> pd.DataFrame:
+    """Scale (or zero) candidate sizes per the graduated drawdown kill-switch on the committed book.
+
+    Full size below the de-risk threshold; ``drawdown_derisk_factor`` between de-risk and halt;
+    nothing (empty frame) at or above the halt threshold. Sizes are floored to whole shares and
+    rows that shrink below one share are dropped.
+    """
+    if rows.empty:
+        return rows
+    sig = config.signals
+    dd = _committed_drawdown(config, store)
+    if dd >= sig.drawdown_halt_threshold:
+        logger.info(
+            "paper.open_new_trades: drawdown %.1f%% >= halt — no committed trades", dd * 100
+        )
+        return rows.iloc[0:0]
+    if dd < sig.drawdown_derisk_threshold:
+        return rows
+    factor = sig.drawdown_derisk_factor
+    out = rows.copy()
+    out["size_shares"] = (out["size_shares"].astype(int) * factor).apply(math.floor).astype(int)
+    return out[out["size_shares"] > 0]
+
+
+def _cap_open_positions(rows: pd.DataFrame, open_df: pd.DataFrame, max_open: int) -> pd.DataFrame:
+    """Keep at most ``max_open`` concurrent committed positions (already-open count toward it).
+
+    ``max_open <= 0`` disables the cap. New candidates are kept in row order (highest-proba first,
+    as ``signal_store.latest`` sorts), so the strongest signals get the remaining slots.
+    """
+    if max_open <= 0 or rows.empty:
+        return rows
+    already = 0 if open_df.empty else len(open_df)
+    remaining = max_open - already
+    if remaining <= 0:
+        return rows.iloc[0:0]
+    return rows.iloc[:remaining]
+
+
+def _signal_tiers(actionable: pd.DataFrame) -> pd.Series:
+    """Route each signal row: committed (``promoted``), observation (``observe``), or dropped.
+
+    The authoritative ``promoted`` guard flag always wins — a promoted signal goes to the
+    committed book regardless of the ``tier`` hint (so the real-capital book is unchanged from
+    before). Among non-promoted rows, an explicit ``tier == "observe"`` routes to the shadow book;
+    everything else is advisory and never opened.
+    """
+    n = len(actionable)
+    index = actionable.index
+    promoted = (
+        actionable["promoted"].fillna(value=False).astype(bool)
+        if "promoted" in actionable.columns
+        else pd.Series([False] * n, index=index)
+    )
+    tier_col = (
+        actionable["tier"].fillna("")
+        if "tier" in actionable.columns
+        else pd.Series([""] * n, index=index)
+    )
+    routed = [
+        PROMOTED_TIER if p else (OBSERVE_TIER if t == OBSERVE_TIER else "advisory")
+        for p, t in zip(promoted, tier_col, strict=False)
+    ]
+    return pd.Series(routed, index=index)
+
+
+def _candidate_rows(book: pd.DataFrame, tier: str) -> pd.DataFrame:
+    """Project signal rows into the paper_trades insert shape, stamping the book ``tier``."""
+    exit_strategy = (
+        book["exit_strategy"].fillna("fixed") if "exit_strategy" in book.columns else "fixed"
+    )
+    return pd.DataFrame(
+        {
+            "date_open": book["date"],
+            "ticker": book["ticker"],
+            "signal": book["signal"],
+            "entry": book["entry"],
+            "stop": book["stop_loss"],
+            "target": book["take_profit"],
+            "size_shares": book["size_shares"],
+            "status": OPEN,
+            "exit_strategy": exit_strategy,
+            "tier": tier,
+        }
+    )
 
 
 def update_open_trades(
@@ -744,14 +892,20 @@ def update_open_trades(
 
 
 def get_open_positions(
-    config: Config, store: OhlcvStore, *, exit_strategy: str | None = None
+    config: Config,
+    store: OhlcvStore,
+    *,
+    exit_strategy: str | None = None,
+    tier: str | None = PROMOTED_TIER,
 ) -> list[OpenPosition]:
     """Return open paper trades enriched with the latest-close MTM (and live trailing stop).
 
     ``exit_strategy`` filters to one book (the dashboard toggle's selection); ``None`` = all.
+    ``tier`` selects the committed book (``"promoted"``, the default), the observation shadow book
+    (``"observe"``), or both (``None``).
     """
     paper = PaperStore(config.db_path)
-    df = paper.open_trades()
+    df = paper.open_trades(tier=tier)
     if exit_strategy is not None and "exit_strategy" in df.columns:
         df = df[df["exit_strategy"].fillna("fixed") == exit_strategy]
     cfg = _LabelConfig(**config.labeling.model_dump())
@@ -825,17 +979,22 @@ def _open_trail_stop(
 
 
 def get_equity_curve(
-    config: Config, store: OhlcvStore, *, exit_strategy: str | None = None
+    config: Config,
+    store: OhlcvStore,
+    *,
+    exit_strategy: str | None = None,
+    tier: str | None = PROMOTED_TIER,
 ) -> pd.DataFrame:
     """Build a daily paper-equity series alongside an equal-capital SPY buy & hold.
 
     Equity = ``capital + cumulative realized P&L + sum of open-trade MTM``. SPY
     benchmark is the same starting capital held in SPY from the first paper-trade
     date onward. ``exit_strategy`` restricts the book to one strategy (toggle); ``None`` = all.
-    Returns an empty frame if no paper trades have ever been opened.
+    ``tier`` selects the committed book (``"promoted"``, default), the observation shadow book
+    (``"observe"``), or both (``None``). Returns an empty frame if no such trades exist.
     """
     paper = PaperStore(config.db_path)
-    trades = paper.all_trades(exit_strategy)
+    trades = paper.all_trades(exit_strategy, tier=tier)
     if trades.empty:
         return pd.DataFrame(columns=pd.Index(["date", "equity_paper", "equity_spy"]))
 
@@ -907,16 +1066,22 @@ def get_equity_curve(
 
 
 def get_paper_metrics(
-    config: Config, store: OhlcvStore, *, exit_strategy: str | None = None
+    config: Config,
+    store: OhlcvStore,
+    *,
+    exit_strategy: str | None = None,
+    tier: str | None = PROMOTED_TIER,
 ) -> dict[str, float | int]:
     """Compact summary used by the dashboard card: returns, win rate, drawdowns, n.
 
     ``exit_strategy`` restricts the book to one strategy (the dashboard toggle); ``None`` = all.
+    ``tier`` selects the committed book (``"promoted"``, default) or the observation shadow book
+    (``"observe"``); ``None`` = both.
     """
     paper = PaperStore(config.db_path)
-    trades = paper.all_trades(exit_strategy)
+    trades = paper.all_trades(exit_strategy, tier=tier)
     capital = float(config.signals.capital)
-    equity = get_equity_curve(config, store, exit_strategy=exit_strategy)
+    equity = get_equity_curve(config, store, exit_strategy=exit_strategy, tier=tier)
 
     n_open = int((trades["status"] == OPEN).sum()) if not trades.empty else 0
     closed = trades[trades["status"].isin(CLOSED_STATUSES)] if not trades.empty else trades
@@ -958,7 +1123,9 @@ __all__ = [
     "CLOSED_TARGET",
     "CLOSED_TIME",
     "CLOSED_TRAIL",
+    "OBSERVE_TIER",
     "OPEN",
+    "PROMOTED_TIER",
     "OpenPosition",
     "PaperStore",
     "get_equity_curve",

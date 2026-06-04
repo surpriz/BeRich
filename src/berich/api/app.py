@@ -35,7 +35,7 @@ from berich.signals import (
     get_open_positions,
     get_paper_metrics,
 )
-from berich.signals.paper import PaperStore
+from berich.signals.paper import PROMOTED_TIER, PaperStore
 
 
 def _require_api_key(x_api_key: str | None = Header(default=None)) -> None:
@@ -141,6 +141,10 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
             "stop_loss_atr": config.labeling.stop_loss_atr,
             "max_ticker_exposure_pct": s.max_ticker_exposure_pct,
             "max_book_exposure_pct": s.max_book_exposure_pct,
+            "max_class_exposure_pct": s.max_class_exposure_pct,
+            "drawdown_derisk_threshold": s.drawdown_derisk_threshold,
+            "drawdown_halt_threshold": s.drawdown_halt_threshold,
+            "max_open_positions": s.max_open_positions,
         }
 
     @router.get("/universes", dependencies=guard)
@@ -191,17 +195,23 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
         return _run_cached_backtest(config_path, round(threshold, 3))
 
     @router.get("/paper/positions", dependencies=guard)
-    def paper_positions(strategy: str | None = Query(default=None)) -> dict:
-        positions = get_open_positions(config, store, exit_strategy=strategy)
+    def paper_positions(
+        strategy: str | None = Query(default=None),
+        tier: str = Query(default=PROMOTED_TIER),
+    ) -> dict:
+        positions = get_open_positions(config, store, exit_strategy=strategy, tier=tier)
         return {
             "n": len(positions),
             "positions": [p.as_row() for p in positions],
         }
 
     @router.get("/paper/equity", dependencies=guard)
-    def paper_equity(strategy: str | None = Query(default=None)) -> dict:
-        curve = get_equity_curve(config, store, exit_strategy=strategy)
-        metrics = get_paper_metrics(config, store, exit_strategy=strategy)
+    def paper_equity(
+        strategy: str | None = Query(default=None),
+        tier: str = Query(default=PROMOTED_TIER),
+    ) -> dict:
+        curve = get_equity_curve(config, store, exit_strategy=strategy, tier=tier)
+        metrics = get_paper_metrics(config, store, exit_strategy=strategy, tier=tier)
         if curve.empty:
             return {"dates": [], "equity_paper": [], "equity_spy": [], "metrics": metrics}
         return {
@@ -215,8 +225,11 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
     def paper_closed(
         limit: int = Query(default=50, ge=1, le=500),
         strategy: str | None = Query(default=None),
+        tier: str = Query(default=PROMOTED_TIER),
     ) -> list[dict]:
-        df = PaperStore(config.db_path).closed_trades(limit=limit, exit_strategy=strategy)
+        df = PaperStore(config.db_path).closed_trades(
+            limit=limit, exit_strategy=strategy, tier=tier
+        )
         if df.empty:
             return []
         df = df.copy()

@@ -53,7 +53,7 @@ def _promote_stub(tmp_path, ticker: str, side: str) -> None:
         name=f"lgbm-{side}",
         framework="lightgbm",
         feature_columns=["f"],
-        metrics={"auc": 0.6, "sharpe": 1.5, "benchmark_sharpe": 0.2},
+        metrics={"auc": 0.6, "sharpe": 1.5, "benchmark_sharpe": 0.2, "n_trades": 30.0},
         beats_buy_hold=True,
         strategy_type="long_only",
         side=side,

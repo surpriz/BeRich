@@ -23,6 +23,7 @@ from berich.scheduler.jobs import (
     nightly_hpo_job,
     refresh_signals_job,
     refresh_universe_job,
+    ticker_drift_monitor_job,
     ticker_hpo_queue_job,
     ticker_initial_sweep_job,
     ticker_nightly_refresh_job,
@@ -132,6 +133,17 @@ def build_scheduler(config: Config) -> BlockingScheduler:
         args=[config],
         id="check_drift",
         replace_existing=True,
+    )
+    # Per-asset drift watch over the optimized universe, Saturday morning — alerts on promoted
+    # models whose inputs have shifted, so a human can decide to re-run their tournament.
+    scheduler.add_job(
+        ticker_drift_monitor_job,
+        CronTrigger(day_of_week="sat", hour=8, minute=30, timezone="Europe/Paris"),
+        args=[config],
+        id="ticker_drift_monitor",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
     # Weekend HPO to rentabilize the rented GPUs — long Optuna search, Saturday midday.
     scheduler.add_job(

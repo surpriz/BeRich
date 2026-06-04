@@ -56,6 +56,42 @@ class ProbaCalibrator:
         return np.clip(np.asarray(out, dtype=float), 0.0, 1.0)
 
 
+def optimal_decision_threshold(
+    proba: np.ndarray,
+    y_true: np.ndarray,
+    *,
+    reward: float = 2.0,
+    risk: float = 1.0,
+    min_count: int = 20,
+    grid: np.ndarray | None = None,
+) -> float | None:
+    """Decision threshold on (calibrated) win prob maximizing OOS risk-adjusted expectancy.
+
+    For each candidate threshold τ, take the trades with ``proba >= τ``, estimate their win rate,
+    and score the triple-barrier expectancy ``wr*reward - (1-wr)*risk`` weighted by ``sqrt(n)`` so
+    a thin, lucky bucket can't win on edge alone. Returns the best τ, or ``None`` when no threshold
+    clears ``min_count`` (caller then keeps the global threshold). ``reward``/``risk`` are the
+    barrier ATR multiples, so the objective reflects this asset's actual payoff ratio.
+    """
+    p = np.asarray(proba, dtype=float).ravel()
+    y = np.asarray(y_true, dtype=float).ravel()
+    if grid is None:
+        grid = np.round(np.arange(0.30, 0.71, 0.01), 2)
+    best_tau: float | None = None
+    best_score = -np.inf
+    for tau in grid:
+        mask = p >= tau
+        n = int(mask.sum())
+        if n < min_count:
+            continue
+        wr = float(y[mask].mean())
+        score = (wr * reward - (1.0 - wr) * risk) * np.sqrt(n)
+        if score > best_score:
+            best_score = score
+            best_tau = float(tau)
+    return best_tau
+
+
 def fit_calibrator(
     proba: np.ndarray,
     y_true: np.ndarray,
@@ -249,5 +285,6 @@ __all__ = [
     "compute_calibration",
     "fit_calibrator",
     "load_calibrator",
+    "optimal_decision_threshold",
     "save_calibrator",
 ]

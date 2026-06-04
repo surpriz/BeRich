@@ -1,6 +1,9 @@
 import type { PaperClosedTrade, PaperEquity, PaperPosition, SignalConfig } from "@/app/lib/api";
+import { useTranslate } from "@/app/lib/i18n";
 import { PaperEquityChart } from "./PaperEquityChart";
 import { BudgetBar, RangeBar } from "./bars";
+
+type PaperTier = "promoted" | "observe";
 
 const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pct = (n: number) => `${(n * 100).toFixed(2)}%`;
@@ -26,12 +29,17 @@ export function PaperPanel({
   positions,
   closed,
   cfg,
+  tier = "promoted",
+  onTierChange,
 }: {
   equity: PaperEquity;
   positions: PaperPosition[];
   closed: PaperClosedTrade[];
   cfg?: SignalConfig;
+  tier?: PaperTier;
+  onTierChange?: (t: PaperTier) => void;
 }) {
+  const t = useTranslate();
   const m = equity.metrics;
   const paperReturn = m.total_return_paper;
   const spyReturn = m.total_return_spy;
@@ -48,9 +56,32 @@ export function PaperPanel({
     <section className="flex flex-col gap-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <h2 className="font-display text-xl font-bold">Paper trading</h2>
-        <p className="text-xs text-[var(--color-faint)]">
-          Simulation only. Same exit rule as the backtest; same disclaimers.
-        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          {onTierChange ? (
+            <div
+              className="flex overflow-hidden rounded-md border border-[var(--color-border)] text-xs"
+              title={t("paper.tier.hint")}
+            >
+              {(["promoted", "observe"] as PaperTier[]).map((tv) => (
+                <button
+                  key={tv}
+                  type="button"
+                  onClick={() => onTierChange(tv)}
+                  className={
+                    tier === tv
+                      ? "bg-[var(--color-accent)] px-3 py-1 font-semibold text-black"
+                      : "px-3 py-1 text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+                  }
+                >
+                  {tv === "promoted" ? t("paper.tier.committed") : t("paper.tier.observe")}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <p className="text-xs text-[var(--color-faint)]">
+            Simulation only. Same exit rule as the backtest; same disclaimers.
+          </p>
+        </div>
       </header>
 
       <div className="grid gap-4 lg:grid-cols-4">

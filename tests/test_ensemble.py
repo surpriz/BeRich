@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from berich.models import LGBMModel, StackingEnsemble
+from berich.models import AveragingEnsemble, LGBMModel, StackingEnsemble
 from berich.models.base import Model
 
 
@@ -44,3 +44,34 @@ def test_stacking_ensemble_learns_signal():
 def test_stacking_requires_factory():
     with pytest.raises(ValueError, match="at least one"):
         StackingEnsemble([])
+
+
+def test_averaging_ensemble_is_model_and_averages_members():
+    x, y, w, tickers = _panel()
+    # Two members on DIFFERENT feature subsets: the ensemble must slice the full frame per member.
+    ens = AveragingEnsemble(
+        [
+            (lambda: LGBMModel(n_estimators=30), ["f0", "f1"]),
+            (lambda: LGBMModel(n_estimators=30), ["f0", "f2", "f3"]),
+        ]
+    )
+    ens.fit(x, y, sample_weight=w, tickers=tickers)
+    assert isinstance(ens, Model)
+    proba = ens.predict_proba(x, tickers=tickers)
+    assert proba.shape == (len(x),)
+    assert np.all((proba >= 0) & (proba <= 1))
+    # Equals the mean of the members' own probabilities (soft vote, equal weights).
+    m0 = LGBMModel(n_estimators=30).fit(x[["f0", "f1"]], y, sample_weight=w)
+    m1 = LGBMModel(n_estimators=30).fit(x[["f0", "f2", "f3"]], y, sample_weight=w)
+    p0 = m0.predict_proba(x[["f0", "f1"]])
+    p1 = m1.predict_proba(x[["f0", "f2", "f3"]])
+    assert np.allclose(proba, 0.5 * p0 + 0.5 * p1, atol=1e-9)
+
+
+def test_averaging_ensemble_learns_signal_and_requires_member():
+    x, y, _w, _t = _panel()
+    ens = AveragingEnsemble([(lambda: LGBMModel(n_estimators=40), ["f0", "f1"])]).fit(x, y)
+    proba = ens.predict_proba(x)
+    assert proba[y == 1].mean() > proba[y == 0].mean()
+    with pytest.raises(ValueError, match="at least one"):
+        AveragingEnsemble([])

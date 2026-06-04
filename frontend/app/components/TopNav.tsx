@@ -12,6 +12,7 @@ const TABS = [
   { href: "/strategies", key: "nav.strategies" },
   { href: "/training", key: "nav.training" },
   { href: "/ops", key: "nav.ops" },
+  { href: "/changelog", key: "nav.changelog" },
   { href: "/how-it-works", key: "nav.help" },
 ];
 

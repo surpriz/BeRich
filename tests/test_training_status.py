@@ -65,7 +65,7 @@ def test_promoted_and_advisory_are_reported(tmp_path):
         name="tft-long",
         framework="tft",
         feature_columns=["a", "b", "c"],
-        metrics={"auc": 0.58, "sharpe": 0.6, "benchmark_sharpe": 0.4},
+        metrics={"auc": 0.58, "sharpe": 0.6, "benchmark_sharpe": 0.4, "n_trades": 30.0},
         beats_buy_hold=True,
         ticker="AAA",
         side="long",

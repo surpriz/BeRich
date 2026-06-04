@@ -46,7 +46,10 @@ class BacktestConfig(BaseModel):
     stop_loss_atr: float = 1.0
     fee_bps: float = 1.0  # per-side commission, basis points of notional
     slippage_bps: float = 5.0  # per-side slippage, basis points
-    volume_proportional_slippage: bool = False
+    # On by default: a flat 5 bps is optimistic for the illiquid small-caps / alt-class names in
+    # the 100-asset universe, and an over-optimistic backtest is exactly how a non-edge clears the
+    # gate. Mega-caps (median volume >= volume_ref) still pay ~5 bps; thinner names pay more.
+    volume_proportional_slippage: bool = True
     # Reference volume = SPY's long-run median (~80M shares/day historically).
     # When the per-ticker median is below this, slippage scales up.
     volume_ref: float = 80_000_000.0

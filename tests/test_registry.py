@@ -24,12 +24,12 @@ def _trained_model() -> LGBMModel:
     return LGBMModel(n_estimators=10).fit(x, y)
 
 
-def _meta(name: str, *, beats: bool) -> ModelMetadata:
+def _meta(name: str, *, beats: bool, n_trades: float = 30.0) -> ModelMetadata:
     return ModelMetadata(
         name=name,
         framework="lightgbm",
         feature_columns=["a", "b", "c"],
-        metrics={"auc": 0.6},
+        metrics={"auc": 0.6, "n_trades": n_trades},
         beats_buy_hold=beats,
     )
 
@@ -92,7 +92,12 @@ def _mn_meta(name: str, *, sharpe: float, dsr: float, pval: float) -> ModelMetad
         name=name,
         framework="lightgbm-ranker",
         feature_columns=["a", "b", "c"],
-        metrics={"sharpe": sharpe, "deflated_sharpe": dsr, "sharpe_pvalue": pval},
+        metrics={
+            "sharpe": sharpe,
+            "deflated_sharpe": dsr,
+            "sharpe_pvalue": pval,
+            "n_trades": 30.0,
+        },
         strategy_type="market_neutral",
     )
 
@@ -119,7 +124,12 @@ def _short_meta(name: str, *, sharpe: float, dsr: float, pval: float) -> ModelMe
         name=name,
         framework="lightgbm",
         feature_columns=["a", "b", "c"],
-        metrics={"sharpe": sharpe, "deflated_sharpe": dsr, "sharpe_pvalue": pval},
+        metrics={
+            "sharpe": sharpe,
+            "deflated_sharpe": dsr,
+            "sharpe_pvalue": pval,
+            "n_trades": 30.0,
+        },
         side="short",
         ticker="AAPL",
     )
@@ -154,9 +164,18 @@ def test_legacy_metadata_without_strategy_type_defaults_long_only(tmp_path):
     # Overwrite with a pre-field metadata file (no strategy_type key).
     (tmp_path / "legacy" / "metadata.json").write_text(
         '{"name": "legacy", "framework": "lightgbm", "feature_columns": ["a", "b", "c"], '
-        '"metrics": {}, "beats_buy_hold": true}',
+        '"metrics": {"n_trades": 30}, "beats_buy_hold": true}',
         encoding="utf-8",
     )
     meta = load_model("legacy", registry_dir=tmp_path)[1]
     assert meta.strategy_type == "long_only"
     promote("legacy", registry_dir=tmp_path)  # legacy long-only gate still applies
+
+
+def test_promote_refused_on_thin_trade_count(tmp_path):
+    # Even a model that beats buy & hold is refused when its OOS evidence is a handful of trades.
+    save_model(_trained_model(), _meta("thin", beats=True, n_trades=5.0), registry_dir=tmp_path)
+    with pytest.raises(ValueError, match="OOS trades"):
+        promote("thin", registry_dir=tmp_path)
+    promote("thin", registry_dir=tmp_path, force=True)  # force still overrides
+    assert load_active(tmp_path) is not None

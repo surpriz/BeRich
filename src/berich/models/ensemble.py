@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
 ModelFactory = Callable[[], "Model"]
 MetaFactory = Callable[[], object]
+# A member of an AveragingEnsemble: how to build the base model + the feature columns it consumes.
+MemberSpec = tuple[ModelFactory, list[str]]
 
 
 def _default_meta() -> object:
@@ -114,4 +116,61 @@ class StackingEnsemble:
         return np.asarray(proba[:, 1], dtype=float)
 
 
-__all__ = ["StackingEnsemble"]
+class AveragingEnsemble:
+    """Soft-vote ensemble: the (weighted) mean of its members' calibrated-scale win probabilities.
+
+    Unlike :class:`StackingEnsemble` there is no meta-learner — just an average — which is robust on
+    the thin per-asset data where a learned blender would itself overfit. Each member keeps its own
+    feature subset: ``fit``/``predict_proba`` get the full feature frame and slice it per member, so
+    members optimized on different feature groups compose without a column clash. Behaves as a
+    single :class:`~berich.models.base.Model`, so it flows through ``oof_predict`` / the backtest /
+    the promotion gate exactly like any other candidate.
+    """
+
+    def __init__(self, members: list[MemberSpec], *, weights: list[float] | None = None) -> None:
+        if not members:
+            msg = "AveragingEnsemble needs at least one member"
+            raise ValueError(msg)
+        if weights is not None and len(weights) != len(members):
+            msg = "weights must match the number of members"
+            raise ValueError(msg)
+        self.members = members
+        w = weights if weights is not None else [1.0] * len(members)
+        total = float(sum(w))
+        self.weights = [x / total for x in w] if total > 0 else [1.0 / len(w)] * len(w)
+        self._fitted: list[Model] = []
+        self._cols: list[list[str]] = []
+
+    def fit(
+        self,
+        x: pd.DataFrame,
+        y: pd.Series,
+        sample_weight: pd.Series | None = None,
+        *,
+        tickers: pd.Series | None = None,
+    ) -> AveragingEnsemble:
+        self._fitted = []
+        self._cols = []
+        for factory, cols in self.members:
+            use = [c for c in cols if c in x.columns] or list(x.columns)
+            model = factory().fit(x[use], y, sample_weight=sample_weight, tickers=tickers)
+            self._fitted.append(model)
+            self._cols.append(use)
+        return self
+
+    def predict_proba(
+        self,
+        x: pd.DataFrame,
+        *,
+        tickers: pd.Series | None = None,
+    ) -> np.ndarray:
+        if not self._fitted:
+            msg = "AveragingEnsemble must be fit before predict_proba"
+            raise RuntimeError(msg)
+        acc = np.zeros(len(x), dtype=float)
+        for model, cols, w in zip(self._fitted, self._cols, self.weights, strict=True):
+            acc += w * np.asarray(model.predict_proba(x[cols], tickers=tickers), dtype=float)
+        return acc
+
+
+__all__ = ["AveragingEnsemble", "StackingEnsemble"]

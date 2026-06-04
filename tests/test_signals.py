@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import duckdb
+import numpy as np
 import pandas as pd
 import pytest
 
 from berich.config import Config, SignalConfig
+from berich.signals.calibration import optimal_decision_threshold
 from berich.signals.service import (
     BUY,
     LONG,
@@ -18,6 +20,7 @@ from berich.signals.service import (
     _decide,
     _expected_return,
     _price_decimals,
+    _regime_threshold_bump,
     _size_position,
 )
 from berich.signals.store import SignalStore
@@ -75,6 +78,53 @@ def test_decide_no_short_model_never_shorts():
 def test_decide_short_suppressed_when_disabled():
     # A strong short is ignored when enable_short is False.
     assert _decide(0.20, 0.90, _ls_config(enable_short=False)) == (NEUTRAL, "long")
+
+
+def test_decide_per_asset_threshold_overrides_global():
+    cfg = _ls_config()  # global buy/short thresholds ~0.5
+    # A per-asset long bar of 0.40 lets a 0.45 long through that the global bar would reject.
+    assert _decide(0.45, 0.10, cfg, long_threshold=0.40) == (LONG, "long")
+    # A stricter per-asset long bar of 0.70 rejects a 0.60 long the global bar would accept.
+    assert _decide(0.60, 0.10, cfg, long_threshold=0.70) == (NEUTRAL, "long")
+    # Per-asset short bar likewise overrides on the short side.
+    assert _decide(0.10, 0.45, cfg, short_threshold=0.40) == (SHORT, "short")
+
+
+def test_optimal_decision_threshold_prefers_high_precision_bucket():
+    # Below 0.5 the labels are coin-flips; at/above 0.6 they're almost all wins. With a 2:1 payoff
+    # the optimizer should pick a threshold in the high-precision region, not the noisy low one.
+    rng = np.random.default_rng(0)
+    low = rng.uniform(0.30, 0.59, 200)
+    high = rng.uniform(0.60, 0.70, 200)
+    proba = np.concatenate([low, high])
+    y = np.concatenate([rng.integers(0, 2, 200), np.ones(200, dtype=int)])
+    tau = optimal_decision_threshold(proba, y, reward=2.0, risk=1.0, min_count=20)
+    assert tau is not None
+    assert tau >= 0.55
+
+
+def test_optimal_decision_threshold_none_when_too_few():
+    assert optimal_decision_threshold(np.array([0.6, 0.7]), np.array([1, 1]), min_count=20) is None
+
+
+def test_decide_threshold_bump_makes_entries_stricter():
+    cfg = _ls_config()
+    # A 0.55 long clears the base bar but not once the high-vol regime adds a 0.10 bump.
+    assert _decide(0.55, 0.10, cfg) == (LONG, "long")
+    assert _decide(0.55, 0.10, cfg, threshold_bump=0.10) == (NEUTRAL, "long")
+
+
+def test_regime_threshold_bump_high_vs_low_vol():
+    idx = pd.date_range("2020-01-01", periods=300, freq="B")
+    rng = np.random.default_rng(0)
+    # Calm history then a volatile tail -> the latest 20d rvol sits in the top quantile.
+    rets = np.concatenate([rng.normal(0, 0.005, 240), rng.normal(0, 0.05, 60)])
+    close = pd.Series(100 * np.exp(np.cumsum(rets)), index=idx)
+    cfg = Config()
+    cfg.signals.regime_conditioning = True
+    assert _regime_threshold_bump(close, idx[-1], cfg) == cfg.signals.regime_threshold_bump
+    # Off by default -> no bump regardless of regime.
+    assert _regime_threshold_bump(close, idx[-1], Config()) == 0.0
 
 
 def test_size_position_risk_based():

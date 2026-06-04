@@ -156,7 +156,7 @@ def client_with_data(tmp_path, monkeypatch):
         name="lgbm-long",
         framework="lightgbm",
         feature_columns=list(ds.x.columns),
-        metrics={"auc": 0.6, "sharpe": 1.2, "benchmark_sharpe": 0.3},
+        metrics={"auc": 0.6, "sharpe": 1.2, "benchmark_sharpe": 0.3, "n_trades": 30.0},
         beats_buy_hold=True,
         ticker="AAPL",
         side="long",
