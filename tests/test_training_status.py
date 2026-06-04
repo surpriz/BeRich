@@ -125,3 +125,37 @@ def test_status_json_candidates_surface(tmp_path):
     assert short["status"] == "advisory_only"
     assert len(short["candidates"]) == 2
     assert short["trained_at"] == "2026-06-01T06:00:00+00:00"
+
+
+def test_naive_local_to_utc_iso_normalizes():
+    from berich.training.status import _naive_local_to_utc_iso  # noqa: PLC0415
+
+    assert _naive_local_to_utc_iso(None) is None
+    assert _naive_local_to_utc_iso("") is None
+    assert _naive_local_to_utc_iso("not-a-date") is None
+    out = _naive_local_to_utc_iso("2026-06-04 09:02:28.056155")
+    assert out is not None
+    assert out.endswith("+00:00")  # naive local timestamp anchored and converted to UTC
+
+
+def test_last_hpo_at_surfaces_latest_trial_time(tmp_path):
+    import optuna  # noqa: PLC0415
+
+    from berich.training.hpo import ticker_study_name  # noqa: PLC0415
+
+    cfg = _cfg(tmp_path)
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    study = optuna.create_study(
+        study_name=ticker_study_name("AAA", "lgbm", "long"),
+        storage=f"sqlite:///{cfg.optuna_db}",
+        direction="maximize",
+        load_if_exists=True,
+    )
+    study.optimize(lambda t: t.suggest_float("x", 0.0, 1.0), n_trials=1)
+
+    rows = {(r["ticker"], r["side"]): r for r in training_status(cfg)}
+    aaa_long = rows[("AAA", "long")]
+    assert aaa_long["last_hpo_at"] is not None
+    assert aaa_long["last_hpo_at"].endswith("+00:00")  # ISO-UTC like trained_at
+    # An asset with no HPO study has no timestamp.
+    assert rows[("EURUSD=X", "long")]["last_hpo_at"] is None

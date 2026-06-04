@@ -113,6 +113,14 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
 
         return training_status(config, optimized_only=True)
 
+    @router.get("/training/{ticker}", dependencies=guard)
+    def training_for_ticker(ticker: str) -> list[dict]:
+        """Both sides' training/HPO state for one asset, for the ticker drill-down panel."""
+        from berich.training.status import training_status
+
+        want = ticker.upper()
+        return [r for r in training_status(config) if str(r["ticker"]).upper() == want]
+
     @router.get("/ops", dependencies=guard)
     def ops() -> dict:
         """Live machine status: GPUs, scheduler jobs, HPO queue progress, recent logs."""

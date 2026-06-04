@@ -14,6 +14,7 @@ import {
 import { SignalBadge } from "@/app/components/SignalBadge";
 import { SignalAdvice } from "@/app/components/SignalAdvice";
 import { TickerChart } from "@/app/components/TickerChart";
+import { TrainingInfo } from "@/app/components/TrainingInfo";
 import { Show } from "@/app/components/Show";
 import { Info } from "@/app/components/Term";
 import { useTranslate } from "@/app/lib/i18n";
@@ -213,6 +214,8 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
           <div className="h-[540px] animate-pulse" />
         )}
       </section>
+
+      <TrainingInfo ticker={ticker} />
 
       <Show min="standard">
       <section className="card mb-8 p-5">

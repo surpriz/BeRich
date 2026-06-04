@@ -299,6 +299,7 @@ export type StrategyStatus = {
   winner: string | null;
   framework: string | null;
   trained_at: string | null;
+  last_hpo_at?: string | null;
   metrics: Record<string, number>;
   candidates: TournamentCandidate[];
   horizon_days?: number | null;
@@ -313,6 +314,7 @@ export type TrainingStatus = {
   winner: string | null;
   framework: string | null;
   trained_at: string | null;
+  last_hpo_at?: string | null;
   metrics: Record<string, number>;
   candidates: TournamentCandidate[];
   hpo_trials: number;
@@ -360,6 +362,8 @@ export const api = {
   universes: () => get<Universes>("/universes"),
   signalConfig: () => get<SignalConfig>("/config"),
   training: () => get<TrainingStatus[]>("/training"),
+  trainingTicker: (ticker: string) =>
+    get<TrainingStatus[]>(`/training/${encodeURIComponent(ticker)}`),
   ops: () => get<OpsSnapshot>("/ops"),
   longshortBasket: () => get<LongShortLeg[]>("/longshort/basket"),
   longshortEquity: () => get<LongShortEquity>("/longshort/equity"),

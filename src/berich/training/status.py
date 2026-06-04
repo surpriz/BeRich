@@ -8,6 +8,7 @@ trains or mutates — it's the backing data for the ``/api/training`` endpoint a
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import sqlite3
@@ -50,6 +51,27 @@ def _hpo_trial_counts(optuna_db: Path) -> dict[str, int]:
     return {name: int(n) for name, n in rows}
 
 
+def _study_matches(
+    name: str, slug: str, side: str, model: str | None, strategy: str | None
+) -> bool:
+    """Whether an Optuna study name belongs to this (ticker, side[, model][, strategy]).
+
+    Study names are ``berich-hpo-<SLUG>-<model>-<side>[-<strategy>]-<metric>`` (fixed has no
+    strategy segment), so ``strategy="fixed"`` matches names with no trailing segment, and a
+    trailing strategy matches names carrying its segment. ``model``/``strategy`` are ``None`` =
+    any.
+    """
+    if not name.startswith(f"berich-hpo-{slug}-"):
+        return False
+    if f"-{side}-" not in name:
+        return False
+    if model is not None and f"-{model}-" not in name:
+        return False
+    if strategy == "fixed" and ("-trailing-" in name or "-trailing_tp-" in name):
+        return False
+    return not (strategy is not None and strategy != "fixed" and f"-{strategy}-" not in name)
+
+
 def _hpo_trials_for(
     counts: dict[str, int],
     ticker: str,
@@ -57,32 +79,81 @@ def _hpo_trials_for(
     side: str,
     strategy: str | None = None,
 ) -> int:
-    """Sum HPO trials across that ticker+side's studies.
+    """Sum HPO trials across that ticker+side's studies (see ``_study_matches`` for filtering)."""
+    slug = safe_ticker_slug(ticker)
+    return sum(n for name, n in counts.items() if _study_matches(name, slug, side, model, strategy))
 
-    ``model``/``strategy`` filter further (``None`` = any). Study names are
-    ``berich-hpo-<SLUG>-<model>-<side>[-<strategy>]-<metric>`` (fixed has no strategy segment),
-    so ``strategy="fixed"`` matches names with no trailing segment, and a trailing strategy
-    matches names carrying its segment.
+
+def _naive_local_to_utc_iso(raw: str | None) -> str | None:
+    """Normalize an Optuna trial timestamp (naive, server-local) to an ISO-UTC string.
+
+    Optuna stores ``datetime_complete`` without a timezone, in the server's local time, whereas
+    the registry's ``trained_at`` is UTC-aware — so we anchor the naive value to the local zone
+    and convert, keeping every timestamp the dashboard sees on a single (UTC) clock.
+    """
+    if not raw:
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.astimezone()
+    return dt.astimezone(datetime.UTC).isoformat()
+
+
+def _hpo_last_trial_times(optuna_db: Path) -> dict[str, str]:
+    """Map per-ticker study name -> ISO-UTC timestamp of its most recent completed trial."""
+    if not optuna_db.exists():
+        return {}
+    try:
+        con = sqlite3.connect(f"file:{optuna_db}?mode=ro", uri=True)
+    except sqlite3.Error:
+        logger.warning("could not open optuna db at %s", optuna_db, exc_info=True)
+        return {}
+    try:
+        rows = con.execute(
+            "SELECT st.study_name, max(t.datetime_complete) "
+            "FROM studies st JOIN trials t ON t.study_id = st.study_id "
+            "WHERE t.datetime_complete IS NOT NULL "
+            "GROUP BY st.study_name"
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    finally:
+        con.close()
+    times: dict[str, str] = {}
+    for name, raw in rows:
+        iso = _naive_local_to_utc_iso(raw)
+        if iso is not None:
+            times[name] = iso
+    return times
+
+
+def _hpo_last_for(
+    times: dict[str, str],
+    ticker: str,
+    model: str | None,
+    side: str,
+    strategy: str | None = None,
+) -> str | None:
+    """Most recent HPO trial completion (ISO-UTC) for that ticker+side, or None.
+
+    Same study-name matching as ``_hpo_trials_for``; ISO-UTC strings share one format so the
+    lexicographic max is the chronological max.
     """
     slug = safe_ticker_slug(ticker)
-    total = 0
-    for name, n in counts.items():
-        if not name.startswith(f"berich-hpo-{slug}-"):
-            continue
-        if f"-{side}-" not in name:
-            continue
-        if model is not None and f"-{model}-" not in name:
-            continue
-        if strategy == "fixed" and ("-trailing-" in name or "-trailing_tp-" in name):
-            continue
-        if strategy is not None and strategy != "fixed" and f"-{strategy}-" not in name:
-            continue
-        total += n
-    return total
+    stamps = [ts for name, ts in times.items() if _study_matches(name, slug, side, model, strategy)]
+    return max(stamps) if stamps else None
 
 
 def _strategy_entry(
-    config: Config, ticker: str, side: str, strategy: str, counts: dict[str, int]
+    config: Config,
+    ticker: str,
+    side: str,
+    strategy: str,
+    counts: dict[str, int],
+    times: dict[str, str],
 ) -> dict[str, object] | None:
     """Status of one (ticker, side, exit strategy), or ``None`` if that strategy isn't trained.
 
@@ -103,6 +174,7 @@ def _strategy_entry(
         "candidates": [],
         "horizon_days": None,
         "hpo_trials": _hpo_trials_for(counts, ticker, None, side, strategy),
+        "last_hpo_at": _hpo_last_for(times, ticker, None, side, strategy),
     }
     status_path = reg / _STATUS_FILE
     if status_path.exists():
@@ -155,7 +227,7 @@ def _served_strategy(strategies: list[dict[str, object]], side: str) -> dict[str
 
 
 def _side_entry(
-    config: Config, ticker: str, side: str, counts: dict[str, int]
+    config: Config, ticker: str, side: str, counts: dict[str, int], times: dict[str, str]
 ) -> dict[str, object]:
     """Build one (ticker, side) row across all exit strategies.
 
@@ -163,7 +235,7 @@ def _side_entry(
     signal service would pick); ``strategies`` carries every trained exit strategy so the
     dashboard can show fixed vs trailing vs trailing_tp side by side.
     """
-    per_strategy = (_strategy_entry(config, ticker, side, st, counts) for st in _STRATEGIES)
+    per_strategy = (_strategy_entry(config, ticker, side, st, counts, times) for st in _STRATEGIES)
     strategies = [s for s in per_strategy if s is not None]
     served = _served_strategy(strategies, side)
     return {
@@ -177,6 +249,7 @@ def _side_entry(
         "metrics": served["metrics"] if served else {},
         "candidates": served["candidates"] if served else [],
         "hpo_trials": _hpo_trials_for(counts, ticker, None, side),
+        "last_hpo_at": _hpo_last_for(times, ticker, None, side),
         "horizon_days": served["horizon_days"] if served else None,
         "served_strategy": served["strategy"] if served else "fixed",
         "strategies": strategies,
@@ -226,8 +299,9 @@ def training_status(config: Config, *, optimized_only: bool = False) -> list[dic
     which needs the global done/pending counts.
     """
     counts = _hpo_trial_counts(config.optuna_db)
+    times = _hpo_last_trial_times(config.optuna_db)
     rows = [
-        _side_entry(config, ticker, side, counts)
+        _side_entry(config, ticker, side, counts, times)
         for ticker in config.tradeable_tickers()
         for side in _SIDES
     ]
