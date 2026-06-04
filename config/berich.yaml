@@ -350,6 +350,24 @@ universes:
     - UNH          # UnitedHealth
     - WMT          # Walmart
     - HD           # Home Depot
+    - AVGO         # Broadcom
+    - ORCL         # Oracle
+    - COST         # Costco
+    - NFLX         # Netflix
+    - AMD          # Advanced Micro Devices
+    - CRM          # Salesforce
+    - ADBE         # Adobe
+    - PEP          # PepsiCo
+    - KO           # Coca-Cola
+    - BAC          # Bank of America
+    - CVX          # Chevron
+    - MRK          # Merck
+    - ABBV         # AbbVie
+    - PFE          # Pfizer
+    - MCD          # McDonald's
+    - DIS          # Disney
+    - QQQ          # Nasdaq-100 ETF
+    - INTC         # Intel
   fr_stocks:
     - AIR.PA       # Airbus
     - MC.PA        # LVMH
@@ -363,6 +381,16 @@ universes:
     - SAF.PA       # Safran
     - EL.PA        # EssilorLuxottica
     - CAP.PA       # Capgemini
+    - RMS.PA       # Hermès
+    - KER.PA       # Kering
+    - BN.PA        # Danone
+    - ENGI.PA      # Engie
+    - ACA.PA       # Crédit Agricole
+    - GLE.PA       # Société Générale
+    - ML.PA        # Michelin
+    - RI.PA        # Pernod Ricard
+    - VIE.PA       # Veolia
+    - DSY.PA       # Dassault Systèmes
   forex:
     - EURUSD=X
     - GBPUSD=X
@@ -372,6 +400,14 @@ universes:
     - NZDUSD=X
     - EURGBP=X
     - USDCHF=X
+    - EURJPY=X
+    - GBPJPY=X
+    - EURCHF=X
+    - AUDJPY=X
+    - USDSEK=X
+    - USDNOK=X
+    - USDMXN=X
+    - USDZAR=X
   crypto:
     - BTC-USD
     - ETH-USD
@@ -380,6 +416,13 @@ universes:
     - ADA-USD
     - DOGE-USD
     - BNB-USD
+    - AVAX-USD
+    - DOT-USD
+    - LINK-USD
+    - LTC-USD
+    - BCH-USD
+    - TRX-USD
+    - ATOM-USD
   commodities:
     - GC=F         # gold front-month
     - CL=F         # WTI crude front-month
@@ -388,3 +431,10 @@ universes:
     - HG=F         # copper
     - ZC=F         # corn
     - PL=F         # platinum
+    - PA=F         # palladium
+    - ZS=F         # soybeans
+    - ZW=F         # wheat
+    - KC=F         # coffee
+    - SB=F         # sugar
+    - CT=F         # cotton
+    - HO=F         # heating oil
