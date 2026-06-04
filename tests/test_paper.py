@@ -27,6 +27,7 @@ from berich.signals.paper import (
     CLOSED_TIME,
     CLOSED_TRAIL,
     OPEN,
+    _apply_exposure_caps,
     get_open_positions,
 )
 from berich.signals.service import BUY, SHORT, Signal
@@ -421,3 +422,77 @@ def test_trailing_idempotent_after_close(tmp_path):
     open_new_trades(config, store, sigstore)
     assert update_open_trades(config, store) == 1
     assert update_open_trades(config, store) == 0  # closed trades are immutable
+
+
+def _candidate(ticker: str, entry: float, shares: int, strategy: str = "fixed") -> dict:
+    return {
+        "date_open": pd.Timestamp("2026-06-03"),
+        "ticker": ticker,
+        "signal": BUY,
+        "entry": entry,
+        "stop": entry * 0.98,
+        "target": entry * 1.04,
+        "size_shares": shares,
+        "status": OPEN,
+        "exit_strategy": strategy,
+    }
+
+
+def _open_row(ticker: str, entry: float, shares: int, strategy: str = "fixed") -> dict:
+    return {**_candidate(ticker, entry, shares, strategy), "date_open": pd.Timestamp("2026-06-02")}
+
+
+def test_exposure_caps_scale_down_per_name():
+    """A name already near its 100% budget shrinks the next candidate to what is left."""
+    # Existing open BNP: 90 shares @ 100 = 9_000 of a 10_000 name budget.
+    open_df = pd.DataFrame([_open_row("BNP.PA", 100.0, 90)])
+    # Candidate wants 90 more shares (9_000) but only 1_000 fits -> 10 shares.
+    rows = pd.DataFrame([_candidate("BNP.PA", 100.0, 90)])
+    out = _apply_exposure_caps(
+        rows, open_df, capital=10_000.0, max_ticker_pct=1.0, max_book_pct=10.0
+    )
+    assert list(out["size_shares"]) == [10]
+
+
+def test_exposure_caps_drop_when_name_full():
+    """No remaining name budget -> the candidate is dropped entirely (can't fit one share)."""
+    open_df = pd.DataFrame([_open_row("BNP.PA", 100.0, 100)])  # full 10_000 name budget
+    rows = pd.DataFrame([_candidate("BNP.PA", 100.0, 50)])
+    out = _apply_exposure_caps(
+        rows, open_df, capital=10_000.0, max_ticker_pct=1.0, max_book_pct=10.0
+    )
+    assert out.empty
+
+
+def test_exposure_caps_book_budget_shared_across_names():
+    """The total-book cap is consumed in row order; later names get only the remainder."""
+    rows = pd.DataFrame(
+        [
+            _candidate("AAA", 100.0, 80),  # wants 8_000
+            _candidate("BBB", 100.0, 80),  # wants 8_000, only 2_000 left under a 10_000 book cap
+        ]
+    )
+    out = _apply_exposure_caps(
+        rows,
+        pd.DataFrame(),
+        capital=10_000.0,
+        max_ticker_pct=1.0,  # neither name breaches its own 10_000 name cap
+        max_book_pct=1.0,  # but the book cap binds the second name
+    )
+    assert list(out["ticker"]) == ["AAA", "BBB"]
+    assert list(out["size_shares"]) == [80, 20]
+
+
+def test_exposure_caps_separate_books_per_strategy():
+    """Fixed and trailing books each get their own budget; one doesn't crowd out the other."""
+    rows = pd.DataFrame(
+        [
+            _candidate("AAA", 100.0, 100, strategy="fixed"),
+            _candidate("AAA", 100.0, 100, strategy="trailing"),
+        ]
+    )
+    out = _apply_exposure_caps(
+        rows, pd.DataFrame(), capital=10_000.0, max_ticker_pct=1.0, max_book_pct=1.0
+    )
+    # Both survive in full: the trailing book's budget is independent of the fixed book's.
+    assert list(out["size_shares"]) == [100, 100]

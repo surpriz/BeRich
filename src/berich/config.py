@@ -79,6 +79,15 @@ class SignalConfig(BaseModel):
     enable_short: bool = True
     capital: float = 10_000.0
     risk_pct: float = 0.01
+    # Paper-book exposure caps (Phase 13). Pyramiding is allowed (a fresh promoted signal on a
+    # name that already has open positions stacks a new line), but the open notional measured at
+    # cost basis (entry * shares) is bounded: ``max_ticker_exposure_pct`` per name and
+    # ``max_book_exposure_pct`` across the whole book, each as a fraction of ``capital`` and each
+    # enforced PER exit-strategy book. A candidate that breaches a cap is scaled down to the
+    # remaining budget (dropped if it can't fit a single share). 1.0/1.0 = honest no-leverage:
+    # at most one full allocation per name and the book never exceeds the account.
+    max_ticker_exposure_pct: float = 1.0
+    max_book_exposure_pct: float = 1.0
     # Round-trip transaction cost (fee + slippage, both sides) in basis points of notional,
     # used to turn a signal's GROSS expected return into a NET one. This is only the default
     # assumption shown on the dashboard — the UI lets a user override it for their own broker.

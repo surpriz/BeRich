@@ -18,6 +18,7 @@ the world hasn't moved.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -556,6 +557,70 @@ def _resolve_trade_exit(
 # --------------------------------------------------------- top-level operations ----
 
 
+def _apply_exposure_caps(
+    rows: pd.DataFrame,
+    open_df: pd.DataFrame,
+    *,
+    capital: float,
+    max_ticker_pct: float,
+    max_book_pct: float,
+) -> pd.DataFrame:
+    """Scale down / drop candidate trades so open notional stays within the exposure budget.
+
+    Pyramiding is allowed, but bounded: exposure is measured at cost basis (``entry * shares``)
+    and capped both per name (``capital * max_ticker_pct``) and across the whole book
+    (``capital * max_book_pct``). Caps are enforced PER exit-strategy book — each book gets its
+    own budget, consumed first by already-open trades, then by new candidates in row order. A
+    candidate that breaches a cap is shrunk to the remaining budget; one that can't fit a single
+    share is dropped. Returns the surviving rows with ``size_shares`` adjusted.
+    """
+    if rows.empty:
+        return rows
+    cap_ticker = capital * max_ticker_pct
+    cap_book = capital * max_book_pct
+    book_used: dict[str, float] = {}
+    ticker_used: dict[tuple[str, str], float] = {}
+    if not open_df.empty:
+        has_strat = "exit_strategy" in open_df.columns
+        for _, orow in open_df.iterrows():
+            strat = (
+                str(orow["exit_strategy"])
+                if has_strat and pd.notna(orow["exit_strategy"])
+                else "fixed"
+            )
+            tkr = str(orow["ticker"])
+            notional = float(orow["entry"]) * float(orow["size_shares"])
+            ticker_used[(strat, tkr)] = ticker_used.get((strat, tkr), 0.0) + notional
+            book_used[strat] = book_used.get(strat, 0.0) + notional
+
+    kept_idx: list[object] = []
+    new_shares: list[int] = []
+    for idx, row in rows.iterrows():
+        strat = str(row["exit_strategy"]) if pd.notna(row.get("exit_strategy")) else "fixed"
+        tkr = str(row["ticker"])
+        entry = float(row["entry"])
+        want = int(row["size_shares"])
+        if entry <= 0 or want <= 0:
+            continue
+        budget = min(
+            want * entry,
+            cap_ticker - ticker_used.get((strat, tkr), 0.0),
+            cap_book - book_used.get(strat, 0.0),
+        )
+        fit = min(want, math.floor(budget / entry)) if budget > 0 else 0
+        if fit <= 0:
+            continue
+        added = fit * entry
+        ticker_used[(strat, tkr)] = ticker_used.get((strat, tkr), 0.0) + added
+        book_used[strat] = book_used.get(strat, 0.0) + added
+        kept_idx.append(idx)
+        new_shares.append(fit)
+
+    out = rows.loc[kept_idx].copy()
+    out["size_shares"] = new_shares
+    return out
+
+
 def open_new_trades(
     config: Config,
     store: OhlcvStore,
@@ -564,7 +629,10 @@ def open_new_trades(
     """Open a paper trade for each BUY signal on the latest signal date.
 
     Already-open trades for the same ``(date_open, ticker)`` are left alone — this
-    is the idempotency guarantee that makes the scheduler safe to re-run.
+    is the idempotency guarantee that makes the scheduler safe to re-run. Candidates
+    are then passed through ``_apply_exposure_caps`` so pyramiding stays within the
+    per-name and total-book exposure budgets (a breaching candidate is scaled down,
+    or dropped when no budget remains).
     """
     del store  # OhlcvStore not needed at open time; entry came from the signal
     latest = signal_store.latest()
@@ -603,6 +671,16 @@ def open_new_trades(
         }
     )
     paper = PaperStore(config.db_path)
+    rows = _apply_exposure_caps(
+        rows,
+        paper.open_trades(),
+        capital=float(config.signals.capital),
+        max_ticker_pct=float(config.signals.max_ticker_exposure_pct),
+        max_book_pct=float(config.signals.max_book_exposure_pct),
+    )
+    if rows.empty:
+        logger.info("paper.open_new_trades: all candidates capped out by exposure limits")
+        return 0
     opened = paper.insert_new(rows)
     logger.info("paper.open_new_trades: %d new trades opened", opened)
     return opened

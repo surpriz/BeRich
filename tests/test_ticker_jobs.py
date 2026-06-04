@@ -182,9 +182,7 @@ def test_hpo_queue_skips_when_lock_held(tmp_path, monkeypatch):
     cfg.zoo.ticker_exit_strategies = ["fixed"]
 
     called = []
-    monkeypatch.setattr(
-        jobs_mod, "_hpo_and_tournament", lambda *a: called.append(a) or False
-    )
+    monkeypatch.setattr(jobs_mod, "_hpo_and_tournament", lambda *a: called.append(a) or False)
     held = jobs_mod.acquire_hpo_lock(cfg)  # simulate the sweep service holding the lock
     try:
         out = jobs_mod.ticker_hpo_queue_job(cfg, max_assets=1)

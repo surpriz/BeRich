@@ -351,9 +351,7 @@ def _sweep_log_lines(config: Config, lines: int) -> list[dict[str, str]]:
             continue
         msg = line.split(" sweep: ", 1)[-1].strip() if is_sweep else line.strip()
         ts = f"{m.group(1)}T{m.group(2)}"
-        out.append(
-            {"time": ts, "message": msg, "level": level, "source": "sweep"}
-        )
+        out.append({"time": ts, "message": msg, "level": level, "source": "sweep"})
     return out[-lines:]
 
 
