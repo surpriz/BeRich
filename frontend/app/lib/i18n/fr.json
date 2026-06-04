@@ -36,6 +36,8 @@
   "ticker.trainPromoted": "promu",
   "ticker.trainAdvisory": "advisory seulement",
   "ticker.trainNone": "Cet actif n'a pas encore été entraîné.",
+  "ticker.sigToday": "Signal du jour",
+  "ticker.sigBelow": "sous le seuil",
   "col.date": "Date",
   "col.signal": "Signal",
   "col.entry": "Entrée",

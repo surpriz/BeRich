@@ -215,7 +215,7 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
         )}
       </section>
 
-      <TrainingInfo ticker={ticker} />
+      <TrainingInfo ticker={ticker} history={history} cfg={cfg} />
 
       <Show min="standard">
       <section className="card mb-8 p-5">

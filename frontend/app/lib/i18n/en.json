@@ -36,6 +36,8 @@
   "ticker.trainPromoted": "promoted",
   "ticker.trainAdvisory": "advisory only",
   "ticker.trainNone": "This asset hasn't been trained yet.",
+  "ticker.sigToday": "Today's signal",
+  "ticker.sigBelow": "below threshold",
   "col.date": "Date",
   "col.signal": "Signal",
   "col.entry": "Entry",

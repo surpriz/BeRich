@@ -1,12 +1,25 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type TrainingStatus } from "@/app/lib/api";
+import {
+  api,
+  type Signal,
+  type SignalConfig,
+  type TrainingStatus,
+} from "@/app/lib/api";
 import { useTranslate } from "@/app/lib/i18n";
 
 // Compact "Training & HPO" panel for the ticker drill-down: last training, last HPO, trial
-// count and promotion status, split long vs short. Past facts only — no scheduling claims, since
-// the continuous retrainer loops rather than running a fixed per-asset cron.
+// count, promotion status and today's per-side signal, split long vs short. Training facts are
+// past-only (no scheduling claims — the retrainer loops rather than running a fixed per-asset
+// cron); the signal row shows whether each side actually fires today, so "promoted" (a quality
+// verdict) isn't mistaken for "has an open position".
+
+// Latest served signal for an exit strategy (history is date-descending, so first match wins).
+function latestSignal(history: Signal[] | undefined, strategy: string | null | undefined) {
+  const want = strategy ?? "fixed";
+  return history?.find((s) => (s.exit_strategy ?? "fixed") === want);
+}
 
 function fmtAgo(iso: string | null | undefined, ago: string): { rel: string; exact: string } {
   if (!iso) return { rel: "—", exact: "" };
@@ -32,14 +45,59 @@ function StatusChip({ status }: { status: TrainingStatus["status"] }) {
   return <span className={`tabular text-xs ${cls}`}>{label}</span>;
 }
 
-function SideColumn({ row }: { row: TrainingStatus | undefined }) {
+// Today's signal for one side: its P(win) vs that side's threshold. Fires (colored direction)
+// when the served strategy's probability clears the threshold, else faint "below threshold".
+function SignalCell({
+  proba,
+  threshold,
+  side,
+}: {
+  proba: number | null | undefined;
+  threshold: number | null | undefined;
+  side: "long" | "short";
+}) {
+  const t = useTranslate();
+  if (proba == null || threshold == null) {
+    return <span className="text-[var(--color-faint)]">—</span>;
+  }
+  const fires = proba >= threshold;
+  const dirLabel = side === "long" ? t("directionLong") : t("directionShort");
+  const color = side === "long" ? "text-[var(--color-bull)]" : "text-[var(--color-bear)]";
+  return (
+    <span className="tabular">
+      {proba.toFixed(3)}{" "}
+      {fires ? (
+        <span className={color}>· {dirLabel}</span>
+      ) : (
+        <span className="text-[var(--color-faint)]">· {t("ticker.sigBelow")}</span>
+      )}
+    </span>
+  );
+}
+
+function SideColumn({
+  row,
+  history,
+  cfg,
+}: {
+  row: TrainingStatus | undefined;
+  history: Signal[] | undefined;
+  cfg: SignalConfig | undefined;
+}) {
   const t = useTranslate();
   const ago = t("ops.ago");
   if (!row) return <span className="text-[var(--color-faint)]">—</span>;
   const trained = fmtAgo(row.trained_at, ago);
   const hpo = fmtAgo(row.last_hpo_at, ago);
+  const sig = latestSignal(history, row.served_strategy);
+  const proba = row.side === "long" ? sig?.proba_long : sig?.proba_short;
+  const threshold = row.side === "long" ? cfg?.buy_threshold : cfg?.short_threshold;
   return (
     <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+      <span className="text-[var(--color-faint)]">{t("ticker.sigToday")}</span>
+      <span className="text-right">
+        <SignalCell proba={proba} threshold={threshold} side={row.side} />
+      </span>
       <span className="text-[var(--color-faint)]">{t("ticker.trainLast")}</span>
       <span className="tabular text-right" title={trained.exact}>
         {trained.rel}
@@ -58,7 +116,15 @@ function SideColumn({ row }: { row: TrainingStatus | undefined }) {
   );
 }
 
-export function TrainingInfo({ ticker }: { ticker: string }) {
+export function TrainingInfo({
+  ticker,
+  history,
+  cfg,
+}: {
+  ticker: string;
+  history: Signal[] | undefined;
+  cfg: SignalConfig | undefined;
+}) {
   const t = useTranslate();
   const [rows, setRows] = useState<TrainingStatus[] | undefined>();
 
@@ -91,13 +157,13 @@ export function TrainingInfo({ ticker }: { ticker: string }) {
             <h3 className="mb-2 text-xs uppercase tracking-widest text-[var(--color-bull)]/80">
               {t("directionLong")}
             </h3>
-            <SideColumn row={long} />
+            <SideColumn row={long} history={history} cfg={cfg} />
           </div>
           <div>
             <h3 className="mb-2 text-xs uppercase tracking-widest text-[var(--color-bear)]/80">
               {t("directionShort")}
             </h3>
-            <SideColumn row={short} />
+            <SideColumn row={short} history={history} cfg={cfg} />
           </div>
         </div>
       )}
