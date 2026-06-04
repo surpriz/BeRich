@@ -143,6 +143,7 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
         """Decision thresholds the dashboard needs to explain why a signal is LONG/SHORT/NEUTRAL."""
         s = config.signals
         return {
+            "capital": s.capital,
             "buy_threshold": s.buy_threshold,
             "short_threshold": s.short_threshold,
             "enable_short": s.enable_short,

@@ -186,6 +186,7 @@
   "ops.advisory": "indicatifs",
   "ops.jobsState": "État du scheduler",
   "nav.signals": "Signaux",
+  "nav.brief": "Brief du jour",
   "nav.training": "Entraînement",
   "nav.ops": "Machine",
   "nav.changelog": "Journal",

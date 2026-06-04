@@ -186,6 +186,7 @@
   "ops.advisory": "advisory",
   "ops.jobsState": "Scheduler state",
   "nav.signals": "Signals",
+  "nav.brief": "Daily brief",
   "nav.training": "Training",
   "nav.ops": "Machine",
   "nav.changelog": "Journal",
