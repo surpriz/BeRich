@@ -151,6 +151,23 @@ def _continuous(config: Config) -> int:
                 refresh_signals(config)
             except Exception:
                 log.exception("refresh_signals failed after %s/%s/%s", ticker, side, strategy)
+        # Sweep-level multiple-testing control once per full cycle. This lives here (not only in
+        # the scheduler's ticker_initial_sweep_job) because the continuous sweep holds the HPO lock
+        # perpetually, so that scheduler job — which carries the FDR reconcile — always yields. Each
+        # tournament already corrected for its own search; this walks back promotions that don't
+        # survive Benjamini-Hochberg across the whole promoted set (demoted -> observe tier).
+        try:
+            from berich.training.promotion import reconcile_sweep_fdr  # noqa: PLC0415
+
+            fdr = reconcile_sweep_fdr(config)
+            log.info(
+                "cycle %d FDR: %d promoted -> %d demoted",
+                cycle,
+                fdr["promoted_before"],
+                fdr["demoted"],
+            )
+        except Exception:
+            log.exception("cycle %d: FDR reconciliation failed", cycle)
         log.info(
             "cycle %d COMPLETE: %d combos, %d promoted, %.0f min",
             cycle,
