@@ -121,6 +121,29 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
         want = ticker.upper()
         return [r for r in training_status(config) if str(r["ticker"]).upper() == want]
 
+    @router.get("/risk-profile", dependencies=guard)
+    def get_risk_profile() -> dict:
+        """The active risk profile + the available presets (read-only molettes for the UI)."""
+        from berich.config import RISK_PROFILES
+
+        return {"active": config.active_risk_profile(), "profiles": RISK_PROFILES}
+
+    @router.post("/risk-profile", dependencies=guard)
+    def set_risk_profile(body: dict) -> dict:
+        """Switch the risk profile (Prudent / Équilibré / Offensif).
+
+        Only the named presets are accepted — the web button can pick a posture, never inject an
+        arbitrary risk value. Applied to the live config immediately (the Brief/signals reflect it
+        at once); the sweep and scheduler pick it up on their next config reload.
+        """
+        from berich.config import RISK_PROFILES
+
+        name = str(body.get("profile", ""))
+        if name not in RISK_PROFILES:
+            raise HTTPException(status_code=400, detail=f"unknown profile '{name}'")
+        config.set_risk_profile(name)
+        return {"active": name, "profiles": RISK_PROFILES}
+
     @router.get("/hpo-progress", dependencies=guard)
     def hpo_progress_endpoint() -> dict:
         """Lightweight HPO sweep coverage (combo grain) for the /training progress bar.

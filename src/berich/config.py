@@ -7,6 +7,7 @@ lives. Loading is explicit (`Config.load(path)`) so tests can point at fixtures.
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -233,6 +234,46 @@ class AssetUniverses(BaseModel):
         return None
 
 
+# ---- Risk profiles -------------------------------------------------------------------------
+# One-click risk posture. Each profile overrides the LIVE-WIRED sizing knobs on SignalConfig:
+# risk per trade, the graduated drawdown kill-switch, the per-asset-class concentration cap and the
+# max concurrent positions. Switching profile scales EXPOSURE to whatever edge exists — it does not
+# manufacture edge. Only these named presets are accepted (no arbitrary values from the web), which
+# is the guardrail on a button that changes real position sizing. (Kelly / vol-targeting are built
+# but not yet wired into live sizing, so they are deliberately NOT part of a profile.)
+RISK_PROFILES: dict[str, dict[str, float | int]] = {
+    "prudent": {
+        "risk_pct": 0.01,
+        "drawdown_derisk_threshold": 0.10,
+        "drawdown_halt_threshold": 0.20,
+        "max_class_exposure_pct": 0.40,
+        "max_open_positions": 15,
+    },
+    "balanced": {
+        "risk_pct": 0.015,
+        "drawdown_derisk_threshold": 0.12,
+        "drawdown_halt_threshold": 0.25,
+        "max_class_exposure_pct": 0.50,
+        "max_open_positions": 20,
+    },
+    "offensive": {
+        "risk_pct": 0.025,
+        "drawdown_derisk_threshold": 0.15,
+        "drawdown_halt_threshold": 0.30,
+        "max_class_exposure_pct": 0.70,
+        "max_open_positions": 30,
+    },
+}
+DEFAULT_RISK_PROFILE = "prudent"
+_RISK_PROFILE_FILE = "risk_profile.json"
+
+
+def apply_risk_profile(signals: SignalConfig, name: str) -> None:
+    """Mutate ``signals`` in place with the named profile's overrides (unknown name = no-op)."""
+    for key, value in RISK_PROFILES.get(name, {}).items():
+        setattr(signals, key, value)
+
+
 class Config(BaseModel):
     """Top-level project configuration."""
 
@@ -389,8 +430,37 @@ class Config(BaseModel):
         """Per-ticker quarterly fundamentals cache (Phase 11b). Empty until populated."""
         return self.data_dir / "fundamentals"
 
+    def risk_profile_path(self) -> Path:
+        return self.data_dir / _RISK_PROFILE_FILE
+
+    def active_risk_profile(self) -> str:
+        """Name of the persisted risk profile, or the default when unset/invalid."""
+        try:
+            name = json.loads(self.risk_profile_path().read_text(encoding="utf-8"))["profile"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return DEFAULT_RISK_PROFILE
+        return name if name in RISK_PROFILES else DEFAULT_RISK_PROFILE
+
+    def apply_active_risk_profile(self) -> str:
+        """Apply the persisted profile to this config's ``signals`` in place; return its name."""
+        name = self.active_risk_profile()
+        apply_risk_profile(self.signals, name)
+        return name
+
+    def set_risk_profile(self, name: str) -> str:
+        """Persist ``name`` and apply it to this config's ``signals`` in place (validates name)."""
+        if name not in RISK_PROFILES:
+            msg = f"unknown risk profile '{name}' (expected one of {sorted(RISK_PROFILES)})"
+            raise ValueError(msg)
+        self.risk_profile_path().parent.mkdir(parents=True, exist_ok=True)
+        self.risk_profile_path().write_text(json.dumps({"profile": name}), encoding="utf-8")
+        apply_risk_profile(self.signals, name)
+        return name
+
     @classmethod
     def load(cls, path: Path | str = DEFAULT_CONFIG_PATH) -> Config:
-        """Load and validate configuration from a YAML file."""
+        """Load and validate configuration from a YAML file, then apply the active risk profile."""
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-        return cls.model_validate(raw)
+        cfg = cls.model_validate(raw)
+        cfg.apply_active_risk_profile()
+        return cfg

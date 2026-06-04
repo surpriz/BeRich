@@ -366,6 +366,24 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const key = process.env.NEXT_PUBLIC_API_KEY;
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(key ? { "X-API-Key": key } : {}) },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+// Risk profile: a one-click posture (prudent / balanced / offensive) over the live sizing knobs.
+export type RiskProfileInfo = {
+  active: string;
+  profiles: Record<string, Record<string, number>>;
+};
+
 export const api = {
   signals: () => get<Signal[]>("/signals"),
   signalHistory: (ticker: string) => get<Signal[]>(`/signals/${ticker}/history`),
@@ -387,6 +405,8 @@ export const api = {
   signalConfig: () => get<SignalConfig>("/config"),
   training: () => get<TrainingStatus[]>("/training"),
   hpoProgress: () => get<HpoProgress>("/hpo-progress"),
+  riskProfile: () => get<RiskProfileInfo>("/risk-profile"),
+  setRiskProfile: (profile: string) => post<RiskProfileInfo>("/risk-profile", { profile }),
   trainingTicker: (ticker: string) =>
     get<TrainingStatus[]>(`/training/${encodeURIComponent(ticker)}`),
   ops: () => get<OpsSnapshot>("/ops"),

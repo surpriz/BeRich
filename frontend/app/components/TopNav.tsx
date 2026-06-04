@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { LanguageSelector, useTranslate } from "@/app/lib/i18n";
 import { LevelSwitch } from "./LevelSwitch";
+import { RiskProfileSwitch } from "./RiskProfileSwitch";
 import { StrategySwitch } from "./StrategySwitch";
 
 const TABS = [
@@ -49,6 +50,7 @@ export function TopNav() {
         </nav>
 
         <div className="hidden items-center gap-3 md:flex">
+          <RiskProfileSwitch />
           <StrategySwitch />
           <LevelSwitch />
           <LanguageSelector />

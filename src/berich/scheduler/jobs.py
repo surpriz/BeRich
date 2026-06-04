@@ -82,6 +82,7 @@ def daily_paper_job(config: Config) -> dict[str, int]:
     the daily quota is exhausted, we log a warning and continue with the
     rest of the chain rather than letting the whole job fail.
     """
+    config.apply_active_risk_profile()  # honor a UI risk-profile switch without a restart
     update_watchlist(config)
     news_rows = _try_news_refresh(config)
     finbert_scored = _try_finbert_score(config) if news_rows >= 0 else 0
@@ -532,6 +533,7 @@ def refresh_signals_job(config: Config) -> dict[str, int]:
     rewritten by the daily chain (22:30) and right after a queue run — so a promotion landing
     between those left /signals stale vs /training. This job closes that gap on a short cron.
     """
+    config.apply_active_risk_profile()  # honor a UI risk-profile switch without a restart
     n = refresh_signals(config)
     logger.info("refresh_signals_job: %d signals written", n)
     return {"signals": n}
