@@ -90,7 +90,7 @@ export function PaperPanel({
         <PaperEquityChart equity={equity} />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="flex flex-col gap-6">
         <PositionsTable positions={positions} />
         <ClosedTable trades={closed} />
       </div>
