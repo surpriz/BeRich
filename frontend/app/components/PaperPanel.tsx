@@ -16,6 +16,7 @@ function statusLabel(status: string): string {
     closed_target: "target hit",
     closed_stop: "stop hit",
     closed_time: "time exit",
+    closed_trail: "trail stop",
   }[status] ?? status;
 }
 
@@ -108,7 +109,8 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
       {positions.length === 0 ? (
         <div className="px-5 py-6 text-sm text-[var(--color-faint)]">No open positions.</div>
       ) : (
-        <table className="w-full border-collapse text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full border-collapse whitespace-nowrap text-sm">
           <thead>
             <tr className="border-b border-[var(--color-line)] text-left text-[11px] uppercase tracking-widest text-[var(--color-faint)]">
               <th className="px-5 py-2 font-medium">Ticker</th>
@@ -156,6 +158,7 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
@@ -170,12 +173,16 @@ function ClosedTable({ trades }: { trades: PaperClosedTrade[] }) {
       {trades.length === 0 ? (
         <div className="px-5 py-6 text-sm text-[var(--color-faint)]">No closed trades yet.</div>
       ) : (
-        <table className="w-full border-collapse text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full border-collapse whitespace-nowrap text-sm">
           <thead>
             <tr className="border-b border-[var(--color-line)] text-left text-[11px] uppercase tracking-widest text-[var(--color-faint)]">
               <th className="px-5 py-2 font-medium">Ticker</th>
+              <th className="px-3 py-2 font-medium">Opened</th>
               <th className="px-3 py-2 font-medium">Closed</th>
               <th className="px-3 py-2 font-medium">Reason</th>
+              <th className="px-3 py-2 text-right font-medium">Entry</th>
+              <th className="px-3 py-2 text-right font-medium">Exit</th>
               <th className="px-5 py-2 text-right font-medium">P&L</th>
             </tr>
           </thead>
@@ -183,13 +190,17 @@ function ClosedTable({ trades }: { trades: PaperClosedTrade[] }) {
             {trades.map((t) => (
               <tr key={`${t.date_open}-${t.ticker}`} className="border-b border-[var(--color-line)]/50 last:border-0">
                 <td className="px-5 py-2 font-display text-sm font-bold">{t.ticker}</td>
-                <td className="tabular px-3 py-2 text-[var(--color-muted)]">{t.date_close}</td>
+                <td className="tabular px-3 py-2 text-xs text-[var(--color-muted)]">{t.date_open.slice(0, 10)}</td>
+                <td className="tabular px-3 py-2 text-xs text-[var(--color-muted)]">{t.date_close}</td>
                 <td className="px-3 py-2 text-xs text-[var(--color-muted)]">{statusLabel(t.status)}</td>
+                <td className="tabular px-3 py-2 text-right">{fmt(t.entry)}</td>
+                <td className="tabular px-3 py-2 text-right">{fmt(t.exit_price)}</td>
                 <td className={`tabular px-5 py-2 text-right ${pnlColor(t.pnl_pct)}`}>{pct(t.pnl_pct)}</td>
               </tr>
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
