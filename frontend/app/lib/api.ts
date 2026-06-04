@@ -280,20 +280,24 @@ export type OpsLogLine = {
   source?: string;
 };
 
+// HPO sweep coverage at the (ticker × side × strategy) grain — feeds the /training & /ops bars.
+export type HpoProgress = {
+  total: number;
+  hpo_done: number;
+  deep_complete: number;
+  deep_trials: number;
+  pending: number;
+  promoted: number;
+  advisory: number;
+};
+
 export type OpsSnapshot = {
   gpus: OpsGpu[];
   system: OpsSystem;
   sweep: OpsSweep;
   scheduler: { unit: string; state: string; active_since: string | null };
   jobs: OpsJob[];
-  hpo: {
-    total: number;
-    hpo_done: number;
-    pending: number;
-    promoted: number;
-    advisory: number;
-    recent: OpsHpoRecent[];
-  };
+  hpo: HpoProgress & { recent: OpsHpoRecent[] };
   alerts: OpsLogLine[];
   logs: OpsLogLine[];
 };
@@ -378,6 +382,7 @@ export const api = {
   universes: () => get<Universes>("/universes"),
   signalConfig: () => get<SignalConfig>("/config"),
   training: () => get<TrainingStatus[]>("/training"),
+  hpoProgress: () => get<HpoProgress>("/hpo-progress"),
   trainingTicker: (ticker: string) =>
     get<TrainingStatus[]>(`/training/${encodeURIComponent(ticker)}`),
   ops: () => get<OpsSnapshot>("/ops"),

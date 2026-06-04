@@ -199,6 +199,7 @@ export default function OpsPage() {
                 <div className="mt-1"><Bar pct={hpoPct} color={GOOD} /></div>
                 <div className="mt-3 flex flex-wrap gap-4 text-xs text-[var(--color-muted)]">
                   <span className="text-[var(--color-bull)]">{snap.hpo.promoted} {t("ops.promoted")}</span>
+                  <span>{snap.hpo.deep_complete} {t("ops.deepComplete")}</span>
                   <span>{snap.hpo.advisory} {t("ops.advisory")}</span>
                   <span>{snap.hpo.pending} {t("ops.pending")}</span>
                 </div>

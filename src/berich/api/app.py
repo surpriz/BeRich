@@ -121,6 +121,16 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
         want = ticker.upper()
         return [r for r in training_status(config) if str(r["ticker"]).upper() == want]
 
+    @router.get("/hpo-progress", dependencies=guard)
+    def hpo_progress_endpoint() -> dict:
+        """Lightweight HPO sweep coverage (combo grain) for the /training progress bar.
+
+        Just the counts — no nvidia-smi/systemctl/journald — so /training can poll it cheaply.
+        """
+        from berich.ops import hpo_progress
+
+        return hpo_progress(config)
+
     @router.get("/ops", dependencies=guard)
     def ops() -> dict:
         """Live machine status: GPUs, scheduler jobs, HPO queue progress, recent logs."""

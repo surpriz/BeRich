@@ -267,7 +267,16 @@ def hpo_progress(config: Config) -> dict[str, object]:
         counts = _hpo_trial_counts(config.optuna_db)
     except Exception:  # noqa: BLE001 — degrade to empty rather than break the dashboard
         logger.warning("ops: training_status failed", exc_info=True)
-        return {"total": 0, "hpo_done": 0, "pending": 0, "promoted": 0, "advisory": 0, "recent": []}
+        return {
+            "total": 0,
+            "hpo_done": 0,
+            "deep_complete": 0,
+            "deep_trials": 0,
+            "pending": 0,
+            "promoted": 0,
+            "advisory": 0,
+            "recent": [],
+        }
 
     # Per-(ticker, side, strategy) status, from each row's strategy slate.
     status_by: dict[tuple[str, str, str], dict] = {}
@@ -282,8 +291,10 @@ def hpo_progress(config: Config) -> dict[str, object]:
         for strategy in config.zoo.ticker_exit_strategies
     ]
     total = len(units)
+    deep = config.zoo.ticker_initial_hpo_trials
     done = [u for u in units if _hpo_trials_for(counts, u[0], None, u[1], u[2]) > 0]
     hpo_done = len(done)
+    deep_complete = sum(1 for u in units if _hpo_trials_for(counts, u[0], None, u[1], u[2]) >= deep)
     promoted = sum(1 for u in done if status_by.get(u, {}).get("status") == "promoted")
     advisory = sum(1 for u in done if status_by.get(u, {}).get("status") == "advisory_only")
 
@@ -304,6 +315,8 @@ def hpo_progress(config: Config) -> dict[str, object]:
     return {
         "total": total,
         "hpo_done": hpo_done,
+        "deep_complete": deep_complete,
+        "deep_trials": deep,
         "pending": total - hpo_done,
         "promoted": promoted,
         "advisory": advisory,

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api, type TournamentCandidate, type TrainingStatus } from "@/app/lib/api";
+import { api, type HpoProgress, type TournamentCandidate, type TrainingStatus } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
 import { Show } from "@/app/components/Show";
 
@@ -233,6 +233,52 @@ function CoverageBanner({ grouped, t }: { grouped: Grouped[]; t: (k: string) => 
   );
 }
 
+// Live HPO sweep coverage at the combo grain (ticker × side × strategy). Self-refreshes so you can
+// watch it "fill up" as the background sweep advances — no need to wipe anything to see progress.
+function HpoSweepProgress({ t }: { t: (k: string) => string }) {
+  const [p, setP] = useState<HpoProgress | null>(null);
+  useEffect(() => {
+    const tick = () => api.hpoProgress().then(setP).catch(() => {});
+    tick();
+    const id = setInterval(tick, 15_000);
+    return () => clearInterval(id);
+  }, []);
+  if (!p || p.total === 0) return null;
+  const searchedPct = (p.hpo_done / p.total) * 100;
+  const deepPct = (p.deep_complete / p.total) * 100;
+  return (
+    <div className="card mt-4 p-5">
+      <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
+        <span className="text-xs uppercase tracking-widest text-[var(--color-muted)]">
+          {t("training.sweepProgress")}
+        </span>
+        <span className="tabular text-sm text-[var(--color-faint)]">
+          <span className="text-[var(--color-fg)]">
+            {p.hpo_done}/{p.total}
+          </span>{" "}
+          {t("training.combosSearched")} ·{" "}
+          <span className="text-[var(--color-fg)]">{p.deep_complete}</span> {t("training.deepDone")}{" "}
+          · <span className="text-[var(--color-bull)]">{p.promoted}</span> {t("training.promotedNow")}
+        </span>
+      </div>
+      <div className="relative h-2 w-full overflow-hidden rounded-full bg-[var(--color-line)]">
+        {/* searched (lighter) behind, deep-complete (solid) in front */}
+        <div
+          className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-bull)]/30"
+          style={{ width: `${searchedPct}%` }}
+        />
+        <div
+          className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-bull)]"
+          style={{ width: `${deepPct}%` }}
+        />
+      </div>
+      <p className="mt-2 text-[11px] text-[var(--color-faint)]">
+        {p.pending} {t("training.combosPending")} · {t("training.sweepHint")}
+      </p>
+    </div>
+  );
+}
+
 export default function TrainingPage() {
   const { t } = useI18n();
   const [rows, setRows] = useState<TrainingStatus[] | null>(null);
@@ -249,6 +295,7 @@ export default function TrainingPage() {
       <h1 className="font-display text-3xl font-bold">{t("training.title")}</h1>
       <p className="mt-2 max-w-2xl text-sm text-[var(--color-muted)]">{t("training.intro")}</p>
 
+      <HpoSweepProgress t={t} />
       {rows && <CoverageBanner grouped={grouped} t={t} />}
 
       {err && <p className="mt-6 text-[var(--color-bear)]">{err}</p>}
