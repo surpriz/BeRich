@@ -144,6 +144,26 @@ def test_hpo_queue_processes_one_asset_at_a_time(tmp_path, monkeypatch):
     assert calls == [("AAA", "long", "fixed")]
 
 
+def test_pending_hpo_targets_prioritizes_new_arrivals(tmp_path, monkeypatch):
+    # OLD has a long/fixed study (already onboarded); NEW was just added with no studies at all.
+    cfg = Config(data_dir=tmp_path, universes={"us_stocks": ["OLD", "NEW"]})
+    cfg.zoo.ticker_sides = ["long"]
+    cfg.zoo.ticker_exit_strategies = ["fixed", "trailing"]
+
+    monkeypatch.setattr(
+        "berich.training.status._hpo_trial_counts",
+        lambda _db: {"berich-hpo-OLD-lgbm-long-sharpe": 50},
+    )
+
+    pending = jobs_mod._pending_hpo_targets(cfg)
+    # OLD/long/fixed already has trials (dropped); the new arrival jumps ahead of OLD's leftover.
+    assert pending == [
+        ("NEW", "long", "fixed"),
+        ("NEW", "long", "trailing"),
+        ("OLD", "long", "trailing"),
+    ]
+
+
 def test_initial_sweep_covers_every_exit_strategy(tmp_path, monkeypatch):
     cfg = _config(tmp_path)
     cfg.zoo.ticker_exit_strategies = ["fixed", "trailing"]

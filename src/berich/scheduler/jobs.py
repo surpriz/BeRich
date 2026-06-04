@@ -459,23 +459,36 @@ def _hpo_and_tournament(
 
 
 def _pending_hpo_targets(config: Config) -> list[tuple[str, str, str]]:
-    """(ticker, side, strategy) triples that have no per-asset HPO study yet, in config order.
+    """(ticker, side, strategy) triples that have no per-asset HPO study yet, new arrivals first.
 
     This is the queue's work-list: (asset, exit strategy) pairs whose models still run on default
     params. Reusing the status scanner's per-strategy trial counts means the queue is naturally
     resumable — a triple drops off as soon as its study has trials, so re-running continues where
     it left off, and every strategy gets its own first deep HPO.
+
+    **New arrivals jump the queue.** A ticker with *zero* HPO trials across every side+strategy has
+    never been searched (e.g. just added to the universe), so all its triples are emitted ahead of
+    those for partially-searched assets. Config order is preserved within each group, so onboarding
+    fresh tickers never starves a half-done asset of its remaining strategies — it just defers them.
     """
     from berich.training.status import _hpo_trial_counts, _hpo_trials_for  # noqa: PLC0415
 
     counts = _hpo_trial_counts(config.optuna_db)
-    return [
+    sides = config.zoo.ticker_sides
+    strategies = config.zoo.ticker_exit_strategies
+
+    def is_new_arrival(ticker: str) -> bool:
+        return all(_hpo_trials_for(counts, ticker, None, side) == 0 for side in sides)
+
+    pending = [
         (ticker, side, strategy)
         for ticker in config.tradeable_tickers()
-        for side in config.zoo.ticker_sides
-        for strategy in config.zoo.ticker_exit_strategies
+        for side in sides
+        for strategy in strategies
         if _hpo_trials_for(counts, ticker, None, side, strategy) == 0
     ]
+    pending.sort(key=lambda triple: not is_new_arrival(triple[0]))  # stable: new arrivals first
+    return pending
 
 
 def refresh_signals(config: Config) -> int:
