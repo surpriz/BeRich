@@ -165,7 +165,10 @@ def _gate_failure(meta: ModelMetadata) -> str | None:
     - **every side** first clears a minimum OOS trade count (a few lucky trades prove nothing).
     - ``side="short"``: a directional short has no buy-&-hold benchmark, so its bar is a
       positive, significant Sharpe vs cash (same significance test as market-neutral).
-    - ``long_only`` (long side): the historical rule — it must beat buy & hold.
+    - ``long_only`` (long side): must beat buy & hold **and** post a positive, significant Sharpe.
+      The significance floor was added because on a near-flat benchmark (forex/commodities) "beats
+      buy & hold" is a near-trivial bar that promoted edge-less longs; a real long must also clear
+      the same anti-luck test as a short.
     - ``market_neutral``: positive, significant Sharpe.
     """
     thin = _trade_count_failure(meta)
@@ -176,7 +179,7 @@ def _gate_failure(meta: ModelMetadata) -> str | None:
     if meta.strategy_type == "long_only":
         if not meta.beats_buy_hold:
             return "it does not beat buy & hold"
-        return None
+        return _significance_failure(meta)
     return _significance_failure(meta)
 
 

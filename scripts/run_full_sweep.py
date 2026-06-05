@@ -30,7 +30,13 @@ from berich.scheduler.jobs import (
     acquire_hpo_lock,
     refresh_signals,
 )
+from berich.training.promotion import reconcile_sweep_fdr
 from berich.training.status import _hpo_trial_counts, _hpo_trials_for
+
+# Run the sweep-level FDR reconcile this often (every N tournaments) so the anti-luck demotion
+# happens continuously, instead of only at the end of a full 600-combo cycle that may never
+# complete before a restart resets it.
+_FDR_EVERY = 30
 
 _LOG_PATH = Path("data/sweep.log")
 _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -45,6 +51,15 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("sweep")
+
+
+def _fdr(config: Config, tag: str) -> None:
+    """Best-effort sweep-level FDR reconcile (demote promotions that fail multiple-testing)."""
+    try:
+        r = reconcile_sweep_fdr(config)
+        log.info("FDR %s: %d promoted -> %d demoted", tag, r["promoted_before"], r["demoted"])
+    except Exception:
+        log.exception("FDR %s failed", tag)
 
 
 def main() -> int:
@@ -97,6 +112,9 @@ def _continuous(config: Config) -> int:
     Runs under systemd (Restart=always); the cross-process lock keeps the scheduler's jobs yielding.
     """
     del config  # reloaded fresh each cycle (below)
+    # Reconcile once at startup: the service restarts (Restart=always) reset the cycle counter, so
+    # without this the end-of-cycle FDR could never fire on a long first pass.
+    _fdr(Config.load("config/berich.yaml"), "startup")
     cycle = 0
     while True:
         cycle += 1
@@ -151,23 +169,14 @@ def _continuous(config: Config) -> int:
                 refresh_signals(config)
             except Exception:
                 log.exception("refresh_signals failed after %s/%s/%s", ticker, side, strategy)
-        # Sweep-level multiple-testing control once per full cycle. This lives here (not only in
-        # the scheduler's ticker_initial_sweep_job) because the continuous sweep holds the HPO lock
-        # perpetually, so that scheduler job — which carries the FDR reconcile — always yields. Each
-        # tournament already corrected for its own search; this walks back promotions that don't
-        # survive Benjamini-Hochberg across the whole promoted set (demoted -> observe tier).
-        try:
-            from berich.training.promotion import reconcile_sweep_fdr  # noqa: PLC0415
-
-            fdr = reconcile_sweep_fdr(config)
-            log.info(
-                "cycle %d FDR: %d promoted -> %d demoted",
-                cycle,
-                fdr["promoted_before"],
-                fdr["demoted"],
-            )
-        except Exception:
-            log.exception("cycle %d: FDR reconciliation failed", cycle)
+            # Sweep-level multiple-testing control every _FDR_EVERY tournaments — the continuous
+            # sweep holds the HPO lock perpetually (so the scheduler's FDR job always yields), and a
+            # full 600-combo cycle may never complete before a restart. Each tournament already
+            # corrected for its own search; this walks back promotions that don't survive
+            # Benjamini-Hochberg across the whole promoted set (demoted -> observe tier).
+            if (i + 1) % _FDR_EVERY == 0:
+                _fdr(config, f"cycle {cycle} @{i + 1}/{len(combos)}")
+        _fdr(config, f"cycle {cycle} end")
         log.info(
             "cycle %d COMPLETE: %d combos, %d promoted, %.0f min",
             cycle,

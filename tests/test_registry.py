@@ -29,7 +29,14 @@ def _meta(name: str, *, beats: bool, n_trades: float = 30.0) -> ModelMetadata:
         name=name,
         framework="lightgbm",
         feature_columns=["a", "b", "c"],
-        metrics={"auc": 0.6, "n_trades": n_trades},
+        # Longs now also need a positive, significant Sharpe (not just beats-buy-&-hold).
+        metrics={
+            "auc": 0.6,
+            "n_trades": n_trades,
+            "sharpe": 1.0,
+            "deflated_sharpe": 0.98,
+            "sharpe_pvalue": 0.01,
+        },
         beats_buy_hold=beats,
     )
 
@@ -164,7 +171,8 @@ def test_legacy_metadata_without_strategy_type_defaults_long_only(tmp_path):
     # Overwrite with a pre-field metadata file (no strategy_type key).
     (tmp_path / "legacy" / "metadata.json").write_text(
         '{"name": "legacy", "framework": "lightgbm", "feature_columns": ["a", "b", "c"], '
-        '"metrics": {"n_trades": 30}, "beats_buy_hold": true}',
+        '"metrics": {"n_trades": 30, "sharpe": 1.0, "deflated_sharpe": 0.98, '
+        '"sharpe_pvalue": 0.01}, "beats_buy_hold": true}',
         encoding="utf-8",
     )
     meta = load_model("legacy", registry_dir=tmp_path)[1]

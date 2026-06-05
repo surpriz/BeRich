@@ -237,7 +237,16 @@ def train_candidate(
             f"p={sig.p_value:.3f} AUC={auc:.3f} n={n_trades}"
         )
     else:
-        beats_guard = bool(bt.beats_buy_hold) and auc > AUC_FLOOR and enough_trades
+        # Long gate: beat buy & hold AND clear the same anti-luck significance floor as a short —
+        # "beats a flat forex/commodity B&H" alone promoted edge-less longs (see registry).
+        beats_guard = (
+            bool(bt.beats_buy_hold)
+            and auc > AUC_FLOOR
+            and enough_trades
+            and sig.sharpe > 0
+            and sig.deflated_sharpe >= MIN_DEFLATED_SHARPE
+            and sig.p_value < MAX_SHARPE_PVALUE
+        )
         metrics = _finite_metrics(
             {
                 "auc": auc,

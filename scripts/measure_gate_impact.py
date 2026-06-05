@@ -34,7 +34,7 @@ def _promoted(cfg: Config) -> list[dict]:
         try:
             name = json.loads(active.read_text())["name"]
             meta = json.loads((reg / name / "metadata.json").read_text())
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S112 — skip an unreadable artifact, keep scanning
             continue
         out.append(
             {
@@ -76,8 +76,14 @@ def main() -> None:
         )
         try:
             _model, meta, _cal, cand = train_candidate(
-                cfg, store, p["ticker"], p["side"], key,
-                strategy=p["strategy"], calibrate=False, n_trials=n_trials,
+                cfg,
+                store,
+                p["ticker"],
+                p["side"],
+                key,
+                strategy=p["strategy"],
+                calibrate=False,
+                n_trials=n_trials,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"  SKIP {p['path']}: {exc}")
@@ -101,9 +107,7 @@ def main() -> None:
     print("-" * 65)
     for r in rows:
         flag = "✓" if r["new_pass"] else "✗"
-        print(
-            f"{r['path']:<34}{r['n_trades']:>9}{r['dsr']:>7.2f}{r['pval']:>8.3f}{flag:>7}"
-        )
+        print(f"{r['path']:<34}{r['n_trades']:>9}{r['dsr']:>7.2f}{r['pval']:>8.3f}{flag:>7}")
 
     passed = [r for r in rows if r["new_pass"]]
     thin = [r for r in rows if r["n_trades"] < MIN_TRADES]
