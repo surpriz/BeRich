@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { api, type Signal, type SignalConfig } from "@/app/lib/api";
+import { api, type PaperPosition, type Signal, type SignalConfig } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
 import { useStrategy } from "@/app/lib/strategy";
 
@@ -38,12 +38,21 @@ export default function BriefPage() {
   const { strategy } = useStrategy();
   const [signals, setSignals] = useState<Signal[] | null>(null);
   const [cfg, setCfg] = useState<SignalConfig | null>(null);
+  const [positions, setPositions] = useState<PaperPosition[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     api.signals().then(setSignals).catch((e) => setErr(String(e)));
     api.signalConfig().then(setCfg).catch(() => {});
   }, []);
+
+  // Open committed positions ("hold these"), refreshed with the selected exit strategy.
+  useEffect(() => {
+    api
+      .paperPositions(strategy, "promoted")
+      .then((r) => setPositions(r.positions))
+      .catch(() => setPositions([]));
+  }, [strategy]);
 
   const fr = locale === "fr";
   const capital = cfg?.capital ?? 0;
@@ -87,6 +96,14 @@ export default function BriefPage() {
     observeHint: fr
       ? "Modèles « presque promus », suivis en direct sans capital. À NE PAS financer — pour information seulement."
       : "Near-miss models, tracked live without capital. Do NOT fund — for information only.",
+    holdTitle: fr ? "Positions en cours — à conserver" : "Open positions — hold",
+    holdHint: fr
+      ? "Déjà ouvertes et toujours validées par la stratégie. Conserve-les jusqu'à leur sortie (stop / objectif) — ne ferme pas « au feeling »."
+      : "Already open and still validated by the strategy. Hold to their exit (stop / target) — don't close on a hunch.",
+    ordersTitle: fr ? "Nouveaux ordres du jour" : "New orders today",
+    current: fr ? "Cours" : "Price",
+    mtm: fr ? "P&L latent" : "Unrealized P&L",
+    held: fr ? "j" : "d",
     back: fr ? "← Retour" : "← Back",
   };
 
@@ -126,13 +143,31 @@ export default function BriefPage() {
             )}
           </div>
 
+          {positions.length > 0 && (
+            <section className="mt-8">
+              <h2 className="font-display text-lg font-bold">
+                {L.holdTitle}{" "}
+                <span className="text-sm font-normal text-[var(--color-faint)]">
+                  ({positions.length})
+                </span>
+              </h2>
+              <p className="mb-3 text-xs text-[var(--color-faint)]">{L.holdHint}</p>
+              <div className="flex flex-col gap-3">
+                {positions.map((p) => (
+                  <HoldCard key={`hold-${p.ticker}-${p.exit_strategy}`} p={p} L={L} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          <h2 className="mt-10 font-display text-lg font-bold">{L.ordersTitle}</h2>
           {committed.length === 0 ? (
-            <div className="card mt-6 p-8 text-center">
+            <div className="card mt-3 p-8 text-center">
               <p className="font-display text-xl font-bold">{L.empty}</p>
               <p className="mx-auto mt-2 max-w-md text-sm text-[var(--color-muted)]">{L.emptyHint}</p>
             </div>
           ) : (
-            <div className="mt-6 flex flex-col gap-3">
+            <div className="mt-3 flex flex-col gap-3">
               {committed.map((s) => (
                 <OrderCard key={`${s.ticker}-${s.exit_strategy}`} s={s} capital={capital} L={L} />
               ))}
@@ -221,6 +256,55 @@ function OrderCard({
           {L.exp}: {(s.exp_return_net * 100).toFixed(2)}%
         </div>
       )}
+    </div>
+  );
+}
+
+function HoldCard({ p, L }: { p: PaperPosition; L: Record<string, string> }) {
+  const isLong = (p.direction ?? "long") === "long";
+  const color = isLong ? "var(--color-bull)" : "var(--color-bear)";
+  const pnlColor =
+    p.mtm_pct > 0
+      ? "var(--color-bull)"
+      : p.mtm_pct < 0
+        ? "var(--color-bear)"
+        : "var(--color-muted)";
+  // For a trailing trade the live ratcheting stop is the effective stop to watch.
+  const stop = p.trail_stop ?? p.stop;
+  return (
+    <div className="card p-4" style={{ borderLeft: `3px solid ${color}` }}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-3">
+          <span
+            className="rounded px-2 py-0.5 text-xs font-bold uppercase tracking-widest"
+            style={{ color, backgroundColor: `${color}1a` }}
+          >
+            {isLong ? "LONG" : "SHORT"}
+          </span>
+          <Link
+            href={`/ticker/${encodeURIComponent(p.ticker)}`}
+            className="font-display text-lg font-bold hover:text-[var(--color-bull)]"
+          >
+            {p.ticker}
+          </Link>
+          <span className="text-xs text-[var(--color-faint)]">
+            {p.days_held} {L.held} · {p.size_shares} ×
+          </span>
+        </div>
+        <div className="text-right">
+          <div className="font-semibold" style={{ color: pnlColor }}>
+            {p.mtm_pct >= 0 ? "+" : ""}
+            {(p.mtm_pct * 100).toFixed(2)}%
+          </div>
+          <div className="text-xs text-[var(--color-muted)]">{L.mtm}</div>
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-4 gap-3 text-sm">
+        <Field label={L.entry} value={fmtPx(p.entry)} />
+        <Field label={L.current} value={fmtPx(p.current_price)} />
+        <Field label={L.stop} value={fmtPx(stop)} color="var(--color-bear)" />
+        <Field label={L.target} value={fmtPx(p.target)} color="var(--color-bull)" />
+      </div>
     </div>
   );
 }
