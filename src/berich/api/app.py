@@ -144,6 +144,39 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
         config.set_risk_profile(name)
         return {"active": name, "profiles": RISK_PROFILES}
 
+    @router.get("/brief-plan", dependencies=guard)
+    def brief_plan() -> list[dict]:
+        """Portfolio-coherent order sheet for the Brief: what the committed book WOULD open today.
+
+        Unlike raw ``/signals`` (one full-size order per signal), these sizes are already scaled to
+        the per-name / per-book / per-class caps + drawdown kill-switch and account for already-open
+        positions — so they sum to a real allocation, not 600% of capital.
+        """
+        from berich.signals.paper import plan_committed_opens
+
+        rows = plan_committed_opens(config, store, SignalStore(config.db_path))
+        if rows.empty:
+            return []
+        out = rows.copy()
+        out["direction"] = out["signal"].apply(
+            lambda s: "short" if str(s).upper() == "SHORT" else "long"
+        )
+        out["notional"] = out["entry"] * out["size_shares"]
+        out["date_open"] = pd.to_datetime(out["date_open"]).dt.strftime("%Y-%m-%d")
+        keep = [
+            "date_open",
+            "ticker",
+            "signal",
+            "direction",
+            "entry",
+            "stop",
+            "target",
+            "size_shares",
+            "notional",
+            "exit_strategy",
+        ]
+        return out[keep].to_dict(orient="records")
+
     @router.get("/hpo-progress", dependencies=guard)
     def hpo_progress_endpoint() -> dict:
         """Lightweight HPO sweep coverage (combo grain) for the /training progress bar.

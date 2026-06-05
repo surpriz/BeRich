@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { api, type PaperPosition, type Signal, type SignalConfig } from "@/app/lib/api";
+import {
+  api,
+  type PaperPosition,
+  type PlannedOrder,
+  type Signal,
+  type SignalConfig,
+} from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
 import { useStrategy } from "@/app/lib/strategy";
 
@@ -37,12 +43,15 @@ export default function BriefPage() {
   const { locale } = useI18n();
   const { strategy } = useStrategy();
   const [signals, setSignals] = useState<Signal[] | null>(null);
+  const [plan, setPlan] = useState<PlannedOrder[] | null>(null);
   const [cfg, setCfg] = useState<SignalConfig | null>(null);
   const [positions, setPositions] = useState<PaperPosition[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    api.signals().then(setSignals).catch((e) => setErr(String(e)));
+    // The Brief's new orders come from the PLAN (post-caps, portfolio-coherent), not raw signals.
+    api.briefPlan().then(setPlan).catch((e) => setErr(String(e)));
+    api.signals().then(setSignals).catch(() => {});
     api.signalConfig().then(setCfg).catch(() => {});
   }, []);
 
@@ -57,22 +66,31 @@ export default function BriefPage() {
   const fr = locale === "fr";
   const capital = cfg?.capital ?? 0;
 
-  const { committed, observe, date } = useMemo(() => {
-    const rows = (signals ?? []).filter(
-      (s) => (s.exit_strategy ?? "fixed") === strategy && ACTIONABLE.has(s.signal) && s.acted !== false,
-    );
-    const sortKey = (s: Signal) => s.exp_return_net ?? s.proba ?? 0;
-    const committed = rows
-      .filter((s) => s.promoted && s.size_shares > 0)
-      .sort((a, b) => sortKey(b) - sortKey(a));
-    const observe = rows
-      .filter((s) => !s.promoted && s.tier === "observe" && s.size_shares > 0)
-      .sort((a, b) => sortKey(b) - sortKey(a));
-    const date = rows[0]?.date ?? signals?.[0]?.date ?? null;
-    return { committed, observe, date };
-  }, [signals, strategy]);
+  // New orders: the portfolio-coherent plan filtered to the selected strategy, biggest first.
+  const committed = useMemo(
+    () =>
+      (plan ?? [])
+        .filter((o) => (o.exit_strategy ?? "fixed") === strategy)
+        .sort((a, b) => b.notional - a.notional),
+    [plan, strategy],
+  );
+  // Observe (watch-only, no capital) stays informational from raw signals.
+  const observe = useMemo(
+    () =>
+      (signals ?? []).filter(
+        (s) =>
+          (s.exit_strategy ?? "fixed") === strategy &&
+          ACTIONABLE.has(s.signal) &&
+          s.acted !== false &&
+          !s.promoted &&
+          s.tier === "observe" &&
+          s.size_shares > 0,
+      ),
+    [signals, strategy],
+  );
+  const date = committed[0]?.date_open ?? signals?.[0]?.date ?? null;
 
-  const totalNotional = committed.reduce((acc, s) => acc + s.notional, 0);
+  const totalNotional = committed.reduce((acc, o) => acc + o.notional, 0);
   const exposurePct = capital > 0 ? (totalNotional / capital) * 100 : 0;
 
   const L = {
@@ -101,11 +119,37 @@ export default function BriefPage() {
       ? "Déjà ouvertes et toujours validées par la stratégie. Conserve-les jusqu'à leur sortie (stop / objectif) — ne ferme pas « au feeling »."
       : "Already open and still validated by the strategy. Hold to their exit (stop / target) — don't close on a hunch.",
     ordersTitle: fr ? "Nouveaux ordres du jour" : "New orders today",
+    ordersNote: fr
+      ? "Tailles déjà ajustées aux plafonds du portefeuille (par actif, par classe, par livre) et aux positions déjà ouvertes — c'est ce que le livre ouvrira réellement, pas un ordre plein par signal."
+      : "Sizes already scaled to the portfolio caps (per name, per class, per book) and to positions already open — this is what the book will actually open, not one full-size order per signal.",
     current: fr ? "Cours" : "Price",
     mtm: fr ? "P&L latent" : "Unrealized P&L",
     held: fr ? "j" : "d",
+    howTitle: fr ? "Comment lire cette page" : "How to read this page",
     back: fr ? "← Retour" : "← Back",
   };
+
+  const HOW: { h: string; b: string }[] = fr
+    ? [
+        { h: "À quoi ça sert", b: "Une feuille d'ordres disciplinée : fais exactement ce qui est écrit, sans intuition. Tout est déjà calculé (sens, taille, stop, objectif)." },
+        { h: "Positions en cours — à conserver", b: "Ce que tu détiens déjà. Règle : tenir jusqu'au stop ou à l'objectif. Le P&L latent fluctue — ce n'est PAS un déclencheur ; seuls le stop et l'objectif le sont." },
+        { h: "Nouveaux ordres du jour", b: "Les GO à ouvrir. Investir X € (Y %) = la taille exacte, déjà gérée (~1 % de risque, ajustée aux plafonds). R/R x:1 = tu risques 1 pour viser x." },
+        { h: "LONG vs SHORT", b: "LONG = pari à la hausse (stop sous l'entrée, objectif au-dessus). SHORT = pari à la baisse (stop au-dessus, objectif en-dessous)." },
+        { h: "Le stop est sacré", b: "C'est ta perte maximale, fixée d'avance. Ne le déplace pas, ne ferme pas « au feeling ». Les pertes sont maîtrisées par le stop + le coupe-circuit global." },
+        { h: "Vide = reste à plat", b: "Aucun ordre = ne rien faire aujourd'hui. L'inaction disciplinée est une décision valide." },
+        { h: "Les molettes en haut", b: "Profil de risque = change la taille des ordres. Sélecteur de stratégie = quel livre (fixed / trailing) tu regardes." },
+        { h: "La vérité", b: "L'edge est mince : il y aura des pertes, mais bornées. La rentabilité vient de petites pertes maîtrisées + laisser courir les gains, répété avec discipline. Outil de conseil : en réel, c'est toi qui passes les ordres à ces niveaux." },
+      ]
+    : [
+        { h: "What it's for", b: "A disciplined order sheet: do exactly what's written, no hunches. Everything is pre-computed (side, size, stop, target)." },
+        { h: "Open positions — hold", b: "What you already hold. Rule: hold to the stop or target. Unrealized P&L fluctuates — it is NOT a trigger; only the stop and target are." },
+        { h: "New orders today", b: "The GOs to open. Invest X € (Y %) = the exact, risk-managed size (~1% risk, scaled to caps). R/R x:1 = risk 1 to aim for x." },
+        { h: "LONG vs SHORT", b: "LONG = bet up (stop below entry, target above). SHORT = bet down (stop above, target below)." },
+        { h: "The stop is sacred", b: "Your max loss, fixed in advance. Don't move it, don't close on a hunch. Losses are bounded by the stop + the global kill-switch." },
+        { h: "Empty = stay flat", b: "No orders = do nothing today. Disciplined inaction is a valid decision." },
+        { h: "The top toggles", b: "Risk profile = changes order sizes. Strategy selector = which book (fixed / trailing) you view." },
+        { h: "The truth", b: "The edge is thin: there will be losses, but bounded. Profit comes from small managed losses + letting winners run, repeated with discipline. Advisory tool: in real life, you place the orders at these levels." },
+      ];
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
@@ -121,10 +165,24 @@ export default function BriefPage() {
       </div>
       <p className="mt-3 max-w-2xl text-base text-[var(--color-muted)]">{L.intro}</p>
 
-      {err && <p className="mt-6 text-[var(--color-bear)]">{err}</p>}
-      {!signals && !err && <p className="mt-6 text-[var(--color-muted)]">…</p>}
+      <details className="card mt-4 p-4">
+        <summary className="cursor-pointer select-none text-sm font-semibold text-[var(--color-muted)] hover:text-[var(--color-fg)]">
+          ⓘ {L.howTitle}
+        </summary>
+        <dl className="mt-3 flex flex-col gap-2.5">
+          {HOW.map((x) => (
+            <div key={x.h}>
+              <dt className="text-sm font-semibold text-[var(--color-fg)]">{x.h}</dt>
+              <dd className="text-sm text-[var(--color-muted)]">{x.b}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
 
-      {signals && (
+      {err && <p className="mt-6 text-[var(--color-bear)]">{err}</p>}
+      {!plan && !err && <p className="mt-6 text-[var(--color-muted)]">…</p>}
+
+      {plan && (
         <>
           <div className="mt-8 flex flex-wrap gap-6 text-sm">
             <span>
@@ -167,11 +225,14 @@ export default function BriefPage() {
               <p className="mx-auto mt-2 max-w-md text-sm text-[var(--color-muted)]">{L.emptyHint}</p>
             </div>
           ) : (
-            <div className="mt-3 flex flex-col gap-3">
-              {committed.map((s) => (
-                <OrderCard key={`${s.ticker}-${s.exit_strategy}`} s={s} capital={capital} L={L} />
-              ))}
-            </div>
+            <>
+              <p className="mt-2 text-xs text-[var(--color-faint)]">{L.ordersNote}</p>
+              <div className="mt-3 flex flex-col gap-3">
+                {committed.map((o) => (
+                  <PlanCard key={`${o.ticker}-${o.exit_strategy}`} o={o} capital={capital} L={L} />
+                ))}
+              </div>
+            </>
           )}
 
           {observe.length > 0 && (
@@ -256,6 +317,58 @@ function OrderCard({
           {L.exp}: {(s.exp_return_net * 100).toFixed(2)}%
         </div>
       )}
+    </div>
+  );
+}
+
+function PlanCard({
+  o,
+  capital,
+  L,
+}: {
+  o: PlannedOrder;
+  capital: number;
+  L: Record<string, string>;
+}) {
+  const isLong = o.direction === "long";
+  const color = isLong ? "var(--color-bull)" : "var(--color-bear)";
+  const pct = capital > 0 ? (o.notional / capital) * 100 : null;
+  const risk = Math.abs(o.entry - o.stop);
+  const rr = risk > 0 ? Math.abs(o.target - o.entry) / risk : null;
+  return (
+    <div className="card p-4" style={{ borderLeft: `3px solid ${color}` }}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-3">
+          <span
+            className="rounded px-2 py-0.5 text-xs font-bold uppercase tracking-widest"
+            style={{ color, backgroundColor: `${color}1a` }}
+          >
+            {isLong ? "LONG" : "SHORT"}
+          </span>
+          <Link
+            href={`/ticker/${encodeURIComponent(o.ticker)}`}
+            className="font-display text-lg font-bold hover:text-[var(--color-bull)]"
+          >
+            {o.ticker}
+          </Link>
+          {rr && <span className="text-xs text-[var(--color-faint)]">R/R {rr.toFixed(1)}:1</span>}
+        </div>
+        <div className="text-right">
+          <div className="font-semibold">
+            {L.invest} {fmtEur(o.notional)}
+          </div>
+          {pct != null && (
+            <div className="text-xs text-[var(--color-muted)]">
+              {pct.toFixed(1)}% {L.ofPf} · {o.size_shares} ×
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
+        <Field label={L.entry} value={fmtPx(o.entry)} />
+        <Field label={L.stop} value={fmtPx(o.stop)} color="var(--color-bear)" />
+        <Field label={L.target} value={fmtPx(o.target)} color="var(--color-bull)" />
+      </div>
     </div>
   );
 }

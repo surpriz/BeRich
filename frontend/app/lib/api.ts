@@ -284,6 +284,20 @@ export type OpsLogLine = {
   source?: string;
 };
 
+// One portfolio-coherent planned order for the Brief (post-caps; what the book would open today).
+export type PlannedOrder = {
+  date_open: string;
+  ticker: string;
+  signal: "LONG" | "SHORT" | "BUY";
+  direction: "long" | "short";
+  entry: number;
+  stop: number;
+  target: number;
+  size_shares: number;
+  notional: number;
+  exit_strategy?: string | null;
+};
+
 // HPO sweep coverage at the (ticker × side × strategy) grain — feeds the /training & /ops bars.
 export type HpoProgress = {
   total: number;
@@ -404,6 +418,7 @@ export const api = {
   universes: () => get<Universes>("/universes"),
   signalConfig: () => get<SignalConfig>("/config"),
   training: () => get<TrainingStatus[]>("/training"),
+  briefPlan: () => get<PlannedOrder[]>("/brief-plan"),
   hpoProgress: () => get<HpoProgress>("/hpo-progress"),
   riskProfile: () => get<RiskProfileInfo>("/risk-profile"),
   setRiskProfile: (profile: string) => post<RiskProfileInfo>("/risk-profile", { profile }),

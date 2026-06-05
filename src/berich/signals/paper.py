@@ -692,7 +692,6 @@ def open_new_trades(
     if actionable.empty:
         return 0
 
-    sig = config.signals
     # Route by trust tier into two independent books, each with its OWN capital budget:
     #   - committed book: PROMOTED models (cleared the guard) — this is the real-capital track.
     #   - observation book: OBSERVE models (near-miss, paper-only) — tracks forward evidence with
@@ -703,33 +702,67 @@ def open_new_trades(
     paper = PaperStore(config.db_path)
     opened = 0
     for book_tier in (PROMOTED_TIER, OBSERVE_TIER):
-        book = actionable[tier == book_tier]
-        if book.empty:
-            continue
-        rows = _candidate_rows(book, book_tier)
-        # The drawdown kill-switch and position cap protect REAL capital, so they apply to the
-        # committed book only; the observation book just tracks forward evidence.
-        if book_tier == PROMOTED_TIER:
-            rows = _derisk_for_drawdown(rows, config, store)
-            rows = _cap_open_positions(
-                rows, paper.open_trades(tier=book_tier), sig.max_open_positions
-            )
-            if rows.empty:
-                continue
-        rows = _apply_exposure_caps(
-            rows,
-            paper.open_trades(tier=book_tier),
-            capital=float(sig.capital),
-            max_ticker_pct=float(sig.max_ticker_exposure_pct),
-            max_book_pct=float(sig.max_book_exposure_pct),
-            max_class_pct=float(sig.max_class_exposure_pct),
-            class_of=config.asset_class_for,
-        )
-        if rows.empty:
-            continue
-        opened += paper.insert_new(rows)
+        rows = _plan_book(config, store, paper, actionable[tier == book_tier], book_tier)
+        if not rows.empty:
+            opened += paper.insert_new(rows)
     logger.info("paper.open_new_trades: %d new trades opened", opened)
     return opened
+
+
+def _plan_book(
+    config: Config,
+    store: OhlcvStore,
+    paper: PaperStore,
+    book: pd.DataFrame,
+    book_tier: str,
+) -> pd.DataFrame:
+    """Candidate trades that WOULD open for one tier after all money-management guardrails.
+
+    The single source of truth shared by ``open_new_trades`` (which then inserts) and
+    ``plan_committed_opens`` (which returns it for the Brief's order sheet), so the planned orders
+    shown to the user are exactly what the book opens. Empty frame when nothing survives.
+    """
+    if book.empty:
+        return book
+    sig = config.signals
+    rows = _candidate_rows(book, book_tier)
+    # The drawdown kill-switch and position cap protect REAL capital, so they apply to the committed
+    # book only; the observation book just tracks forward evidence.
+    if book_tier == PROMOTED_TIER:
+        rows = _derisk_for_drawdown(rows, config, store)
+        rows = _cap_open_positions(rows, paper.open_trades(tier=book_tier), sig.max_open_positions)
+        if rows.empty:
+            return rows
+    return _apply_exposure_caps(
+        rows,
+        paper.open_trades(tier=book_tier),
+        capital=float(sig.capital),
+        max_ticker_pct=float(sig.max_ticker_exposure_pct),
+        max_book_pct=float(sig.max_book_exposure_pct),
+        max_class_pct=float(sig.max_class_exposure_pct),
+        class_of=config.asset_class_for,
+    )
+
+
+def plan_committed_opens(
+    config: Config, store: OhlcvStore, signal_store: SignalStore
+) -> pd.DataFrame:
+    """Dry-run of the committed book's opens today — what ``open_new_trades`` WOULD open, not raw
+    signals. Sizes are already scaled to the per-name / per-book / per-class caps and the drawdown
+    kill-switch, and they account for positions already open (which consume budget). This is the
+    portfolio-coherent order sheet the Brief shows, so its sizes sum to a real allocation rather
+    than one full-size order per signal. Returns rows with ``entry/stop/target/size_shares/...``.
+    """
+    latest = signal_store.latest()
+    if latest.empty:
+        return latest
+    actionable = latest[latest["signal"].isin([*LONG_OPEN, *SHORT_OPEN])]
+    actionable = actionable[actionable["size_shares"] > 0]
+    if actionable.empty:
+        return actionable
+    tier = _signal_tiers(actionable)
+    paper = PaperStore(config.db_path)
+    return _plan_book(config, store, paper, actionable[tier == PROMOTED_TIER], PROMOTED_TIER)
 
 
 def _committed_drawdown(config: Config, store: OhlcvStore) -> float:
@@ -1132,5 +1165,6 @@ __all__ = [
     "get_open_positions",
     "get_paper_metrics",
     "open_new_trades",
+    "plan_committed_opens",
     "update_open_trades",
 ]
