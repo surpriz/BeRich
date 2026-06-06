@@ -33,6 +33,36 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-06-06",
+    tone: "research",
+    title: {
+      fr: "Verdict du bake-off : PEAD et market-neutral enterrés — cap sur les 47 survivants",
+      en: "Bake-off verdict: PEAD and market-neutral buried — focus on the 47 survivors",
+    },
+    points: [
+      {
+        fr: "Gate des longs durci (Sharpe significatif exigé, pas seulement « bat le B&H ») + FDR rendu réellement périodique : les 119 promus gonflés sont retombés à 47 survivants honnêtes (forex 26, shorts crypto 5/5 et matières premières 5/5), stables sous FDR.",
+        en: "Long gate hardened (significant Sharpe required, not just beats-B&H) + FDR made truly periodic: the inflated 119 promotions fell to 47 honest survivors (forex 26, crypto shorts 5/5, commodity shorts 5/5), FDR-stable.",
+      },
+      {
+        fr: "Portefeuille papier remis à zéro sur bases saines (seule la position validée par la nouvelle stratégie conservée) ; le Brief affiche désormais le plan réellement ouvrable (tailles post-plafonds) + les positions à conserver + un encart « Comment lire ».",
+        en: "Paper portfolio reset to clean foundations (only the new-strategy-validated position kept); the Brief now shows the actually-openable plan (post-cap sizes) + held positions + a 'How to read' explainer.",
+      },
+      {
+        fr: "Bake-off pré-enregistré sous le harnais durci — PEAD : 6 175 événements, AUC 0.53-0.55, Sharpe 0.83 (5 j) / 1.10 (20 j) MAIS sous son benchmark de fenêtre (1.01 / 1.31) → échec. Market-neutral : rank-IC ≈ 0 (t = 0.26), aucun pouvoir de classement → échec.",
+        en: "Pre-registered bake-off under the hardened harness — PEAD: 6,175 events, AUC 0.53-0.55, Sharpe 0.83 (5d) / 1.10 (20d) BUT below its window benchmark (1.01 / 1.31) → fail. Market-neutral: rank-IC ≈ 0 (t = 0.26), zero ranking power → fail.",
+      },
+      {
+        fr: "Alerte de dérive hebdo remplacée : les tests de distribution sur features journalières crient au loup structurellement (3 calibrages testés, 31/31 alertent) — l'email ne signale plus que les vrais problèmes de données (cache périmé, prix figés). La vraie protection : ré-entraînement continu + gate + FDR.",
+        en: "Weekly drift alert replaced: distribution tests on daily features cry wolf structurally (3 calibrations tested, 31/31 alert) — the email now only flags real data problems (stale cache, frozen prices). The real protection: continuous retraining + gate + FDR.",
+      },
+    ],
+    verdict: {
+      fr: "Deux des trois pistes d'edge éliminées définitivement, sur règle pré-enregistrée. La direction restante : le forward test des 47 survivants (forex systématique + shorts crypto/matières premières) — décision de concentration à ~30 trades fermés par segment.",
+      en: "Two of the three edge directions definitively eliminated, per the pre-registered rule. The remaining direction: the forward test of the 47 survivors (systematic forex + crypto/commodity shorts) — concentration decision at ~30 closed trades per segment.",
+    },
+  },
+  {
     date: "2026-06-04",
     version: "v0.6.0",
     tone: "risk",

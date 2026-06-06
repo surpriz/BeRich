@@ -847,3 +847,33 @@ forward trend overlay), with the guard still refusing to overclaim.
 `berich train --all-tickers --tournament`) does the full per-asset HPO + tournament; a light
 nightly job (`ticker_nightly_refresh_job`) tops up studies and re-fits the current winners.
 The dual GPU is exploited via the existing `run_on_gpus` pool for the deep models.
+
+## Bake-off June 2026 — hardened-harness re-validation (PEAD & market-neutral buried)
+
+After the Phase-1-3 rigor overhaul (real-n_trials Deflated Sharpe, MIN_TRADES floor,
+sweep-level Benjamini-Hochberg FDR, volume-proportional slippage, significance floor on
+LONGS), the promoted set settled at **47 honest survivors** out of 600 (ticker × side ×
+strategy) combos: forex 26 (13L/13S), crypto shorts 5/5, commodity shorts 5/5, plus a
+handful of US/FR stock models. Median Sharpe 0.70, median DSR 0.97, FDR-stable.
+
+A pre-registered bake-off (rule fixed BEFORE looking: pass the hardened gate → own book;
+fail → buried, no re-litigation) re-tested the two remaining edge directions:
+
+- **PEAD (read-only, universe=all, 274 tickers, 6 175 events)** —
+  5d: AUC 0.535, Sharpe 0.827 vs window-B&H 1.006 (1 165 trades);
+  20d: AUC 0.546, Sharpe 1.097 vs window-B&H 1.309 (1 437 trades).
+  The drift exists (AUC > 0.5 on a large sample) but **holding through the earnings windows
+  beat trading them** on both horizons. Same conclusion as Phases 7-9, now confirmed with
+  realistic slippage and a big event sample. **Buried.**
+
+- **Market-neutral cross-sectional (universe=all, 274 names, 988k panel rows)** —
+  lgbm ranker: rank-IC 0.0007 (t = 0.26), Sharpe 0.08, DSR 0.10, p = 0.41;
+  patchtst: rank-IC −0.0027, Sharpe −0.61. (lstm/tft OOM'd on the shared GPU; with zero IC
+  on both evaluated rankers and Phase 10's prior negative, the verdict stands.)
+  **No cross-sectional ranking power on this universe. Buried.**
+
+**Guardrail (add to the two existing ones): do not re-litigate PEAD or the daily
+cross-sectional market-neutral ranker.** Both are settled under the hardened harness.
+The open direction is the **forward test of the 47 survivors** (systematic forex +
+crypto/commodity shorts): concentrate capital per (class × side) segment once ~30 closed
+paper trades accumulate with positive net realized expectancy; cut the segments that don't.
