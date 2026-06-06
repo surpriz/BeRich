@@ -681,13 +681,25 @@ def check_drift_job(config: Config) -> DriftReport:
     return report
 
 
-def ticker_drift_monitor_job(config: Config) -> dict[str, object]:
-    """Per-asset feature-drift watch over the optimized universe; alert on drifted promoted models.
+# A promoted asset whose last cached bar is older than this many calendar days is STALE — its
+# served signals are being computed on frozen data, which is an actionable, email-worthy problem.
+STALE_DATA_DAYS = 7
 
-    For each optimized ticker, compares its recent feature window to the training-era distribution
-    (PSI + KS). When a promoted asset's inputs have shifted enough to recommend a retrain, it's
-    collected and an alert email is sent so a human can decide. This never silently changes serving
-    — the honest, no-surprise action is to flag, not to demote behind your back.
+
+def ticker_drift_monitor_job(config: Config) -> dict[str, object]:
+    """Weekly per-asset DATA-HEALTH watch over the promoted universe.
+
+    Honest post-mortem of v1: distribution-based drift alerts (PSI/KS on feature windows) are
+    structurally noisy on daily financial features — calendar encodings differ between any two
+    windows by construction, and slow features (mom_60, SMA ratios, realized vol) are so
+    autocorrelated that adjacent quarters always "drift". The first weekly email flagged 33/47
+    promoted assets at 64-95% under three different calibrations: cry-wolf, not signal. Model rot
+    is already covered by something stronger — the continuous sweep retrains on fresh data and the
+    hardened gate + FDR demote models whose OOS edge dies.
+
+    So this job now alerts only on ACTIONABLE data problems for promoted assets: a stale OHLCV
+    cache (last bar older than ``STALE_DATA_DAYS``) or frozen prices (no movement over the recent
+    window). Drift shares are still computed and logged for visibility — just never emailed.
     """
     from berich.features.build import build_features, market_reference_for  # noqa: PLC0415
     from berich.models import load_active  # noqa: PLC0415
@@ -695,8 +707,11 @@ def ticker_drift_monitor_job(config: Config) -> dict[str, object]:
     from berich.signals.service import _optimized_tickers  # noqa: PLC0415
 
     store = OhlcvStore(config.ohlcv_dir)
+    now = datetime.now(UTC)
     scanned = 0
-    drifted: list[tuple[str, float]] = []
+    stale: list[tuple[str, int]] = []
+    frozen: list[str] = []
+    drift_shares: list[tuple[str, float]] = []
     for ticker in _optimized_tickers(config):
         df = store.load(ticker)
         if df is None or df.empty:
@@ -704,23 +719,35 @@ def ticker_drift_monitor_job(config: Config) -> dict[str, object]:
         # Only watch assets we'd actually trade: a promoted model on any side/strategy.
         if not _has_promoted_model(config, ticker, load_active):
             continue
+        scanned += 1
+        age_days = (now.date() - df.index[-1].date()).days
+        if age_days > STALE_DATA_DAYS:
+            stale.append((ticker, age_days))
+        tail = df["close"].tail(5)
+        if len(tail) >= 5 and float(tail.std()) == 0.0:  # noqa: PLR2004 — a week of identical closes
+            frozen.append(ticker)
         market = store.load(market_reference_for(config.asset_class_for(ticker)))
         feats = build_features(df, market=market).dropna()
         split = split_reference_recent(feats)
-        if split is None:
-            continue
-        scanned += 1
-        reference, recent = split
-        report = feature_drift(reference, recent)
-        if report.should_retrain:
-            drifted.append((ticker, report.share_drifted))
+        if split is not None:
+            report = feature_drift(*split)
+            drift_shares.append((ticker, report.psi_share_drifted))
 
-    if drifted:
-        _alert_drifted_assets(drifted)
+    if stale or frozen:
+        _alert_data_health(stale, frozen)
+    if drift_shares:
+        top = sorted(drift_shares, key=lambda x: -x[1])[:5]
+        logger.info(
+            "ticker_drift_monitor: drift shares (logged, not emailed — see docstring): %s",
+            ", ".join(f"{t}={s * 100:.0f}%" for t, s in top),
+        )
     summary: dict[str, object] = {
         "scanned": scanned,
-        "drifted": len(drifted),
-        "tickers": [t for t, _ in drifted],
+        "stale": [t for t, _ in stale],
+        "frozen": frozen,
+        "median_drift_share": (
+            sorted(s for _, s in drift_shares)[len(drift_shares) // 2] if drift_shares else 0.0
+        ),
     }
     logger.info("ticker_drift_monitor: %s", summary)
     return summary
@@ -735,16 +762,16 @@ def _has_promoted_model(config: Config, ticker: str, load_active) -> bool:  # no
     return False
 
 
-def _alert_drifted_assets(drifted: list[tuple[str, float]]) -> None:
-    """Best-effort email listing promoted assets whose inputs have drifted (retrain candidates)."""
+def _alert_data_health(stale: list[tuple[str, int]], frozen: list[str]) -> None:
+    """Best-effort email for ACTIONABLE data problems on promoted assets (stale/frozen cache)."""
     from berich.notifications.email import send_alert_email  # noqa: PLC0415
 
-    lines = "\n".join(f"  {tkr}: {share * 100:.0f}% of features drifted" for tkr, share in drifted)
+    lines = [f"  STALE  {tkr}: last bar {age} days old" for tkr, age in stale]
+    lines += [f"  FROZEN {tkr}: close unchanged across the last 5 bars" for tkr in frozen]
     send_alert_email(
-        subject=f"[BeRich] {len(drifted)} promoted asset(s) drifting — retrain recommended",
+        subject=f"[BeRich] data health: {len(stale) + len(frozen)} promoted asset(s) to check",
         body=(
-            "Feature drift exceeded the retrain threshold on these promoted assets. Their served "
-            "models were trained on a different distribution; consider re-running their tournament:"
-            f"\n\n{lines}\n"
+            "These promoted assets are being served from a broken/stale data feed — their signals "
+            "cannot be trusted until the cache refreshes:\n\n" + "\n".join(lines) + "\n"
         ),
     )

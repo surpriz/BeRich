@@ -59,6 +59,18 @@ class DriftReport:
         """Recommend retraining when at least a third of features have drifted."""
         return self.share_drifted >= 1 / 3
 
+    @property
+    def psi_share_drifted(self) -> float:
+        """Share of features with a SIGNIFICANT PSI shift — the alerting criterion.
+
+        PSI-only on purpose: the KS p-value rejects equality for trivially small shifts once the
+        reference holds hundreds of rows, so an OR-with-KS criterion flags almost everything on
+        financial data. PSI >= 0.25 is the industry "significant shift" bar and stays meaningful.
+        """
+        if not self.features:
+            return 0.0
+        return sum(f.psi >= PSI_SIGNIFICANT for f in self.features) / len(self.features)
+
     def to_frame(self) -> pd.DataFrame:
         return pd.DataFrame(
             [
@@ -125,16 +137,23 @@ def split_reference_recent(
     *,
     recent_window: int = 60,
     min_reference: int = 120,
+    max_reference: int | None = 252,
 ) -> tuple[pd.DataFrame, pd.DataFrame] | None:
-    """Split a causal feature frame into a training-era reference and a recent window.
+    """Split a causal feature frame into a comparable reference window and a recent window.
 
-    Reference = everything before the last ``recent_window`` rows; recent = the tail. Returns
-    ``None`` when there isn't enough history (``< min_reference`` reference rows) for a meaningful
-    comparison — the caller then skips the asset rather than alarm on noise.
+    Reference = the ``max_reference`` rows immediately BEFORE the last ``recent_window`` rows
+    (~the trailing year vs the trailing quarter); recent = the tail. Capping the reference matters:
+    against the FULL multi-year history, non-stationary markets make almost every feature "drift"
+    in any 60-day window — the first weekly alert flagged 33/47 assets at 64-95% drift, which is
+    noise, not signal. Comparable windows measure *recent regime change*, the actionable kind.
+    Returns ``None`` when there isn't enough history (``< min_reference`` reference rows) for a
+    meaningful comparison — the caller then skips the asset rather than alarm on noise.
     """
     if len(feats) < min_reference + recent_window:
         return None
     reference = feats.iloc[:-recent_window]
+    if max_reference is not None:
+        reference = reference.iloc[-max_reference:]
     recent = feats.iloc[-recent_window:]
     if len(reference) < min_reference:
         return None

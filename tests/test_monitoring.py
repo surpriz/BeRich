@@ -83,14 +83,12 @@ def test_split_reference_recent():
     assert len(reference) == 140
 
 
-def test_ticker_drift_monitor_alerts_on_regime_shift(tmp_path, monkeypatch):
-    rng = np.random.default_rng(0)
-    n = 320
-    idx = pd.date_range("2020-01-01", periods=n, freq="B")
-    # First ~260 bars calm, last 60 a clear volatility/return regime shift -> features drift.
-    rets = np.concatenate([rng.normal(0.0, 0.01, n - 60), rng.normal(0.02, 0.08, 60)])
+def _ohlcv_ending(end: pd.Timestamp, n: int = 320, seed: int = 0) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range(end=end, periods=n)
+    rets = rng.normal(0.0, 0.01, n)
     close = 100 * np.exp(np.cumsum(rets))
-    df = pd.DataFrame(
+    return pd.DataFrame(
         {
             "open": close,
             "high": close * 1.01,
@@ -100,23 +98,44 @@ def test_ticker_drift_monitor_alerts_on_regime_shift(tmp_path, monkeypatch):
         },
         index=idx,
     )
+
+
+def _drift_job_setup(tmp_path, monkeypatch, df: pd.DataFrame):
     store = OhlcvStore(tmp_path / "ohlcv")
     store.save("AAA", df)
     store.save("SPY", df)
     cfg = Config(data_dir=tmp_path, universes={"us_stocks": ["AAA"]})
-
-    # Pretend AAA is optimized + promoted, and capture the alert instead of sending email.
     monkeypatch.setattr("berich.signals.service._optimized_tickers", lambda _c: ["AAA"])
     monkeypatch.setattr(jobs_mod, "_has_promoted_model", lambda *_a, **_k: True)
-    alerts: list[list[tuple[str, float]]] = []
+    alerts: list[tuple[list, list]] = []
+    monkeypatch.setattr(jobs_mod, "_alert_data_health", lambda s, f: alerts.append((s, f)))
+    return cfg, alerts
 
-    def _capture(drifted: list[tuple[str, float]]) -> None:
-        alerts.append(drifted)
 
-    monkeypatch.setattr(jobs_mod, "_alert_drifted_assets", _capture)
-
+def test_drift_monitor_no_email_on_healthy_data(tmp_path, monkeypatch):
+    # Fresh, moving data -> drift shares are LOGGED but never emailed (cry-wolf post-mortem).
+    df = _ohlcv_ending(pd.Timestamp.today().normalize())
+    cfg, alerts = _drift_job_setup(tmp_path, monkeypatch, df)
     summary = ticker_drift_monitor_job(cfg)
     assert summary["scanned"] == 1
-    assert summary["drifted"] == 1
-    assert "AAA" in summary["tickers"]
-    assert alerts and alerts[0][0][0] == "AAA"
+    assert summary["stale"] == [] and summary["frozen"] == []
+    assert not alerts
+
+
+def test_drift_monitor_alerts_on_stale_cache(tmp_path, monkeypatch):
+    # Last bar months old -> the promoted asset is served from a dead feed: actionable email.
+    df = _ohlcv_ending(pd.Timestamp.today().normalize() - pd.Timedelta(days=90))
+    cfg, alerts = _drift_job_setup(tmp_path, monkeypatch, df)
+    summary = ticker_drift_monitor_job(cfg)
+    assert summary["stale"] == ["AAA"]
+    assert alerts and alerts[0][0][0][0] == "AAA"
+
+
+def test_drift_monitor_alerts_on_frozen_prices(tmp_path, monkeypatch):
+    # Fresh dates but identical closes across the tail -> frozen feed: actionable email.
+    df = _ohlcv_ending(pd.Timestamp.today().normalize())
+    df.iloc[-5:, df.columns.get_loc("close")] = 123.45
+    cfg, alerts = _drift_job_setup(tmp_path, monkeypatch, df)
+    summary = ticker_drift_monitor_job(cfg)
+    assert summary["frozen"] == ["AAA"]
+    assert alerts and alerts[0][1] == ["AAA"]
