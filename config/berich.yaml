@@ -368,6 +368,12 @@ universes:
     - DIS          # Disney
     - QQQ          # Nasdaq-100 ETF
     - INTC         # Intel
+    - LLY          # Eli Lilly
+    - TXN          # Texas Instruments
+    - QCOM         # Qualcomm
+    - CAT          # Caterpillar
+    - GS           # Goldman Sachs
+    - IBM          # IBM
   fr_stocks:
     - AIR.PA       # Airbus
     - MC.PA        # LVMH
@@ -391,6 +397,10 @@ universes:
     - RI.PA        # Pernod Ricard
     - VIE.PA       # Veolia
     - DSY.PA       # Dassault Systèmes
+    - HO.PA        # Thales
+    - SGO.PA       # Saint-Gobain
+    - ORA.PA       # Orange
+    - LR.PA        # Legrand
   forex:
     - EURUSD=X
     - GBPUSD=X
@@ -408,6 +418,16 @@ universes:
     - USDNOK=X
     - USDMXN=X
     - USDZAR=X
+    # June 2026 expansion — JPY/cross pairs overweighted on purpose: the FDR-stable
+    # survivors cluster on forex, and EURJPY/GBPJPY/AUDJPY carry 3 promoted books each.
+    - EURAUD=X
+    - EURCAD=X
+    - CADJPY=X
+    - CHFJPY=X
+    - NZDJPY=X
+    - GBPAUD=X
+    - GBPCHF=X
+    - EURNZD=X
   crypto:
     - BTC-USD
     - ETH-USD
@@ -423,6 +443,10 @@ universes:
     - BCH-USD
     - TRX-USD
     - ATOM-USD
+    - XLM-USD      # Stellar
+    - ETC-USD      # Ethereum Classic
+    - NEAR-USD     # NEAR Protocol
+    - ALGO-USD     # Algorand
   commodities:
     - GC=F         # gold front-month
     - CL=F         # WTI crude front-month
@@ -437,4 +461,7 @@ universes:
     - KC=F         # coffee
     - SB=F         # sugar
     - CT=F         # cotton
+    - BZ=F         # Brent crude front-month
     - HO=F         # heating oil
+    - CC=F         # cocoa
+    - LE=F         # live cattle
