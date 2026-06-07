@@ -286,6 +286,40 @@ export type OpsLogLine = {
   source?: string;
 };
 
+// The morning copy-trading action list — built from EXECUTIONS (facts), never forecasts.
+export type Replication = {
+  as_of: string;
+  capital_base: number;
+  open: {
+    ticker: string;
+    direction: "long" | "short";
+    exit_strategy?: string | null;
+    entry: number;
+    stop: number;
+    target: number;
+    size_shares: number;
+    notional: number;
+    date_open: string;
+  }[];
+  close: {
+    ticker: string;
+    direction: "long" | "short";
+    exit_strategy?: string | null;
+    status: string;
+    exit_price: number | null;
+    pnl_pct: number | null;
+    date_close: string | null;
+  }[];
+  adjust: {
+    ticker: string;
+    direction: string;
+    exit_strategy?: string | null;
+    effective_stop: number;
+    target: number;
+  }[];
+  closed_total: number;
+};
+
 // One portfolio-coherent planned order for the Brief (post-caps; what the book would open today).
 export type PlannedOrder = {
   date_open: string;
@@ -421,6 +455,7 @@ export const api = {
   signalConfig: () => get<SignalConfig>("/config"),
   training: () => get<TrainingStatus[]>("/training"),
   briefPlan: () => get<PlannedOrder[]>("/brief-plan"),
+  replication: () => get<Replication>("/replication"),
   hpoProgress: () => get<HpoProgress>("/hpo-progress"),
   riskProfile: () => get<RiskProfileInfo>("/risk-profile"),
   setRiskProfile: (profile: string) => post<RiskProfileInfo>("/risk-profile", { profile }),

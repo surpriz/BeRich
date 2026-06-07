@@ -189,6 +189,7 @@
   "nav.signals": "Signals",
   "nav.brief": "Daily brief",
   "nav.wallet": "Wallet",
+  "nav.copy": "Replicate",
   "wallet.cardTitle": "My paper portfolio",
   "wallet.cardHint": "Starting capital, current value, equity curve, open positions and trade history.",
   "nav.training": "Training",

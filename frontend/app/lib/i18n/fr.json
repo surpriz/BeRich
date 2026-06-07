@@ -189,6 +189,7 @@
   "nav.signals": "Signaux",
   "nav.brief": "Brief du jour",
   "nav.wallet": "Portefeuille",
+  "nav.copy": "Réplication",
   "wallet.cardTitle": "Mon portefeuille (papier)",
   "wallet.cardHint": "Capital de départ, valeur actuelle, courbe d'évolution, positions ouvertes et historique des trades.",
   "nav.training": "Entraînement",
