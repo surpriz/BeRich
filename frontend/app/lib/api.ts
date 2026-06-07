@@ -149,6 +149,8 @@ export type PaperClosedTrade = {
   exit_price: number;
   pnl_pct: number;
   pnl_eur: number;
+  // Which exit-strategy book the trade belongs to ("fixed" | "trailing" | "trailing_tp").
+  exit_strategy?: string | null;
 };
 
 export type CalibrationBucket = {

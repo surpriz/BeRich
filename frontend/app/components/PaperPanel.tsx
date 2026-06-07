@@ -1,9 +1,18 @@
 import type { PaperClosedTrade, PaperEquity, PaperPosition, SignalConfig } from "@/app/lib/api";
-import { useTranslate } from "@/app/lib/i18n";
+import { useI18n, useTranslate } from "@/app/lib/i18n";
 import { PaperEquityChart } from "./PaperEquityChart";
 import { BudgetBar, RangeBar } from "./bars";
 
 type PaperTier = "promoted" | "observe";
+
+// Per-book label (the robot runs the three exit-strategy books at once): a generic "trail" badge
+// hid which book a trade belongs to — Suiveur and Suiveur+TP looked identical.
+function bookLabel(strategy: string | null | undefined, fr: boolean): string {
+  const s = strategy ?? "fixed";
+  if (s === "trailing") return fr ? "Suiveur" : "Trailing";
+  if (s === "trailing_tp") return fr ? "Suiveur+TP" : "Trailing+TP";
+  return fr ? "Fixe" : "Fixed";
+}
 
 const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pct = (n: number) => `${(n * 100).toFixed(2)}%`;
@@ -150,6 +159,7 @@ function Stat({
 }
 
 function PositionsTable({ positions }: { positions: PaperPosition[] }) {
+  const fr = useI18n().locale === "fr";
   return (
     <div className="card overflow-hidden">
       <div className="border-b border-[var(--color-line)] px-5 py-3 text-xs uppercase tracking-widest text-[var(--color-muted)]">
@@ -187,11 +197,9 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
                         long
                       </span>
                     )}
-                    {p.exit_strategy && p.exit_strategy !== "fixed" ? (
-                      <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--color-muted)] ring-1 ring-[var(--color-line)]">
-                        trail
-                      </span>
-                    ) : null}
+                    <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--color-muted)] ring-1 ring-[var(--color-line)]">
+                      {bookLabel(p.exit_strategy, fr)}
+                    </span>
                   </span>
                 </td>
                 <td className="tabular px-3 py-2 text-xs text-[var(--color-muted)]">{p.date_open.slice(0, 10)}</td>
@@ -229,6 +237,7 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
 }
 
 function ClosedTable({ trades }: { trades: PaperClosedTrade[] }) {
+  const fr = useI18n().locale === "fr";
   return (
     <div className="card overflow-hidden">
       <div className="border-b border-[var(--color-line)] px-5 py-3 text-xs uppercase tracking-widest text-[var(--color-muted)]">
@@ -253,7 +262,14 @@ function ClosedTable({ trades }: { trades: PaperClosedTrade[] }) {
           <tbody>
             {trades.map((t) => (
               <tr key={`${t.date_open}-${t.ticker}`} className="border-b border-[var(--color-line)]/50 last:border-0">
-                <td className="px-5 py-2 font-display text-sm font-bold">{t.ticker}</td>
+                <td className="px-5 py-2 font-display text-sm font-bold">
+                  <span className="flex items-center gap-2">
+                    {t.ticker}
+                    <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--color-muted)] ring-1 ring-[var(--color-line)]">
+                      {bookLabel(t.exit_strategy, fr)}
+                    </span>
+                  </span>
+                </td>
                 <td className="tabular px-3 py-2 text-xs text-[var(--color-muted)]">{t.date_open.slice(0, 10)}</td>
                 <td className="tabular px-3 py-2 text-xs text-[var(--color-muted)]">{t.date_close}</td>
                 <td className="px-3 py-2 text-xs text-[var(--color-muted)]">{statusLabel(t.status)}</td>
