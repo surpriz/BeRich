@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   api,
   PAPER_EXPORT_URL,
@@ -10,9 +11,7 @@ import {
   type LongShortEquity,
   type LongShortLeg,
   type PaperCalibration,
-  type PaperClosedTrade,
   type PaperEquity,
-  type PaperPositions,
   type Signal,
   type SignalConfig,
   type Universes,
@@ -22,7 +21,6 @@ import { LongShortPanel } from "./components/LongShortPanel";
 import { BacktestPanel } from "./components/BacktestPanel";
 import { CalibrationCard } from "./components/CalibrationCard";
 import { DriftPanel } from "./components/DriftPanel";
-import { PaperPanel } from "./components/PaperPanel";
 import BriefPage from "./brief/page";
 import { UniverseTabs } from "./components/UniverseTabs";
 import { Show } from "./components/Show";
@@ -35,8 +33,6 @@ type State = {
   drift?: DriftReport;
   backtest?: Backtest;
   paperEquity?: PaperEquity;
-  paperPositions?: PaperPositions;
-  paperClosed?: PaperClosedTrade[];
   paperCalibration?: PaperCalibration;
   universes?: Universes;
   longshortBasket?: LongShortLeg[];
@@ -48,9 +44,6 @@ type State = {
 export default function Dashboard() {
   const [s, setS] = useState<State>({});
   const [activeUniverse, setActiveUniverse] = useState<AssetClass>("us_stocks");
-  // Which paper book the panel shows: the committed-capital book (promoted models) or the
-  // observation shadow book (near-miss models tracked live without capital).
-  const [paperTier, setPaperTier] = useState<"promoted" | "observe">("promoted");
   const t = useTranslate();
   const { level } = useLevel();
   const { strategy } = useStrategy();
@@ -64,8 +57,6 @@ export default function Dashboard() {
           drift,
           backtest,
           paperEquity,
-          paperPositions,
-          paperClosed,
           paperCalibration,
           universes,
           longshortBasket,
@@ -75,9 +66,8 @@ export default function Dashboard() {
           api.signals(),
           api.drift(),
           api.backtest(),
-          api.paperEquity(strategy, paperTier),
-          api.paperPositions(strategy, paperTier),
-          api.paperClosed(25, strategy, paperTier),
+          // Whole-portfolio headline (all books, committed) for the wallet card + Simple strip.
+          api.paperEquity(undefined, "promoted"),
           api.paperCalibration(),
           api.universes().catch(() => undefined),
           api.longshortBasket().catch(() => [] as LongShortLeg[]),
@@ -90,8 +80,6 @@ export default function Dashboard() {
             drift,
             backtest,
             paperEquity,
-            paperPositions,
-            paperClosed,
             paperCalibration,
             universes,
             longshortBasket,
@@ -105,7 +93,7 @@ export default function Dashboard() {
     return () => {
       alive = false;
     };
-  }, [strategy, paperTier]);
+  }, [strategy]);
 
   const filtered = useMemo(() => {
     if (!s.signals) return undefined;
@@ -220,18 +208,33 @@ export default function Dashboard() {
           </section>
 
           <Show min="standard">
-            {s.paperEquity && s.paperPositions && s.paperClosed ? (
-              <PaperPanel
-                equity={s.paperEquity}
-                positions={s.paperPositions.positions}
-                closed={s.paperClosed}
-                cfg={s.cfg}
-                tier={paperTier}
-                onTierChange={setPaperTier}
-              />
-            ) : (
-              <Skeleton h={600} />
-            )}
+            {/* The paper book moved to its own page — keep a compact pointer with the headline. */}
+            <Link href="/wallet" className="card block p-5 transition-colors hover:bg-white/[0.03]">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="font-display text-lg font-bold">{t("wallet.cardTitle")}</div>
+                  <div className="mt-0.5 text-sm text-[var(--color-muted)]">
+                    {t("wallet.cardHint")}
+                  </div>
+                </div>
+                {s.paperEquity && (
+                  <div className="tabular text-right text-xl font-bold">
+                    <span
+                      style={{
+                        color:
+                          (s.paperEquity.metrics.total_return_paper ?? 0) >= 0
+                            ? "var(--color-bull)"
+                            : "var(--color-bear)",
+                      }}
+                    >
+                      {(s.paperEquity.metrics.total_return_paper ?? 0) >= 0 ? "+" : ""}
+                      {((s.paperEquity.metrics.total_return_paper ?? 0) * 100).toFixed(2)}%
+                    </span>
+                    <span className="ml-2 text-sm font-normal text-[var(--color-faint)]">→</span>
+                  </div>
+                )}
+              </div>
+            </Link>
 
             {s.backtest ? <BacktestPanel bt={s.backtest} /> : <Skeleton h={460} />}
           </Show>
