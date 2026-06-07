@@ -23,6 +23,7 @@ import { BacktestPanel } from "./components/BacktestPanel";
 import { CalibrationCard } from "./components/CalibrationCard";
 import { DriftPanel } from "./components/DriftPanel";
 import { PaperPanel } from "./components/PaperPanel";
+import BriefPage from "./brief/page";
 import { UniverseTabs } from "./components/UniverseTabs";
 import { Show } from "./components/Show";
 import { useTranslate } from "./lib/i18n";
@@ -116,6 +117,43 @@ export default function Dashboard() {
   }, [s.signals, s.universes, activeUniverse, strategy]);
 
   const asOf = filtered?.[0]?.date ?? s.signals?.[0]?.date;
+
+  // Simple level: the home IS the Daily brief (novice / copy-trading view) — one performance
+  // strip, then exactly the same order sheet as /brief. The full dashboard stays one click away
+  // via the level switch.
+  if (level === "simple") {
+    const m = s.paperEquity?.metrics;
+    const perf = m?.total_return_paper;
+    const spy = m?.total_return_spy;
+    return (
+      <>
+        {m && typeof perf === "number" && (
+          <div className="mx-auto max-w-4xl px-6 pt-8">
+            <div className="card flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-sm">
+              <span className="text-[var(--color-muted)]">{t("simple.perf")}</span>
+              <span className="tabular font-semibold">
+                <span
+                  style={{
+                    color: perf >= 0 ? "var(--color-bull)" : "var(--color-bear)",
+                  }}
+                >
+                  {perf >= 0 ? "+" : ""}
+                  {(perf * 100).toFixed(2)}%
+                </span>
+                {typeof spy === "number" && Number.isFinite(spy) && (
+                  <span className="ml-2 text-[var(--color-faint)]">
+                    (SPY {spy >= 0 ? "+" : ""}
+                    {(spy * 100).toFixed(2)}%)
+                  </span>
+                )}
+              </span>
+            </div>
+          </div>
+        )}
+        <BriefPage embedded />
+      </>
+    );
+  }
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-12">

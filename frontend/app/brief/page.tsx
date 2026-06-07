@@ -39,7 +39,9 @@ function riskReward(s: Signal): number | null {
   return risk > 0 ? reward / risk : null;
 }
 
-export default function BriefPage() {
+// ``embedded`` renders the Brief inside another page (the Simple-level home) — same content,
+// no back-link (it would loop back to itself).
+export default function BriefPage({ embedded = false }: { embedded?: boolean }) {
   const { locale } = useI18n();
   const { strategy } = useStrategy();
   const [signals, setSignals] = useState<Signal[] | null>(null);
@@ -153,12 +155,14 @@ export default function BriefPage() {
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
-      <Link
-        href="/"
-        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-bull)]"
-      >
-        {L.back}
-      </Link>
+      {!embedded && (
+        <Link
+          href="/"
+          className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-bull)]"
+        >
+          {L.back}
+        </Link>
+      )}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <h1 className="font-display text-4xl font-extrabold tracking-tight">{L.title}</h1>
         {date && <span className="tabular font-mono text-sm text-[var(--color-faint)]">{date}</span>}
