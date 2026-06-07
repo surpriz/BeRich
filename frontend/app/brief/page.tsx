@@ -40,6 +40,26 @@ function riskReward(s: Signal): number | null {
 
 // ``embedded`` renders the Brief inside another page (the Simple-level home) — same content,
 // no back-link (it would loop back to itself).
+// Next automatic execution: weekdays at 22:30 Europe/Paris (after the US close completes the
+// daily bar). Shown on the forecast section so "upcoming orders" can never be mistaken for
+// confirmed, act-on-it-now instructions.
+function nextRunLabel(fr: boolean): string {
+  const paris = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Paris" }));
+  const d = new Date(paris);
+  const beforeRun = d.getHours() < 22 || (d.getHours() === 22 && d.getMinutes() < 30);
+  if (!beforeRun) d.setDate(d.getDate() + 1);
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+  const days = fr
+    ? ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"]
+    : ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const months = fr
+    ? ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
+    : ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return fr
+    ? `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]} à 22h30 (Paris)`
+    : `${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()} at 22:30 (Paris)`;
+}
+
 // Compact per-book badge: the robot runs the three exit-strategy books at once, so every card
 // says which book it belongs to.
 function bookLabel(strategy: string | null | undefined, fr: boolean): string {
@@ -128,10 +148,13 @@ export default function BriefPage({ embedded = false }: { embedded?: boolean }) 
     holdEmpty: fr
       ? "Aucune position ouverte — le robot est entièrement à plat."
       : "No open positions — the robot is fully flat.",
-    ordersTitle: fr ? "Nouveaux ordres du jour" : "New orders today",
+    ordersTitle: fr ? "Prochains ordres — prévision" : "Upcoming orders — forecast",
+    forecastWarn: fr
+      ? `⚠️ PRÉVISION, pas une instruction. Recalculée en continu : l'exécution réelle a lieu automatiquement le ${nextRunLabel(true)}, aux prix de clôture de ce jour-là. Les prix affichés (dernière clôture connue) sont indicatifs — l'ordre peut changer ou disparaître d'ici là. Ne reproduis pas ces ordres manuellement : le robot s'en charge, et ce qui a été réellement exécuté apparaît dans « Positions en cours ».`
+      : `⚠️ FORECAST, not an instruction. Recomputed continuously: the real execution happens automatically on ${nextRunLabel(false)}, at that day's closing prices. Prices shown (last known close) are indicative — an order can change or vanish by then. Do not replicate these orders manually: the robot handles it, and what was actually executed shows up under "Open positions".`,
     ordersNote: fr
-      ? "Tous livres confondus (badge = livre), chacun avec son budget. Tailles déjà ajustées aux plafonds et aux positions ouvertes — c'est exactement ce qui sera ouvert au prochain passage (jours ouvrés, 22h30 Paris)."
-      : "Across all books (badge = book), each with its own budget. Sizes already scaled to the caps and to open positions — exactly what will open at the next run (weekdays, 22:30 Paris).",
+      ? "Tous livres confondus (badge = livre), chacun avec son budget. Tailles déjà ajustées aux plafonds et aux positions ouvertes."
+      : "Across all books (badge = book), each with its own budget. Sizes already scaled to the caps and to open positions.",
     current: fr ? "Cours" : "Price",
     mtm: fr ? "P&L latent" : "Unrealized P&L",
     held: fr ? "j" : "d",
@@ -242,6 +265,9 @@ export default function BriefPage({ embedded = false }: { embedded?: boolean }) 
             </div>
           ) : (
             <>
+              <div className="mt-3 rounded-lg border border-[#e0a83d]/40 bg-[#e0a83d]/10 px-4 py-3 text-sm text-[var(--color-muted)]">
+                {L.forecastWarn}
+              </div>
               <p className="mt-2 text-xs text-[var(--color-faint)]">{L.ordersNote}</p>
               <div className="mt-3 flex flex-col gap-3">
                 {committed.map((o) => (
