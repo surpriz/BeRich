@@ -10,7 +10,6 @@ import {
   type SignalConfig,
 } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
-import { useStrategy } from "@/app/lib/strategy";
 
 /**
  * "Brief du jour" — the squared, bias-free order sheet.
@@ -41,9 +40,17 @@ function riskReward(s: Signal): number | null {
 
 // ``embedded`` renders the Brief inside another page (the Simple-level home) — same content,
 // no back-link (it would loop back to itself).
+// Compact per-book badge: the robot runs the three exit-strategy books at once, so every card
+// says which book it belongs to.
+function bookLabel(strategy: string | null | undefined, fr: boolean): string {
+  const s = strategy ?? "fixed";
+  if (s === "trailing") return fr ? "Suiveur" : "Trailing";
+  if (s === "trailing_tp") return fr ? "Suiveur+TP" : "Trailing+TP";
+  return fr ? "Fixe" : "Fixed";
+}
+
 export default function BriefPage({ embedded = false }: { embedded?: boolean }) {
   const { locale } = useI18n();
-  const { strategy } = useStrategy();
   const [signals, setSignals] = useState<Signal[] | null>(null);
   const [plan, setPlan] = useState<PlannedOrder[] | null>(null);
   const [cfg, setCfg] = useState<SignalConfig | null>(null);
@@ -57,38 +64,36 @@ export default function BriefPage({ embedded = false }: { embedded?: boolean }) 
     api.signalConfig().then(setCfg).catch(() => {});
   }, []);
 
-  // Open committed positions ("hold these"), refreshed with the selected exit strategy.
+  // Open committed positions ("hold these") across ALL exit-strategy books: the robot trades the
+  // three books simultaneously, so the Brief shows the WHOLE portfolio (with a per-book badge)
+  // rather than the slice behind the strategy toggle — that slicing made positions "disappear".
   useEffect(() => {
     api
-      .paperPositions(strategy, "promoted")
+      .paperPositions(undefined, "promoted")
       .then((r) => setPositions(r.positions))
       .catch(() => setPositions([]));
-  }, [strategy]);
+  }, []);
 
   const fr = locale === "fr";
   const capital = cfg?.capital ?? 0;
 
-  // New orders: the portfolio-coherent plan filtered to the selected strategy, biggest first.
+  // New orders: the full portfolio-coherent plan (all books), biggest first.
   const committed = useMemo(
-    () =>
-      (plan ?? [])
-        .filter((o) => (o.exit_strategy ?? "fixed") === strategy)
-        .sort((a, b) => b.notional - a.notional),
-    [plan, strategy],
+    () => [...(plan ?? [])].sort((a, b) => b.notional - a.notional),
+    [plan],
   );
-  // Observe (watch-only, no capital) stays informational from raw signals.
+  // Observe (watch-only, no capital) stays informational from raw signals — all books too.
   const observe = useMemo(
     () =>
       (signals ?? []).filter(
         (s) =>
-          (s.exit_strategy ?? "fixed") === strategy &&
           ACTIONABLE.has(s.signal) &&
           s.acted !== false &&
           !s.promoted &&
           s.tier === "observe" &&
           s.size_shares > 0,
       ),
-    [signals, strategy],
+    [signals],
   );
   const date = committed[0]?.date_open ?? signals?.[0]?.date ?? null;
 
@@ -118,12 +123,15 @@ export default function BriefPage({ embedded = false }: { embedded?: boolean }) 
       : "Near-miss models, tracked live without capital. Do NOT fund — for information only.",
     holdTitle: fr ? "Positions en cours — à conserver" : "Open positions — hold",
     holdHint: fr
-      ? "Déjà ouvertes et toujours validées par la stratégie. Conserve-les jusqu'à leur sortie (stop / objectif) — ne ferme pas « au feeling »."
-      : "Already open and still validated by the strategy. Hold to their exit (stop / target) — don't close on a hunch.",
+      ? "Tout le portefeuille, tous livres confondus (badge = livre). Conserve jusqu'à la sortie (stop / objectif) — ne ferme pas « au feeling »."
+      : "The whole portfolio, across all books (badge = book). Hold to the exit (stop / target) — don't close on a hunch.",
+    holdEmpty: fr
+      ? "Aucune position ouverte — le robot est entièrement à plat."
+      : "No open positions — the robot is fully flat.",
     ordersTitle: fr ? "Nouveaux ordres du jour" : "New orders today",
     ordersNote: fr
-      ? "Tailles déjà ajustées aux plafonds du portefeuille (par actif, par classe, par livre) et aux positions déjà ouvertes — c'est ce que le livre ouvrira réellement, pas un ordre plein par signal."
-      : "Sizes already scaled to the portfolio caps (per name, per class, per book) and to positions already open — this is what the book will actually open, not one full-size order per signal.",
+      ? "Tous livres confondus (badge = livre), chacun avec son budget. Tailles déjà ajustées aux plafonds et aux positions ouvertes — c'est exactement ce qui sera ouvert au prochain passage (jours ouvrés, 22h30 Paris)."
+      : "Across all books (badge = book), each with its own budget. Sizes already scaled to the caps and to open positions — exactly what will open at the next run (weekdays, 22:30 Paris).",
     current: fr ? "Cours" : "Price",
     mtm: fr ? "P&L latent" : "Unrealized P&L",
     held: fr ? "j" : "d",
@@ -205,22 +213,26 @@ export default function BriefPage({ embedded = false }: { embedded?: boolean }) 
             )}
           </div>
 
-          {positions.length > 0 && (
-            <section className="mt-8">
-              <h2 className="font-display text-lg font-bold">
-                {L.holdTitle}{" "}
-                <span className="text-sm font-normal text-[var(--color-faint)]">
-                  ({positions.length})
-                </span>
-              </h2>
-              <p className="mb-3 text-xs text-[var(--color-faint)]">{L.holdHint}</p>
+          <section className="mt-8">
+            <h2 className="font-display text-lg font-bold">
+              {L.holdTitle}{" "}
+              <span className="text-sm font-normal text-[var(--color-faint)]">
+                ({positions.length})
+              </span>
+            </h2>
+            <p className="mb-3 text-xs text-[var(--color-faint)]">{L.holdHint}</p>
+            {positions.length === 0 ? (
+              <div className="card p-5 text-center text-sm text-[var(--color-muted)]">
+                {L.holdEmpty}
+              </div>
+            ) : (
               <div className="flex flex-col gap-3">
                 {positions.map((p) => (
-                  <HoldCard key={`hold-${p.ticker}-${p.exit_strategy}`} p={p} L={L} />
+                  <HoldCard key={`hold-${p.ticker}-${p.exit_strategy}`} p={p} L={L} fr={fr} />
                 ))}
               </div>
-            </section>
-          )}
+            )}
+          </section>
 
           <h2 className="mt-10 font-display text-lg font-bold">{L.ordersTitle}</h2>
           {committed.length === 0 ? (
@@ -233,7 +245,13 @@ export default function BriefPage({ embedded = false }: { embedded?: boolean }) 
               <p className="mt-2 text-xs text-[var(--color-faint)]">{L.ordersNote}</p>
               <div className="mt-3 flex flex-col gap-3">
                 {committed.map((o) => (
-                  <PlanCard key={`${o.ticker}-${o.exit_strategy}`} o={o} capital={capital} L={L} />
+                  <PlanCard
+                    key={`${o.ticker}-${o.exit_strategy}`}
+                    o={o}
+                    capital={capital}
+                    L={L}
+                    fr={fr}
+                  />
                 ))}
               </div>
             </>
@@ -329,10 +347,12 @@ function PlanCard({
   o,
   capital,
   L,
+  fr,
 }: {
   o: PlannedOrder;
   capital: number;
   L: Record<string, string>;
+  fr: boolean;
 }) {
   const isLong = o.direction === "long";
   const color = isLong ? "var(--color-bull)" : "var(--color-bear)";
@@ -355,6 +375,9 @@ function PlanCard({
           >
             {o.ticker}
           </Link>
+          <span className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+            {bookLabel(o.exit_strategy, fr)}
+          </span>
           {rr && <span className="text-xs text-[var(--color-faint)]">R/R {rr.toFixed(1)}:1</span>}
         </div>
         <div className="text-right">
@@ -377,7 +400,15 @@ function PlanCard({
   );
 }
 
-function HoldCard({ p, L }: { p: PaperPosition; L: Record<string, string> }) {
+function HoldCard({
+  p,
+  L,
+  fr,
+}: {
+  p: PaperPosition;
+  L: Record<string, string>;
+  fr: boolean;
+}) {
   const isLong = (p.direction ?? "long") === "long";
   const color = isLong ? "var(--color-bull)" : "var(--color-bear)";
   const pnlColor =
@@ -404,6 +435,9 @@ function HoldCard({ p, L }: { p: PaperPosition; L: Record<string, string> }) {
           >
             {p.ticker}
           </Link>
+          <span className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+            {bookLabel(p.exit_strategy, fr)}
+          </span>
           <span className="text-xs text-[var(--color-faint)]">
             {p.days_held} {L.held} · {p.size_shares} ×
           </span>
