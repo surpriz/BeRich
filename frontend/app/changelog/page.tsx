@@ -33,6 +33,36 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-06-07",
+    tone: "infra",
+    title: {
+      fr: "Univers élargi : 100 → 125 actifs, surpondération là où l'edge survit",
+      en: "Universe expanded: 100 → 125 assets, overweighted where the edge survives",
+    },
+    points: [
+      {
+        fr: "Forex +8 (EURAUD, EURCAD, CADJPY, CHFJPY, NZDJPY, GBPAUD, GBPCHF, EURNZD) — surpondéré exprès : les survivants FDR se concentrent sur le forex et les crosses JPY portent 3 livres promus chacun. Crypto +4 (XLM, ETC, NEAR, ALGO) et matières premières +3 (Brent, cacao, bétail) — les shorts y étaient promus 5/5.",
+        en: "Forex +8 (EURAUD, EURCAD, CADJPY, CHFJPY, NZDJPY, GBPAUD, GBPCHF, EURNZD) — overweighted on purpose: FDR survivors cluster on forex and the JPY crosses carry 3 promoted books each. Crypto +4 (XLM, ETC, NEAR, ALGO) and commodities +3 (Brent, cocoa, live cattle) — shorts there were promoted 5/5.",
+      },
+      {
+        fr: "US +6 (Eli Lilly, Texas Instruments, Qualcomm, Caterpillar, Goldman Sachs, IBM) et France +4 (Thales, Saint-Gobain, Orange, Legrand) — secteurs non couverts, liquides. Les 25 validés sur yfinance avant ajout : plus de 2 000 barres quotidiennes chacun, données fraîches.",
+        en: "US +6 (Eli Lilly, Texas Instruments, Qualcomm, Caterpillar, Goldman Sachs, IBM) and France +4 (Thales, Saint-Gobain, Orange, Legrand) — uncovered, liquid sectors. All 25 validated on yfinance before adding: 2,000+ daily bars each, fresh data.",
+      },
+      {
+        fr: "Le sweep continu (désormais 750 combos actif × sens × stratégie) traite les combos jamais explorés EN PREMIER : les 25 nouveaux reçoivent leur recherche profonde (100 essais HPO) avant tout ré-approfondissement des anciens. Redémarré pour effet immédiat — combo 1/750 : LLY/long/fixed. Verdicts attendus sous ~2-4 jours sur /training.",
+        en: "The continuous sweep (now 750 ticker × side × strategy combos) processes never-searched combos FIRST: the 25 newcomers get their deep search (100 HPO trials) before any re-deepening of incumbents. Restarted for immediate effect — combo 1/750: LLY/long/fixed. Verdicts expected on /training within ~2-4 days.",
+      },
+      {
+        fr: "Le forward test n'est pas pollué : le filet FDR au redémarrage a confirmé 46 promus → 0 démotion, le livre engagé ne bouge pas, et un nouvel actif ne peut entrer qu'en passant le même gate durci (DSR ≥ 0.95, ≥ 20 trades, FDR) que les autres.",
+        en: "The forward test is not polluted: the FDR net at restart confirmed 46 promoted → 0 demotions, the committed book is untouched, and a newcomer can only enter by clearing the same hardened gate (DSR ≥ 0.95, ≥ 20 trades, FDR) as everyone else.",
+      },
+    ],
+    verdict: {
+      fr: "Plus de billets de loterie honnêtes, pas de promesse : la plupart des 25 resteront advisory-only — c'est le résultat attendu du gate, pas un échec. Ceux qui survivent rejoindront le livre observation puis, peut-être, le livre engagé.",
+      en: "More honest lottery tickets, no promise: most of the 25 will stay advisory-only — that is the gate's expected outcome, not a failure. Survivors will join the observation book and then, maybe, the committed book.",
+    },
+  },
+  {
     date: "2026-06-06",
     tone: "research",
     title: {
