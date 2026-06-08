@@ -14,13 +14,13 @@ import {
 import type { PriceBar, Signal } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
 
-const SMA_BLUE = "#6aa8ff";
-const SMA_VIOLET = "#b386ff";
-const STOP_RED = "#ef4444";
-const TARGET_GREEN = "#b6f24e";
-const ENTRY_YELLOW = "#facc15";
-const TREND_BLUE = "#5ec8ff";
-const TREND_BAND = "rgba(94,200,255,0.12)";
+const SMA_BLUE = "#2563eb";
+const SMA_VIOLET = "#7c3aed";
+const STOP_RED = "#e05252";
+const TARGET_GREEN = "#10936b";
+const ENTRY_YELLOW = "#b7791f";
+const TREND_BLUE = "#4f46e5";
+const TREND_BAND = "rgba(79,70,229,0.10)";
 
 // LONG: legacy BUY also opens a long. SHORT is the only bearish call drawn on the chart.
 function isLongSignal(sig: Signal["signal"]): boolean {
@@ -156,26 +156,26 @@ export function TickerChart({
       attributionLogo: false,
     };
     const grid = {
-      vertLines: { color: "rgba(35,44,55,0.4)" },
-      horzLines: { color: "rgba(35,44,55,0.4)" },
+      vertLines: { color: "rgba(20,24,31,0.06)" },
+      horzLines: { color: "rgba(20,24,31,0.06)" },
     };
 
     const chart: IChartApi = createChart(mainRef.current, {
       layout,
       grid,
-      rightPriceScale: { borderColor: "#232c37" },
-      timeScale: { borderColor: "#232c37", timeVisible: false },
+      rightPriceScale: { borderColor: "#e6e8ef" },
+      timeScale: { borderColor: "#e6e8ef", timeVisible: false },
       height: 380,
       autoSize: true,
     });
 
     const candles = chart.addSeries(CandlestickSeries, {
-      upColor: "#b6f24e",
-      downColor: "#ef4444",
-      borderUpColor: "#b6f24e",
-      borderDownColor: "#ef4444",
-      wickUpColor: "#b6f24e",
-      wickDownColor: "#ef4444",
+      upColor: "#10936b",
+      downColor: "#e05252",
+      borderUpColor: "#10936b",
+      borderDownColor: "#e05252",
+      wickUpColor: "#10936b",
+      wickDownColor: "#e05252",
     });
     candles.setData(
       bars.map((b) => ({
@@ -269,8 +269,8 @@ export function TickerChart({
     const sub: IChartApi = createChart(subRef.current, {
       layout,
       grid,
-      rightPriceScale: { borderColor: "#232c37" },
-      timeScale: { borderColor: "#232c37" },
+      rightPriceScale: { borderColor: "#e6e8ef" },
+      timeScale: { borderColor: "#e6e8ef" },
       height: 160,
       autoSize: true,
     });
@@ -286,7 +286,7 @@ export function TickerChart({
       bars.map((b) => ({
         time: b.date as Time,
         value: b.volume,
-        color: b.close >= b.open ? "rgba(182,242,78,0.45)" : "rgba(239,68,68,0.45)",
+        color: b.close >= b.open ? "rgba(16,147,107,0.5)" : "rgba(224,82,82,0.5)",
       })),
     );
     const rsiSeries = sub.addSeries(LineSeries, {

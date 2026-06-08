@@ -59,7 +59,7 @@ export function LanguageSelector() {
         onClick={() => setLocale("en")}
         className={`rounded px-2 py-1 ${
           locale === "en"
-            ? "bg-[var(--color-bull)]/10 text-[var(--color-bull)]"
+            ? "bg-[var(--color-accent)]/10 text-[var(--color-accent)]"
             : "text-[var(--color-faint)] hover:text-[var(--color-text)]"
         }`}
       >
@@ -70,7 +70,7 @@ export function LanguageSelector() {
         onClick={() => setLocale("fr")}
         className={`rounded px-2 py-1 ${
           locale === "fr"
-            ? "bg-[var(--color-bull)]/10 text-[var(--color-bull)]"
+            ? "bg-[var(--color-accent)]/10 text-[var(--color-accent)]"
             : "text-[var(--color-faint)] hover:text-[var(--color-text)]"
         }`}
       >

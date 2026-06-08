@@ -32,7 +32,7 @@ function IdeaCard({ s }: { s: Signal }) {
   const p = s.proba_calibrated ?? s.proba;
   const actionable = s.signal === "BUY" || s.signal === "LONG";
   return (
-    <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="card block p-4 transition-colors hover:bg-white/[0.03]">
+    <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="card block p-4 transition-colors hover:bg-[var(--color-surface-2)]">
       <div className="flex items-center justify-between">
         <span className="font-display text-lg font-bold">{s.ticker}</span>
         <span className="text-xs font-semibold" style={{ color: v.color }}>

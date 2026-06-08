@@ -372,7 +372,7 @@ function PipelineDiagram({ locale }: { locale: Locale }) {
       <div className="flex flex-col items-center gap-0">
         {stages.map((s, i) => (
           <div key={s.title} className="flex w-full flex-col items-center">
-            <div className="w-full max-w-xl rounded-lg border border-[var(--color-line)] bg-white/[0.02] px-4 py-3 text-center">
+            <div className="w-full max-w-xl rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-2)] px-4 py-3 text-center">
               <div className="font-display text-sm font-bold">{s.title}</div>
               {s.sub && <div className="mt-1 text-xs text-[var(--color-muted)]">{s.sub}</div>}
               {s.chips && (
@@ -453,7 +453,7 @@ export default function UnderTheHood() {
     <main className="mx-auto max-w-3xl px-6 py-12">
       <Link
         href="/"
-        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-bull)]"
+        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-accent)]"
       >
         ← {t("hood.back")}
       </Link>
@@ -469,7 +469,7 @@ export default function UnderTheHood() {
         <ol className="grid gap-1 text-sm sm:grid-cols-2">
           {sections.map((s) => (
             <li key={s.id}>
-              <a href={`#${s.id}`} className="text-[var(--color-muted)] hover:text-[var(--color-bull)]">
+              <a href={`#${s.id}`} className="text-[var(--color-muted)] hover:text-[var(--color-accent)]">
                 {s.title}
               </a>
             </li>

@@ -2,6 +2,7 @@ import type { PaperClosedTrade, PaperEquity, PaperPosition, SignalConfig } from 
 import { useI18n, useTranslate } from "@/app/lib/i18n";
 import { PaperEquityChart } from "./PaperEquityChart";
 import { BudgetBar, RangeBar } from "./bars";
+import { Info } from "./Term";
 
 type PaperTier = "promoted" | "observe";
 
@@ -68,7 +69,7 @@ export function PaperPanel({
         <div className="flex flex-wrap items-center gap-3">
           {onTierChange ? (
             <div
-              className="flex overflow-hidden rounded-md border border-[var(--color-border)] text-xs"
+              className="flex overflow-hidden rounded-md border border-[var(--color-line)] text-xs"
               title={t("paper.tier.hint")}
             >
               {(["promoted", "observe"] as PaperTier[]).map((tv) => (
@@ -78,8 +79,8 @@ export function PaperPanel({
                   onClick={() => onTierChange(tv)}
                   className={
                     tier === tv
-                      ? "bg-[var(--color-accent)] px-3 py-1 font-semibold text-black"
-                      : "px-3 py-1 text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+                      ? "bg-[var(--color-accent)] px-3 py-1 font-semibold text-white"
+                      : "px-3 py-1 text-[var(--color-muted)] hover:text-[var(--color-ink)]"
                   }
                 >
                   {tv === "promoted" ? t("paper.tier.committed") : t("paper.tier.observe")}
@@ -105,12 +106,24 @@ export function PaperPanel({
           value={spyHas ? `${delta >= 0 ? "+" : ""}${pct(delta)}` : "—"}
           valueClass={spyHas ? pnlColor(delta) : ""}
         />
-        <Stat label="Win rate" value={pct(m.win_rate)} sublabel={`${m.n_closed} closed`} />
+        <Stat
+          label={
+            <>
+              Win rate
+              <Info id="winrate" />
+            </>
+          }
+          value={pct(m.win_rate)}
+          sublabel={`${m.n_closed} closed`}
+        />
       </div>
 
       <div className="card px-5 py-3">
         <div className="mb-2 flex items-center justify-between text-xs">
-          <span className="uppercase tracking-widest text-[var(--color-muted)]">Book exposure</span>
+          <span className="uppercase tracking-widest text-[var(--color-muted)]">
+            Book exposure
+            <Info id="exposure" />
+          </span>
           <span className="tabular text-[var(--color-faint)]">
             €{fmt(usedExposure)} / €{fmt(bookBudget)} · {exposurePct.toFixed(0)}%
           </span>
@@ -124,7 +137,7 @@ export function PaperPanel({
             Equity vs SPY (same capital)
           </h3>
           <span className="text-xs text-[var(--color-faint)]">
-            start €{fmt(m.capital)} · max DD {pct(m.max_drawdown_paper)}
+            start €{fmt(m.capital)} · max DD <Info id="drawdown" /> {pct(m.max_drawdown_paper)}
           </span>
         </div>
         <PaperEquityChart equity={equity} />
@@ -144,7 +157,7 @@ function Stat({
   sublabel,
   valueClass,
 }: {
-  label: string;
+  label: React.ReactNode;
   value: string;
   sublabel?: string;
   valueClass?: string;
@@ -178,7 +191,10 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
               <th className="px-3 py-2 text-right font-medium">Current</th>
               <th className="px-3 py-2 text-right font-medium">Stop</th>
               <th className="px-3 py-2 text-center font-medium">Stop → Target</th>
-              <th className="px-3 py-2 text-right font-medium">MTM</th>
+              <th className="px-3 py-2 text-right font-medium">
+                MTM
+                <Info id="mtm" />
+              </th>
               <th className="px-5 py-2 text-right font-medium">Days</th>
             </tr>
           </thead>

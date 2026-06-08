@@ -10,6 +10,8 @@ import {
   type SignalConfig,
 } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
+import { PageIntro } from "@/app/components/PageIntro";
+import { ReplicationView } from "@/app/copy/page";
 
 /**
  * "Brief du jour" — the squared, bias-free order sheet.
@@ -76,6 +78,7 @@ export default function BriefPage({ embedded = false }: { embedded?: boolean }) 
   const [cfg, setCfg] = useState<SignalConfig | null>(null);
   const [positions, setPositions] = useState<PaperPosition[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [tab, setTab] = useState<"plan" | "copy">("plan");
 
   useEffect(() => {
     // The Brief's new orders come from the PLAN (post-caps, portfolio-coherent), not raw signals.
@@ -189,7 +192,7 @@ export default function BriefPage({ embedded = false }: { embedded?: boolean }) 
       {!embedded && (
         <Link
           href="/"
-          className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-bull)]"
+          className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-accent)]"
         >
           {L.back}
         </Link>
@@ -198,9 +201,40 @@ export default function BriefPage({ embedded = false }: { embedded?: boolean }) 
         <h1 className="font-display text-4xl font-extrabold tracking-tight">{L.title}</h1>
         {date && <span className="tabular font-mono text-sm text-[var(--color-faint)]">{date}</span>}
       </div>
-      <p className="mt-3 max-w-2xl text-base text-[var(--color-muted)]">{L.intro}</p>
+      <div className="mt-4">
+        <PageIntro page="brief" />
+      </div>
 
-      <details className="card mt-4 p-4">
+      <div className="mb-2 inline-flex rounded-full border border-[var(--color-line)] bg-[var(--color-surface)] p-0.5 text-sm">
+        {(
+          [
+            ["plan", fr ? "Positions & prévisions" : "Positions & forecast"],
+            ["copy", fr ? "À répliquer ce matin" : "Copy this morning"],
+          ] as const
+        ).map(([k, lab]) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setTab(k)}
+            aria-pressed={tab === k}
+            className={`rounded-full px-4 py-1.5 transition-colors ${
+              tab === k
+                ? "bg-[var(--color-accent)] text-white"
+                : "text-[var(--color-muted)] hover:text-[var(--color-ink)]"
+            }`}
+          >
+            {lab}
+          </button>
+        ))}
+      </div>
+
+      {tab === "copy" ? (
+        <div className="mt-6">
+          <ReplicationView />
+        </div>
+      ) : (
+        <>
+          <details className="card mt-4 p-4">
         <summary className="cursor-pointer select-none text-sm font-semibold text-[var(--color-muted)] hover:text-[var(--color-fg)]">
           ⓘ {L.howTitle}
         </summary>
@@ -304,6 +338,8 @@ export default function BriefPage({ embedded = false }: { embedded?: boolean }) 
           )}
         </>
       )}
+        </>
+      )}
     </main>
   );
 }
@@ -336,7 +372,7 @@ function OrderCard({
           </span>
           <Link
             href={`/ticker/${encodeURIComponent(s.ticker)}`}
-            className="font-display text-lg font-bold hover:text-[var(--color-bull)]"
+            className="font-display text-lg font-bold hover:text-[var(--color-accent)]"
           >
             {s.ticker}
           </Link>
@@ -397,11 +433,11 @@ function PlanCard({
           </span>
           <Link
             href={`/ticker/${encodeURIComponent(o.ticker)}`}
-            className="font-display text-lg font-bold hover:text-[var(--color-bull)]"
+            className="font-display text-lg font-bold hover:text-[var(--color-accent)]"
           >
             {o.ticker}
           </Link>
-          <span className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+          <span className="rounded bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
             {bookLabel(o.exit_strategy, fr)}
           </span>
           {rr && <span className="text-xs text-[var(--color-faint)]">R/R {rr.toFixed(1)}:1</span>}
@@ -457,11 +493,11 @@ function HoldCard({
           </span>
           <Link
             href={`/ticker/${encodeURIComponent(p.ticker)}`}
-            className="font-display text-lg font-bold hover:text-[var(--color-bull)]"
+            className="font-display text-lg font-bold hover:text-[var(--color-accent)]"
           >
             {p.ticker}
           </Link>
-          <span className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+          <span className="rounded bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
             {bookLabel(p.exit_strategy, fr)}
           </span>
           <span className="text-xs text-[var(--color-faint)]">

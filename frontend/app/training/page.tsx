@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { api, type HpoProgress, type TournamentCandidate, type TrainingStatus } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
 import { Show } from "@/app/components/Show";
+import { PageIntro } from "@/app/components/PageIntro";
 
 const STATUS_STYLE: Record<TrainingStatus["status"], string> = {
   promoted: "text-[var(--color-bull)] border-[var(--color-bull)]",
@@ -294,6 +295,9 @@ export default function TrainingPage() {
     <main className="mx-auto max-w-5xl px-6 py-12">
       <h1 className="font-display text-3xl font-bold">{t("training.title")}</h1>
       <p className="mt-2 max-w-2xl text-sm text-[var(--color-muted)]">{t("training.intro")}</p>
+      <div className="mt-4">
+        <PageIntro page="training" />
+      </div>
 
       <HpoSweepProgress t={t} />
       {rows && <CoverageBanner grouped={grouped} t={t} />}
@@ -319,7 +323,7 @@ export default function TrainingPage() {
                 return (
                   <tr key={g.ticker} className="border-b border-[var(--color-line)]/50 align-top">
                     <td className="px-4 py-3">
-                      <Link href={`/ticker/${encodeURIComponent(g.ticker)}`} className="font-medium hover:text-[var(--color-bull)]">
+                      <Link href={`/ticker/${encodeURIComponent(g.ticker)}`} className="font-medium hover:text-[var(--color-accent)]">
                         {g.ticker}
                       </Link>
                       {g.long?.status === "promoted" && g.short?.status === "promoted" && (

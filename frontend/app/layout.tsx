@@ -1,15 +1,16 @@
 import type { Metadata } from "next";
-import { Bricolage_Grotesque, Hanken_Grotesk, JetBrains_Mono } from "next/font/google";
+import { Schibsted_Grotesk, Hanken_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { I18nProvider } from "./lib/i18n";
 import { LevelProvider } from "./lib/level";
 import { StrategyProvider } from "./lib/strategy";
 import { HealthFooter } from "./components/HealthFooter";
 import { TopNav } from "./components/TopNav";
+import { Onboarding } from "./components/Onboarding";
 
-const bricolage = Bricolage_Grotesque({
+const schibsted = Schibsted_Grotesk({
   subsets: ["latin"],
-  variable: "--font-bricolage",
+  variable: "--font-schibsted",
   weight: ["500", "700", "800"],
 });
 const hanken = Hanken_Grotesk({
@@ -30,7 +31,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${bricolage.variable} ${hanken.variable} ${jetbrains.variable}`}>
+    <html lang="en" className={`${schibsted.variable} ${hanken.variable} ${jetbrains.variable}`}>
       <body>
         <I18nProvider>
           <LevelProvider>
@@ -38,6 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <TopNav />
               {children}
               <HealthFooter />
+              <Onboarding />
             </StrategyProvider>
           </LevelProvider>
         </I18nProvider>

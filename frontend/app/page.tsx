@@ -24,6 +24,7 @@ import { DriftPanel } from "./components/DriftPanel";
 import BriefPage from "./brief/page";
 import { UniverseTabs } from "./components/UniverseTabs";
 import { Show } from "./components/Show";
+import { PageIntro } from "./components/PageIntro";
 import { useTranslate } from "./lib/i18n";
 import { useLevel } from "./lib/level";
 import { useStrategy } from "./lib/strategy";
@@ -148,7 +149,7 @@ export default function Dashboard() {
       <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-5xl font-extrabold tracking-tight">
-            Be<span className="text-[var(--color-bull)]">Rich</span>
+            Be<span className="text-[var(--color-accent)]">Rich</span>
           </h1>
           <p className="mt-1 text-sm text-[var(--color-muted)]">{t("app.tagline")}</p>
           <p className="mt-2 max-w-xl text-xs text-[var(--color-faint)]">{t(`level.hint.${level}`)}</p>
@@ -163,7 +164,9 @@ export default function Dashboard() {
         )}
       </header>
 
-      <div className="mb-3 rounded-lg border border-[var(--color-line)] bg-white/[0.02] px-4 py-3 text-sm">
+      <PageIntro page="opportunities" />
+
+      <div className="mb-3 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-2)] px-4 py-3 text-sm">
         <div className="mb-1 font-semibold text-[var(--color-fg)]">{t("legend.title")}</div>
         <div className="flex flex-col gap-1.5">
           <div className="flex items-start gap-2">
@@ -181,7 +184,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="mb-8 rounded-lg border border-[var(--color-line)] bg-white/[0.02] px-4 py-3 text-sm text-[var(--color-muted)]">
+      <div className="mb-8 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-2)] px-4 py-3 text-sm text-[var(--color-muted)]">
         <span className="font-semibold text-[var(--color-fg)]">{t("philosophy.title")}</span>{" "}
         {t("philosophy.body")}
       </div>
@@ -209,7 +212,7 @@ export default function Dashboard() {
 
           <Show min="standard">
             {/* The paper book moved to its own page — keep a compact pointer with the headline. */}
-            <Link href="/wallet" className="card block p-5 transition-colors hover:bg-white/[0.03]">
+            <Link href="/wallet" className="card block p-5 transition-colors hover:bg-[var(--color-surface-2)]">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="font-display text-lg font-bold">{t("wallet.cardTitle")}</div>
@@ -263,7 +266,7 @@ export default function Dashboard() {
                 </div>
                 <a
                   href={PAPER_EXPORT_URL}
-                  className="mt-4 inline-block self-start rounded-md border border-[var(--color-line)] bg-[var(--color-line)]/[0.04] px-4 py-2 text-sm text-[var(--color-bull)] hover:bg-[var(--color-line)]/[0.10]"
+                  className="mt-4 inline-block self-start rounded-md border border-[var(--color-line)] bg-[var(--color-surface-2)] px-4 py-2 text-sm text-[var(--color-accent)] hover:bg-[var(--color-line)]/40"
                 >
                   {t("dashboard.downloadCsv")}
                 </a>

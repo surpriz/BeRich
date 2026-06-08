@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import type { Signal, SignalConfig } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
+import { useLevel } from "@/app/lib/level";
 import { SignalBadge } from "./SignalBadge";
 import { Show } from "./Show";
 import { Info } from "./Term";
@@ -99,6 +100,8 @@ const SLTP_LABEL: Record<string, string> = {
 
 export function SignalsTable({ signals, cfg }: { signals: Signal[]; cfg?: SignalConfig }) {
   const { t } = useI18n();
+  const { level } = useLevel();
+  const plain = level === "simple"; // Discovery: show plain-language column headers
   const defaultCost = signals.find((s) => s.cost_bps_roundtrip != null)?.cost_bps_roundtrip;
   const [costBps, setCostBps] = useState<number>(defaultCost ?? DEFAULT_COST_BPS);
   if (signals.length === 0) {
@@ -130,12 +133,21 @@ export function SignalsTable({ signals, cfg }: { signals: Signal[]; cfg?: Signal
             <th className="px-5 py-3 font-medium">Ticker</th>
             <th className="px-3 py-3 font-medium">Signal</th>
             <th className="px-3 py-3 font-medium">
-              P(win)
+              {plain ? t("plain.pwin") : "P(win)"}
               <Info id="pwin" />
             </th>
-            <th className="px-3 py-3 text-right font-medium">Entry</th>
-            <th className="px-3 py-3 text-right font-medium">Stop</th>
-            <th className="px-3 py-3 text-right font-medium">Target</th>
+            <th className="px-3 py-3 text-right font-medium">
+              {plain ? t("plain.entry") : "Entry"}
+              <Info id="entry" />
+            </th>
+            <th className="px-3 py-3 text-right font-medium">
+              {plain ? t("plain.sl") : "Stop"}
+              <Info id="sl" />
+            </th>
+            <th className="px-3 py-3 text-right font-medium">
+              {plain ? t("plain.tp") : "Target"}
+              <Info id="tp" />
+            </th>
             <th className="px-3 py-3 font-medium">
               SL/TP
               <Info id="atr" />
@@ -151,13 +163,13 @@ export function SignalsTable({ signals, cfg }: { signals: Signal[]; cfg?: Signal
           {signals.map((s, i) => (
             <tr
               key={s.ticker}
-              className="rise group border-b border-[var(--color-line)]/50 transition-colors last:border-0 hover:bg-white/[0.03]"
+              className="rise group border-b border-[var(--color-line)]/50 transition-colors last:border-0 hover:bg-[var(--color-surface-2)]"
               style={{ animationDelay: `${i * 40}ms` }}
             >
               <td className="px-5 py-3 font-display text-base font-bold">
                 <Link
                   href={`/ticker/${encodeURIComponent(s.ticker)}`}
-                  className="block group-hover:text-[var(--color-bull)]"
+                  className="block group-hover:text-[var(--color-accent)]"
                 >
                   {s.ticker}
                 </Link>

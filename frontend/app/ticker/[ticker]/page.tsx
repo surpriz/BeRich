@@ -17,6 +17,7 @@ import { TickerChart } from "@/app/components/TickerChart";
 import { TrainingInfo } from "@/app/components/TrainingInfo";
 import { Show } from "@/app/components/Show";
 import { Info } from "@/app/components/Term";
+import { PageIntro } from "@/app/components/PageIntro";
 import { useTranslate } from "@/app/lib/i18n";
 import { useStrategy } from "@/app/lib/strategy";
 
@@ -98,7 +99,7 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
     <main className="mx-auto max-w-6xl px-6 py-12">
       <Link
         href="/"
-        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-bull)]"
+        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-accent)]"
       >
         ← {t("ticker.back")}
       </Link>
@@ -160,6 +161,8 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
         )}
       </header>
 
+      <PageIntro page="ticker" />
+
       {latest && (
         <div className="mb-6">
           <SignalAdvice signal={latest} cfg={cfg} />
@@ -177,7 +180,7 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
 
       {latest && (latest.ret_q10 != null || latest.sigma_horizon != null) && (
         <Show min="expert">
-          <div className="mb-6 flex flex-wrap gap-6 rounded-lg border border-[var(--color-line)] bg-white/[0.02] px-4 py-3 text-xs text-[var(--color-muted)]">
+          <div className="mb-6 flex flex-wrap gap-6 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-2)] px-4 py-3 text-xs text-[var(--color-muted)]">
             {latest.ret_q10 != null && latest.ret_q90 != null && (
               <span>
                 <span className="text-[var(--color-faint)]">
@@ -221,7 +224,7 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
       <section className="card mb-8 p-5">
         <h2 className="mb-3 font-display text-lg font-bold">{t("ticker.whySignal")}</h2>
         {explain === undefined && (
-          <div className="h-24 animate-pulse rounded bg-white/[0.03]" />
+          <div className="h-24 animate-pulse rounded bg-[var(--color-surface-2)]" />
         )}
         {explain === null && (
           <p className="text-sm text-[var(--color-faint)]">{t("ticker.noExplain")}</p>
@@ -273,7 +276,7 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
                       href={n.url || "#"}
                       target="_blank"
                       rel="noreferrer"
-                      className="block text-sm text-[var(--color-text)] hover:text-[var(--color-bull)]"
+                      className="block text-sm text-[var(--color-text)] hover:text-[var(--color-accent)]"
                     >
                       {n.title}
                     </a>
@@ -311,7 +314,7 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
 
       <section className="card p-5">
         <h2 className="mb-3 font-display text-lg font-bold">{t("ticker.history")}</h2>
-        {!shown && <div className="h-24 animate-pulse rounded bg-white/[0.03]" />}
+        {!shown && <div className="h-24 animate-pulse rounded bg-[var(--color-surface-2)]" />}
         {shown && shown.length === 0 && (
           <p className="text-sm text-[var(--color-faint)]">{t("ticker.noHistory")}</p>
         )}

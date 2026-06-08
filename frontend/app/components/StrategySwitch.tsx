@@ -26,7 +26,7 @@ export function StrategySwitch() {
           aria-pressed={strategy === s}
           className={`rounded px-2.5 py-1 transition-colors ${
             strategy === s
-              ? "bg-[var(--color-bull)]/10 text-[var(--color-bull)]"
+              ? "bg-[var(--color-accent)]/10 text-[var(--color-accent)]"
               : "text-[var(--color-faint)] hover:text-[var(--color-ink)]"
           }`}
         >

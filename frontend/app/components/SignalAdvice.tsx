@@ -48,7 +48,7 @@ export function SignalAdvice({ signal, cfg }: { signal: Signal; cfg: SignalConfi
   const promotedNote = signal.promoted ? t("advice.promotedNote") : t("advice.advisoryNote");
 
   return (
-    <div className="rounded-md border border-[var(--color-line)] bg-white/[0.02] px-4 py-3 text-sm">
+    <div className="rounded-md border border-[var(--color-line)] bg-[var(--color-surface-2)] px-4 py-3 text-sm">
       <div className="font-medium text-[var(--color-fg)]">{headline}</div>
       <p className="mt-1 text-[var(--color-muted)]">{body}</p>
       <p className="mt-1.5 text-xs text-[var(--color-faint)]">{promotedNote}</p>

@@ -21,7 +21,7 @@ export function LevelSwitch() {
           aria-pressed={level === l}
           className={`rounded px-2.5 py-1 transition-colors ${
             level === l
-              ? "bg-[var(--color-bull)]/10 text-[var(--color-bull)]"
+              ? "bg-[var(--color-accent)]/10 text-[var(--color-accent)]"
               : "text-[var(--color-faint)] hover:text-[var(--color-ink)]"
           }`}
         >

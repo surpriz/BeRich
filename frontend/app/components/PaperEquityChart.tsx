@@ -19,19 +19,19 @@ export function PaperEquityChart({ equity }: { equity: PaperEquity }) {
         attributionLogo: false,
       },
       grid: {
-        vertLines: { color: "rgba(35,44,55,0.4)" },
-        horzLines: { color: "rgba(35,44,55,0.4)" },
+        vertLines: { color: "rgba(20,24,31,0.06)" },
+        horzLines: { color: "rgba(20,24,31,0.06)" },
       },
-      rightPriceScale: { borderColor: "#232c37" },
-      timeScale: { borderColor: "#232c37" },
+      rightPriceScale: { borderColor: "#e6e8ef" },
+      timeScale: { borderColor: "#e6e8ef" },
       height: 280,
       autoSize: true,
     });
 
     const paper = chart.addSeries(AreaSeries, {
-      lineColor: "#b6f24e",
-      topColor: "rgba(182,242,78,0.28)",
-      bottomColor: "rgba(182,242,78,0.01)",
+      lineColor: "#10936b",
+      topColor: "rgba(16,147,107,0.22)",
+      bottomColor: "rgba(16,147,107,0.02)",
       lineWidth: 2,
     });
     const spy = chart.addSeries(LineSeries, {

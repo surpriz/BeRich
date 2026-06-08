@@ -10,6 +10,7 @@ import {
   type SignalConfig,
 } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
+import { PageIntro } from "@/app/components/PageIntro";
 import { PaperPanel } from "@/app/components/PaperPanel";
 
 /**
@@ -62,13 +63,15 @@ export default function WalletPage() {
   return (
     <main className="mx-auto max-w-6xl px-6 py-12">
       <Link
-        href="/"
-        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-bull)]"
+        href="/brief"
+        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-accent)]"
       >
         {L.back}
       </Link>
       <h1 className="font-display text-4xl font-extrabold tracking-tight">{L.title}</h1>
-      <p className="mt-3 max-w-2xl text-base text-[var(--color-muted)]">{L.intro}</p>
+      <div className="mt-4">
+        <PageIntro page="wallet" />
+      </div>
 
       {err && <p className="mt-6 text-[var(--color-bear)]">{err}</p>}
 

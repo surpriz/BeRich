@@ -1,45 +1,47 @@
 @import "tailwindcss";
 
-/* ── BeRich design tokens — dark trading-terminal aesthetic ───────────────── */
+/* ── BeRich design tokens — « Clarté » light fintech aesthetic ────────────── */
 @theme {
-  --color-void: #07090c;
-  --color-surface: #0f141a;
-  --color-surface-2: #161d25;
-  --color-line: #232c37;
-  --color-ink: #e8ecf2;
-  --color-muted: #8a94a4;
-  --color-faint: #5a6472;
+  --color-bg: #fbfbfd; /* page */
+  --color-void: #fbfbfd; /* legacy alias → page background (kept for old refs) */
+  --color-surface: #ffffff; /* cards */
+  --color-surface-2: #f4f5f8; /* alt zones / hover */
+  --color-line: #e6e8ef; /* hairline borders */
+  --color-ink: #14181f; /* primary text */
+  --color-muted: #5b6472; /* secondary text */
+  --color-faint: #97a0b0; /* hints, legends */
 
-  --color-bull: #b6f24e; /* electric lime — BUY */
-  --color-bear: #ff5d63; /* warm red — SELL */
-  --color-neutral: #f4b740; /* amber — NEUTRAL */
+  --color-accent: #4f46e5; /* indigo — brand / links / active */
+  --color-bull: #10936b; /* emerald — up / long / positive */
+  --color-bear: #e05252; /* coral — down / short / negative */
+  --color-neutral: #b7791f; /* deep amber — neutral / hold */
 
-  --font-display: var(--font-bricolage), ui-sans-serif, sans-serif;
+  --font-display: var(--font-schibsted), ui-sans-serif, sans-serif;
   --font-body: var(--font-hanken), ui-sans-serif, sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, monospace;
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 html,
 body {
-  background: var(--color-void);
+  background: var(--color-bg);
   color: var(--color-ink);
   font-family: var(--font-body);
 }
 
-/* Atmospheric background: layered radial glows + faint grid + grain. */
+/* Atmospheric background: a single soft indigo veil at the top — calm, light. */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   z-index: -2;
   background:
-    radial-gradient(900px 600px at 12% -5%, rgba(182, 242, 78, 0.07), transparent 60%),
-    radial-gradient(800px 500px at 95% 8%, rgba(95, 130, 255, 0.06), transparent 55%),
-    linear-gradient(180deg, #090c10 0%, #07090c 100%);
+    radial-gradient(1000px 620px at 15% -8%, rgba(79, 70, 229, 0.06), transparent 60%),
+    radial-gradient(820px 520px at 95% -4%, rgba(16, 147, 107, 0.04), transparent 55%),
+    var(--color-bg);
 }
 
 body::after {
@@ -50,9 +52,9 @@ body::after {
   background-image:
     linear-gradient(var(--color-line) 1px, transparent 1px),
     linear-gradient(90deg, var(--color-line) 1px, transparent 1px);
-  background-size: 64px 64px;
-  opacity: 0.18;
-  mask-image: radial-gradient(circle at 50% 0%, black, transparent 80%);
+  background-size: 72px 72px;
+  opacity: 0.4;
+  mask-image: radial-gradient(circle at 50% 0%, black, transparent 70%);
 }
 
 .tabular {
@@ -62,9 +64,12 @@ body::after {
 }
 
 .card {
-  background: linear-gradient(180deg, var(--color-surface-2), var(--color-surface));
+  background: var(--color-surface);
   border: 1px solid var(--color-line);
-  border-radius: 14px;
+  border-radius: 16px;
+  box-shadow:
+    0 1px 2px rgba(20, 24, 31, 0.04),
+    0 12px 28px -16px rgba(20, 24, 31, 0.1);
 }
 
 @keyframes rise {
@@ -90,7 +95,7 @@ body::after {
   outline: none;
 }
 .berich-term:focus-visible {
-  border-bottom-color: var(--color-bull);
+  border-bottom-color: var(--color-accent);
 }
 .berich-info {
   display: inline-flex;
@@ -117,8 +122,8 @@ body::after {
   padding: 0.5rem 0.625rem;
   border-radius: 10px;
   border: 1px solid var(--color-line);
-  background: linear-gradient(180deg, var(--color-surface-2), var(--color-surface));
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  background: var(--color-surface);
+  box-shadow: 0 12px 30px -10px rgba(20, 24, 31, 0.22);
   font-family: var(--font-body);
   font-size: 11px;
   font-weight: 400;

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type Replication } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
+import { PageIntro } from "@/app/components/PageIntro";
 
 /**
  * "Réplication" — the morning copy-trading ritual, built from EXECUTIONS only.
@@ -13,6 +14,9 @@ import { useI18n } from "@/app/lib/i18n";
  * A capital input rescales every amount from the 10k simulation base to the user's
  * real broker capital. During the forward test this page is a dry-run rehearsal;
  * later it is, word for word, the public copy-trading artifact.
+ *
+ * The body is exported as <ReplicationView> so the "Today" hub (Brief) can show it
+ * behind a "what to copy this morning" tab without duplicating the logic.
  */
 
 const CAPITAL_KEY = "berich.copy.capital";
@@ -27,6 +31,28 @@ function bookLabel(strategy: string | null | undefined, fr: boolean): string {
 const fmtPx = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 4 });
 
 export default function CopyPage() {
+  const { locale } = useI18n();
+  const fr = locale === "fr";
+  return (
+    <main className="mx-auto max-w-4xl px-6 py-12">
+      <Link
+        href="/brief"
+        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+      >
+        {fr ? "← Retour" : "← Back"}
+      </Link>
+      <h1 className="font-display text-4xl font-extrabold tracking-tight">
+        {fr ? "Réplication du robot" : "Replicate the robot"}
+      </h1>
+      <div className="mt-6">
+        <PageIntro page="copy" />
+      </div>
+      <ReplicationView />
+    </main>
+  );
+}
+
+export function ReplicationView() {
   const { locale } = useI18n();
   const fr = locale === "fr";
   const [rep, setRep] = useState<Replication | null>(null);
@@ -95,17 +121,8 @@ export default function CopyPage() {
     )[s] ?? s;
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-12">
-      <Link
-        href="/"
-        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-bull)]"
-      >
-        {L.back}
-      </Link>
-      <h1 className="font-display text-4xl font-extrabold tracking-tight">{L.title}</h1>
-      <p className="mt-3 max-w-2xl text-base text-[var(--color-muted)]">{L.intro}</p>
-
-      <div className="card mt-6 flex flex-wrap items-center gap-4 p-4">
+    <>
+      <div className="card flex flex-wrap items-center gap-4 p-4">
         <label className="text-sm font-semibold" htmlFor="copy-capital">
           {L.capital}
         </label>
@@ -224,7 +241,7 @@ export default function CopyPage() {
           </p>
         </>
       )}
-    </main>
+    </>
   );
 }
 
@@ -270,7 +287,7 @@ function Dir({ d }: { d: "long" | "short" }) {
 
 function Book({ s, fr }: { s: string | null | undefined; fr: boolean }) {
   return (
-    <span className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+    <span className="rounded bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
       {bookLabel(s, fr)}
     </span>
   );

@@ -19,7 +19,7 @@ function Pipeline() {
       <div className="flex min-w-max items-center gap-3 text-xs">
         {SECTIONS.slice(0, 5).map((s, i, arr) => (
           <div key={s} className="flex items-center gap-3">
-            <div className="rounded-md border border-[var(--color-line)] bg-white/[0.02] px-3 py-2">
+            <div className="rounded-md border border-[var(--color-line)] bg-[var(--color-surface-2)] px-3 py-2">
               <div className="font-display text-sm font-bold">{t(`how.section.${s}`)}</div>
             </div>
             {i < arr.length - 1 && <span className="text-[var(--color-faint)]">→</span>}
@@ -35,12 +35,21 @@ export default function HowItWorks() {
   return (
     <main className="mx-auto max-w-3xl px-6 py-12">
       <Link
-        href="/"
-        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-bull)]"
+        href="/brief"
+        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-accent)]"
       >
         ← {t("ticker.back")}
       </Link>
-      <h1 className="font-display text-4xl font-extrabold tracking-tight">{t("how.title")}</h1>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <h1 className="font-display text-4xl font-extrabold tracking-tight">{t("how.title")}</h1>
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new Event("berich:onboarding-replay"))}
+          className="rounded-full border border-[var(--color-accent)]/40 px-4 py-1.5 text-sm font-semibold text-[var(--color-accent)] hover:bg-[var(--color-accent)]/10"
+        >
+          {t("onboarding.replay")}
+        </button>
+      </div>
       <p className="mt-3 text-base text-[var(--color-muted)]">{t("how.intro")}</p>
 
       <Pipeline />

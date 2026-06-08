@@ -33,6 +33,32 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-06-08",
+    tone: "ship",
+    title: {
+      fr: "Refonte de l'interface : thème clair « Clarté », menu allégé, pédagogie pour les novices",
+      en: "Interface redesign: light “Clarity” theme, slimmer menu, novice-friendly guidance",
+    },
+    points: [
+      {
+        fr: "Nouveau design clair de type néobanque : fond papier, accent indigo, hausse en émeraude et baisse en corail, cartes arrondies à ombre douce, nouvelle police d'affichage (Schibsted Grotesk). Fini le terminal sombre au vert électrique. Graphiques repassés sur la palette claire.",
+        en: "New light, neobank-style design: paper background, indigo accent, emerald gains and coral losses, soft-shadowed rounded cards, a fresh display font (Schibsted Grotesk). Gone is the dark terminal with electric lime. Charts retinted to the light palette.",
+      },
+      {
+        fr: "Menu réorganisé en deux niveaux : la barre principale ne garde que le quotidien — Aujourd'hui, Portefeuille, Opportunités — et tout le technique (Stratégies, Entraînement, Machine, Journal, Aide) passe sous un menu déroulant « Coulisses ». Le Brief absorbe la Réplication via une bascule « Positions & prévisions / À répliquer ce matin ».",
+        en: "Menu reorganized into two tiers: the main bar keeps only the everyday — Today, Portfolio, Opportunities — and all the technical pages (Strategies, Training, Machine, Journal, Help) move under a “Backstage” dropdown. The Brief absorbs Replication via a “Positions & forecast / Copy this morning” toggle.",
+      },
+      {
+        fr: "Pédagogie pour les débutants : un bandeau pliable « C'est quoi cette page ? » en clair en haut de chaque page, les niveaux renommés Découverte / Investisseur / Analyste (jargon traduit en Découverte : P(win) → « Confiance »…), des infobulles sur les en-têtes techniques, et une courte visite guidée au premier passage (rejouable depuis l'Aide).",
+        en: "Beginner guidance: a collapsible plain-language “What is this page?” banner atop every page, levels renamed Discovery / Investor / Analyst (jargon translated in Discovery: P(win) → “Confidence”…), tooltips on technical headers, and a short first-run guided tour (replayable from Help).",
+      },
+    ],
+    verdict: {
+      fr: "Changement purement cosmétique et pédagogique — aucune logique de trading, de gate ou de sizing modifiée. Le gel du forward test est respecté.",
+      en: "Purely cosmetic and pedagogical — no trading, gate or sizing logic touched. The forward-test freeze is respected.",
+    },
+  },
+  {
     date: "2026-06-07",
     tone: "infra",
     title: {
@@ -371,7 +397,7 @@ export default function ChangelogPage() {
     <main className="mx-auto max-w-4xl px-6 py-12">
       <Link
         href="/"
-        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-bull)]"
+        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-accent)]"
       >
         {back}
       </Link>
@@ -384,7 +410,7 @@ export default function ChangelogPage() {
             <div className="flex flex-wrap items-center gap-3">
               <span className="tabular font-mono text-sm text-[var(--color-faint)]">{e.date}</span>
               {e.version ? (
-                <span className="rounded bg-white/[0.04] px-2 py-0.5 text-xs font-semibold text-[var(--color-muted)]">
+                <span className="rounded bg-[var(--color-surface-2)] px-2 py-0.5 text-xs font-semibold text-[var(--color-muted)]">
                   {e.version}
                 </span>
               ) : null}

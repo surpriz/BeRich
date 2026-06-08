@@ -5,6 +5,7 @@ import { api, type OpsSnapshot } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
 import { Show } from "@/app/components/Show";
 import { Info } from "@/app/components/Term";
+import { PageIntro } from "@/app/components/PageIntro";
 
 const REFRESH_MS = 5000;
 
@@ -127,6 +128,9 @@ export default function OpsPage() {
         </span>
       </div>
       <p className="mt-2 max-w-2xl text-sm text-[var(--color-muted)]">{t("ops.intro")}</p>
+      <div className="mt-4">
+        <PageIntro page="ops" />
+      </div>
 
       {err && <p className="mt-6 text-[var(--color-bear)]">{err}</p>}
       {!snap && !err && <p className="mt-6 text-[var(--color-muted)]">…</p>}

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useTranslate } from "@/app/lib/i18n";
+import { PageIntro } from "@/app/components/PageIntro";
 
 const STRATS = [
   { key: "fixed", accent: "var(--color-neutral)" },
@@ -23,12 +24,15 @@ export default function StrategiesPage() {
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
       <Link
-        href="/"
-        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-bull)]"
+        href="/brief"
+        className="mb-6 inline-flex items-center gap-2 text-sm text-[var(--color-muted)] hover:text-[var(--color-accent)]"
       >
         ← {t("ticker.back")}
       </Link>
       <h1 className="font-display text-4xl font-extrabold tracking-tight">{t("strat.title")}</h1>
+      <div className="mt-4">
+        <PageIntro page="strategies" />
+      </div>
       <p className="mt-3 max-w-2xl text-base text-[var(--color-muted)]">{t("strat.intro")}</p>
 
       <section className="card mt-8 p-5">
