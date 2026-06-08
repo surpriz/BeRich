@@ -68,7 +68,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
                    calibration.py, paper.py (tiered books + money-management), store.py (DuckDB)
     risk/          gating.py, sizing.py, sizing_strategy.py (risk-based position sizing)
     monitoring/    PSI + KS feature drift (logged only — see data-health note below)
-    notifications/ email.py (signal digest + send_alert_email for job-failure alerts)
+    notifications/ digest.py (build_daily_digest — portfolio + executions + good-to-know) +
+                   email.py (bilingual Clarté daily digest + send_alert_email for job alerts)
     scheduler/     APScheduler jobs.py + runner.py (EVENT_JOB_ERROR -> email alert)
     api/           FastAPI backend (signals, explain, training, ops, universes, health,
                    risk-profile, brief-plan, replication)

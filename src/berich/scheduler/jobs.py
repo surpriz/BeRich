@@ -23,14 +23,13 @@ from berich.data.store import OhlcvStore
 from berich.datasets import build_dataset
 from berich.labeling.triple_barrier import LabelConfig
 from berich.monitoring import feature_drift
-from berich.notifications import send_buy_signals_email
+from berich.notifications import build_daily_digest, send_daily_digest_email
 from berich.signals import (
     SignalStore,
     generate_signals,
     open_new_trades,
     update_open_trades,
 )
-from berich.signals.service import LONG_SIGNALS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -94,13 +93,15 @@ def daily_paper_job(config: Config) -> dict[str, int]:
     saved = signal_store.save(signals)
     opened = open_new_trades(config, store, signal_store)
     closed = update_open_trades(config, store)
-    # Email digest only fires when we actually opened paper trades — that filter
-    # makes the "is there a new BUY for me to act on" semantics exact, instead
-    # of spamming whenever the model emits a BUY proba on a ticker we already
-    # held.
+    # Daily briefing: a bilingual digest of the run + portfolio snapshot, fired on every weekday
+    # run (not only when a trade opened) so the user gets a dependable morning email. It is
+    # best-effort — assembly or SMTP failing must never abort the job.
     notified = False
-    if opened > 0:
-        notified = send_buy_signals_email([s for s in signals if s.signal in LONG_SIGNALS])
+    try:
+        digest = build_daily_digest(config, store, signals)
+        notified = send_daily_digest_email(digest)
+    except Exception:  # noqa: BLE001 — a notification failure must not abort the daily chain
+        logger.warning("daily_paper: digest email failed", exc_info=True)
     logger.info(
         "daily_paper: %d news rows, %d finbert scored, %d signals saved,"
         " %d paper opened, %d paper closed, email=%s",

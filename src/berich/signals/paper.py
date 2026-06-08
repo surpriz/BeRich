@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 import duckdb
 import numpy as np
@@ -1150,6 +1150,92 @@ def get_paper_metrics(
     }
 
 
+class RecentExecutions(TypedDict):
+    """Executions at the last daily run — shared payload for /replication and the email digest."""
+
+    as_of: str
+    capital_base: float
+    open: list[dict[str, object]]
+    close: list[dict[str, object]]
+    adjust: list[dict[str, object]]
+    closed_total: int
+
+
+def recent_executions(
+    config: Config,
+    store: OhlcvStore,
+    *,
+    hours: float = 30.0,
+    tier: str | None = PROMOTED_TIER,
+) -> RecentExecutions:
+    """What the committed book actually DID at the last daily run — executions, never forecasts.
+
+    Returns the trades ``open``ed and ``close``d within the last ``hours`` plus ``adjust`` (open
+    trailing positions whose effective ratcheting stop to mirror today). The 30h default spans one
+    daily run with a margin. This is the single source of truth behind both the ``/replication``
+    endpoint and the daily email digest, so the morning copy list never drifts between the two.
+    """
+    paper = PaperStore(config.db_path)
+    df = paper.all_trades(tier=tier)
+    cutoff = pd.Timestamp.now() - pd.Timedelta(hours=hours)
+    opened: list[dict[str, object]] = []
+    closed: list[dict[str, object]] = []
+    if not df.empty:
+        df = df.copy()
+        df["created_at"] = pd.to_datetime(df["created_at"])
+        df["updated_at"] = pd.to_datetime(df["updated_at"])
+        for _, r in df[(df["status"] == OPEN) & (df["created_at"] >= cutoff)].iterrows():
+            opened.append(
+                {
+                    "ticker": str(r["ticker"]),
+                    "direction": "short" if _is_short(r["signal"]) else "long",
+                    "exit_strategy": str(r["exit_strategy"]),
+                    "entry": float(r["entry"]),
+                    "stop": float(r["stop"]),
+                    "target": float(r["target"]),
+                    "size_shares": int(r["size_shares"]),
+                    "notional": float(r["entry"]) * int(r["size_shares"]),
+                    "date_open": str(_ts(r["date_open"]).date()),
+                }
+            )
+        done = df[(df["status"] != OPEN) & (df["updated_at"] >= cutoff)]
+        for _, r in done.iterrows():
+            closed.append(
+                {
+                    "ticker": str(r["ticker"]),
+                    "direction": "short" if _is_short(r["signal"]) else "long",
+                    "exit_strategy": str(r["exit_strategy"]),
+                    "status": str(r["status"]),
+                    "exit_price": float(r["exit_price"]) if pd.notna(r["exit_price"]) else None,
+                    "pnl_pct": float(r["pnl_pct"]) if pd.notna(r["pnl_pct"]) else None,
+                    "pnl_eur": float(r["pnl_eur"]) if pd.notna(r["pnl_eur"]) else None,
+                    "date_close": (
+                        str(_ts(r["date_close"]).date()) if pd.notna(r["date_close"]) else None
+                    ),
+                }
+            )
+    adjust: list[dict[str, object]] = [
+        {
+            "ticker": p.ticker,
+            "direction": p.direction,
+            "exit_strategy": p.exit_strategy,
+            "effective_stop": float(p.trail_stop if p.trail_stop is not None else p.stop),
+            "target": float(p.target),
+        }
+        for p in get_open_positions(config, store, tier=tier)
+        if (p.exit_strategy or "fixed") != "fixed"
+    ]
+    n_closed_total = int((df["status"] != OPEN).sum()) if not df.empty else 0
+    return {
+        "as_of": pd.Timestamp.now().isoformat(),
+        "capital_base": float(config.signals.capital),
+        "open": opened,
+        "close": closed,
+        "adjust": adjust,
+        "closed_total": n_closed_total,
+    }
+
+
 __all__ = [
     "CLOSED_STATUSES",
     "CLOSED_STOP",
@@ -1166,5 +1252,6 @@ __all__ = [
     "get_paper_metrics",
     "open_new_trades",
     "plan_committed_opens",
+    "recent_executions",
     "update_open_trades",
 ]

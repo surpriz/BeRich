@@ -36,6 +36,32 @@ const ENTRIES: Entry[] = [
     date: "2026-06-08",
     tone: "ship",
     title: {
+      fr: "Email quotidien repensé : un vrai digest du matin, clair et bilingue",
+      en: "Daily email reworked: a real morning digest, clear and bilingual",
+    },
+    points: [
+      {
+        fr: "L'email part désormais chaque jour de bourse, plus seulement les soirs où un nouvel ordre est ouvert. Vous recevez un point fiable même un jour calme. (Auparavant : aucun email les jours sans nouvel achat, d'où l'impression d'un envoi manquant.)",
+        en: "The email now goes out every trading day, not only on evenings when a new order opens. You get a dependable briefing even on a quiet day. (Before: no email on days without a new buy — hence the feeling of a missing send.)",
+      },
+      {
+        fr: "Contenu enrichi en quatre sections : Portefeuille (équité, P&L vs SPY, drawdown, positions), Ordres à copier (la liste exacte de ce qui a été exécuté, avec stops trailing à recopier), Activité du jour (clôtures et P&L réalisé), et À savoir (positions en MTM, alertes données périmées, nombre de modèles promus, rappel prévision vs exécuté).",
+        en: "Four richer sections: Portfolio (equity, P&L vs SPY, drawdown, open positions), Orders to copy (the exact list of what was executed, with trailing stops to mirror), Today's activity (closes and realized P&L), and Good to know (MTM positions, stale-data alerts, promoted-model count, forecast-vs-executed reminder).",
+      },
+      {
+        fr: "Mise en page soignée aux couleurs « Clarté » (accent indigo, gains émeraude / pertes corail) et entièrement bilingue FR/EN. L'ancien avertissement périmé « le modèle ne bat pas le buy & hold » est remplacé par la mention honnête « paper-trading en forward test, pas de capital réel ».",
+        en: "Polished layout in the “Clarity” palette (indigo accent, emerald gains / coral losses), fully bilingual FR/EN. The stale “model does not beat buy & hold” disclaimer is replaced by the honest “paper-trading forward test, no real money”.",
+      },
+    ],
+    verdict: {
+      fr: "Changement de notification et d'affichage uniquement — aucune logique de trading, de gate ou de sizing modifiée. La liste « à copier » partage sa source avec la page Réplication. Le gel du forward test est respecté.",
+      en: "Notification and presentation only — no trading, gate or sizing logic touched. The “orders to copy” list shares its source with the Replication page. The forward-test freeze is respected.",
+    },
+  },
+  {
+    date: "2026-06-08",
+    tone: "ship",
+    title: {
       fr: "Refonte de l'interface : thème clair « Clarté », menu allégé, pédagogie pour les novices",
       en: "Interface redesign: light “Clarity” theme, slimmer menu, novice-friendly guidance",
     },

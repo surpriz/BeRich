@@ -11,17 +11,19 @@ from apscheduler.events import EVENT_JOB_ERROR, JobExecutionEvent
 
 import berich.notifications as notif
 from berich.config import Config, SignalConfig
+from berich.data.store import OhlcvStore
+from berich.notifications import DailyDigest, build_daily_digest
 from berich.notifications.email import (
     EmailConfig,
-    _format_html_table,
-    _format_text_table,
+    _render_digest_html,
+    _render_digest_text,
     send_alert_email,
-    send_buy_signals_email,
+    send_daily_digest_email,
 )
 from berich.scheduler import runner
 from berich.signals import PaperStore, compute_calibration
 from berich.signals.calibration import DEFAULT_BUCKETS
-from berich.signals.service import BUY, NEUTRAL, Signal
+from berich.signals.service import BUY, Signal
 from berich.signals.store import SignalStore
 
 # -------------------------------------------------------------- email config ----
@@ -47,62 +49,89 @@ def test_email_config_from_env_populates_when_complete(monkeypatch):
     assert cfg.smtp_port == 587  # default
 
 
-def _signal(ticker: str, *, proba: float = 0.6, signal_type: str = BUY) -> Signal:
-    return Signal(
-        date=pd.Timestamp("2024-01-05"),
-        ticker=ticker,
-        signal=signal_type,
-        proba=proba,
-        entry=100.0,
-        stop_loss=95.0,
-        take_profit=110.0,
-        size_shares=20,
-        notional=2000.0,
+def _digest(*, opened: list[dict] | None = None, closed: list[dict] | None = None) -> DailyDigest:
+    return DailyDigest(
+        date="2026-06-08",
+        capital=10_000.0,
+        equity=10_240.0,
+        total_return_paper=0.024,
+        total_return_spy=0.011,
+        current_drawdown=0.012,
+        n_open=3,
+        n_closed_total=5,
+        win_rate=0.6,
+        opened=opened or [],
+        closed=closed or [],
+        n_promoted_models=46,
+        n_promoted_tickers=31,
+        signals_total=125,
+        longs_total=40,
+        shorts_total=22,
     )
 
 
-def test_send_buy_signals_email_skips_when_no_buys():
-    """Empty list and SELL/NEUTRAL-only lists must NOT contact SMTP."""
+_ORDER = {
+    "ticker": "EURJPY=X",
+    "direction": "long",
+    "exit_strategy": "fixed",
+    "entry": 168.20,
+    "stop": 166.10,
+    "target": 172.50,
+    "size_shares": 12,
+    "notional": 2018.4,
+    "date_open": "2026-06-08",
+}
+
+
+def test_send_daily_digest_skips_when_unconfigured(monkeypatch):
+    """No SMTP config → no socket opened, returns False."""
+    for var in ("NOTIFY_EMAIL", "SMTP_HOST", "SMTP_USER", "SMTP_PASS"):
+        monkeypatch.delenv(var, raising=False)
     fake_smtp = MagicMock()
-    cfg = EmailConfig(notify_email="me@x.com", smtp_host="h", smtp_user="u", smtp_pass="p")
-    assert send_buy_signals_email([], cfg, smtp_factory=fake_smtp) is False
-    assert (
-        send_buy_signals_email(
-            [_signal("AAPL", signal_type=NEUTRAL)],
-            cfg,
-            smtp_factory=fake_smtp,
-        )
-        is False
-    )
+    assert send_daily_digest_email(_digest(), smtp_factory=fake_smtp) is False
     fake_smtp.assert_not_called()
 
 
-def test_send_buy_signals_email_sends_when_signals_present():
-    """One BUY → one SMTP send_message call with correct From / To headers."""
+def test_send_daily_digest_sends_with_orders():
+    """An order to copy → one send, correct headers, subject flags the count, ticker present."""
     fake_conn = MagicMock()
     fake_smtp = MagicMock(return_value=fake_conn)
     fake_conn.__enter__.return_value = fake_conn
     fake_conn.__exit__.return_value = False
     cfg = EmailConfig(notify_email="me@x.com", smtp_host="h", smtp_user="bot@x.com", smtp_pass="p")
-    sent = send_buy_signals_email([_signal("AAPL")], cfg, smtp_factory=fake_smtp)
+    sent = send_daily_digest_email(_digest(opened=[_ORDER]), cfg, smtp_factory=fake_smtp)
     assert sent is True
     fake_conn.starttls.assert_called_once()
     fake_conn.login.assert_called_once_with("bot@x.com", "p")
-    fake_conn.send_message.assert_called_once()
     msg = fake_conn.send_message.call_args[0][0]
     assert msg["To"] == "me@x.com"
     assert msg["From"] == "bot@x.com"
-    assert "AAPL" in msg.get_body("plain").get_content()
+    assert "à copier" in msg["Subject"]
+    assert "EURJPY=X" in msg.get_body("plain").get_content()
+    assert "EURJPY=X" in msg.get_body("html").get_content()
 
 
-def test_send_buy_signals_email_returns_false_on_smtp_error():
+def test_send_daily_digest_sends_on_quiet_day():
+    """Even with no orders and no closes, the daily digest still goes out (dependable briefing)."""
+    fake_conn = MagicMock()
+    fake_smtp = MagicMock(return_value=fake_conn)
+    fake_conn.__enter__.return_value = fake_conn
+    fake_conn.__exit__.return_value = False
+    cfg = EmailConfig(notify_email="me@x.com", smtp_host="h", smtp_user="bot@x.com", smtp_pass="p")
+    sent = send_daily_digest_email(_digest(), cfg, smtp_factory=fake_smtp)
+    assert sent is True
+    msg = fake_conn.send_message.call_args[0][0]
+    assert "digest du" in msg["Subject"]
+
+
+def test_send_daily_digest_returns_false_on_smtp_error():
     fake_conn = MagicMock()
     fake_conn.__enter__.return_value = fake_conn
     fake_conn.__exit__.return_value = False
     fake_conn.send_message.side_effect = smtplib.SMTPException("boom")
     fake_smtp = MagicMock(return_value=fake_conn)
     cfg = EmailConfig(notify_email="me@x.com", smtp_host="h", smtp_user="bot@x.com", smtp_pass="p")
-    assert send_buy_signals_email([_signal("AAPL")], cfg, smtp_factory=fake_smtp) is False
+    assert send_daily_digest_email(_digest(opened=[_ORDER]), cfg, smtp_factory=fake_smtp) is False
 
 
 def test_send_alert_email_sends_plain_text():
@@ -156,13 +185,30 @@ def test_scheduler_registers_job_error_listener_and_alerts(monkeypatch):
     assert "kaboom" in body
 
 
-def test_email_body_includes_advisory_disclaimer():
-    text = _format_text_table([_signal("AAPL")])
-    html = _format_html_table([_signal("AAPL")])
-    assert "Advisory" in text
-    assert "Advisory" in html
-    # Sanity: HTML body has a table tag with the ticker symbol.
-    assert "<table" in html and "AAPL" in html
+def test_digest_carries_honest_disclaimer_not_stale_one():
+    """The digest drops the stale 'does not beat buy & hold' line for the forward-test one."""
+    html = _render_digest_html(_digest(opened=[_ORDER]))
+    text = _render_digest_text(_digest(opened=[_ORDER]))
+    assert "does not beat buy" not in html
+    assert "Not financial advice." in html
+    assert "conseil financier" in html  # bilingual: French block present
+    assert "Not financial advice." in text
+
+
+def test_build_daily_digest_handles_empty_book(tmp_path):
+    """Assembly must be robust before the first trade exists (early forward test)."""
+    cfg = Config(
+        data_dir=tmp_path,
+        watchlist=["AAA"],
+        signals=SignalConfig(capital=10_000.0),
+    )
+    store = OhlcvStore(cfg.ohlcv_dir)
+    digest = build_daily_digest(cfg, store, [])
+    assert digest.n_open == 0
+    assert digest.opened == []
+    assert digest.has_activity is False
+    assert digest.signals_total == 0
+    assert digest.capital == 10_000.0
 
 
 # --------------------------------------------------------------- calibration ----

@@ -152,73 +152,11 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
         - ``close``: committed trades it closed at the last run,
         - ``adjust``: open trailing positions whose effective (ratcheting) stop to mirror today.
         Amounts are for the 10k base capital; the UI rescales to the user's broker capital.
+        Shares its data builder with the daily email digest (``recent_executions``).
         """
-        from berich.signals.paper import PROMOTED_TIER, PaperStore, get_open_positions
+        from berich.signals.paper import recent_executions
 
-        paper = PaperStore(config.db_path)
-        df = paper.all_trades(tier=PROMOTED_TIER)
-        cutoff = pd.Timestamp.now() - pd.Timedelta(hours=30)
-
-        def _dir(sig: object) -> str:
-            return "short" if str(sig).upper() == "SHORT" else "long"
-
-        opened: list[dict] = []
-        closed: list[dict] = []
-        if not df.empty:
-            df = df.copy()
-            df["created_at"] = pd.to_datetime(df["created_at"])
-            df["updated_at"] = pd.to_datetime(df["updated_at"])
-            for _, r in df[(df["status"] == "open") & (df["created_at"] >= cutoff)].iterrows():
-                opened.append(
-                    {
-                        "ticker": r["ticker"],
-                        "direction": _dir(r["signal"]),
-                        "exit_strategy": r["exit_strategy"],
-                        "entry": float(r["entry"]),
-                        "stop": float(r["stop"]),
-                        "target": float(r["target"]),
-                        "size_shares": int(r["size_shares"]),
-                        "notional": float(r["entry"]) * int(r["size_shares"]),
-                        "date_open": str(pd.Timestamp(r["date_open"]).date()),
-                    }
-                )
-            done = df[(df["status"] != "open") & (df["updated_at"] >= cutoff)]
-            for _, r in done.iterrows():
-                closed.append(
-                    {
-                        "ticker": r["ticker"],
-                        "direction": _dir(r["signal"]),
-                        "exit_strategy": r["exit_strategy"],
-                        "status": r["status"],
-                        "exit_price": float(r["exit_price"]) if pd.notna(r["exit_price"]) else None,
-                        "pnl_pct": float(r["pnl_pct"]) if pd.notna(r["pnl_pct"]) else None,
-                        "date_close": str(pd.Timestamp(r["date_close"]).date())
-                        if pd.notna(r["date_close"])
-                        else None,
-                    }
-                )
-
-        adjust = [
-            {
-                "ticker": p.ticker,
-                "direction": p.direction,
-                "exit_strategy": p.exit_strategy,
-                "effective_stop": float(p.trail_stop if p.trail_stop is not None else p.stop),
-                "target": float(p.target),
-            }
-            for p in get_open_positions(config, store, tier=PROMOTED_TIER)
-            if (p.exit_strategy or "fixed") != "fixed"
-        ]
-
-        n_closed_total = int((paper.all_trades(tier=PROMOTED_TIER)["status"] != "open").sum())
-        return {
-            "as_of": pd.Timestamp.now().isoformat(),
-            "capital_base": float(config.signals.capital),
-            "open": opened,
-            "close": closed,
-            "adjust": adjust,
-            "closed_total": n_closed_total,
-        }
+        return dict(recent_executions(config, store))
 
     @router.get("/brief-plan", dependencies=guard)
     def brief_plan() -> list[dict]:
