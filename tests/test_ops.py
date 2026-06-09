@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from berich.config import Config
+from berich.config import AssetUniverses, Config
 from berich.ops import (
     _log_level,
     gpus,
@@ -97,15 +97,21 @@ def test_sweep_status_surfaces_oldest_hpo(monkeypatch, tmp_path):
         return None
 
     monkeypatch.setattr("berich.ops._run", _fake_run)
-    # Two studies with different last-trial times; the OLDEST must be the staleness floor reported.
+    # Per-asset studies for two current tickers + ORPHAN studies from retired subsystems (the
+    # global model and the long/short ranker). The orphans are older but must be IGNORED — /ops
+    # scopes to currently-swept (ticker, side) combos, so it reconciles with /training.
     monkeypatch.setattr(
         "berich.training.status._hpo_last_trial_times",
         lambda _db: {
             "berich-hpo-AAA-lgbm-long-auc": "2026-06-08T06:00:00+00:00",
             "berich-hpo-BBB-lgbm-long-auc": "2026-06-01T06:00:00+00:00",
+            "berich-hpo-tft": "2026-05-01T06:00:00+00:00",  # orphan: retired global model
+            "berich-longshort-lgbm": "2026-05-02T06:00:00+00:00",  # orphan: retired ranker
         },
     )
-    st = sweep_status(Config(data_dir=tmp_path))
+    cfg = Config(data_dir=tmp_path, universes=AssetUniverses(us_stocks=["AAA", "BBB"]))
+    st = sweep_status(cfg)
+    # Oldest among CURRENT assets (BBB long), not the older retired orphans.
     assert st["oldest_hpo_at"] == "2026-06-01T06:00:00+00:00"
     assert isinstance(st["oldest_hpo_age_seconds"], int)
     assert st["oldest_hpo_age_seconds"] > 0

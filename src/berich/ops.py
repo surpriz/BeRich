@@ -132,19 +132,31 @@ def _meminfo() -> tuple[float, float]:
 
 
 def _set_oldest_hpo(config: Config, status: dict[str, object]) -> None:
-    """Stamp the oldest last-HPO across the trained universe — the staleness floor the sweep bounds.
+    """Stamp the oldest last-HPO across the *currently-swept* universe — the staleness floor.
 
-    The tournament re-fits *all* of a combo's framework studies together each cycle, so the oldest
-    single study timestamp tracks the oldest combo: cheap (one indexed GROUP BY) and accurate. Lets
-    /ops show 'oldest model optimized X ago' so a drift toward several days is a visible warning
-    that the machine is saturating and can't keep every asset fresh.
+    Scoped to the same (ticker, side) combos the sweep iterates, using the canonical study matcher:
+    a global ``min`` over the raw Optuna DB would pick up orphan studies from retired subsystems
+    (the global model, the long/short ranker) that nobody re-fits, which is why /ops disagreed with
+    /training. Per (ticker, side) we take the most recent trial (matching /training's per-side
+    figure), then the oldest of those — so /ops shows exactly the oldest row you'd see on /training.
+    Lets a drift toward several days flag that the machine can't keep every asset fresh.
     """
-    from berich.training.status import _hpo_last_trial_times  # noqa: PLC0415
+    from berich.training.status import _hpo_last_for, _hpo_last_trial_times  # noqa: PLC0415
 
     times = _hpo_last_trial_times(config.optuna_db)
     if not times:
         return
-    oldest = min(times.values())  # ISO-UTC strings: lexicographic min == chronological oldest
+    sides = config.zoo.ticker_sides
+    combos = [(t, s, "1d") for t in config.tradeable_tickers() for s in sides]
+    if config.intraday.enabled:
+        combos += [(t, s, config.intraday.interval) for t in config.intraday.tickers for s in sides]
+    oldest: str | None = None
+    for ticker, side, interval in combos:
+        last = _hpo_last_for(times, ticker, None, side, None, interval)
+        if last is not None and (oldest is None or last < oldest):
+            oldest = last  # ISO-UTC strings: lexicographic compare == chronological
+    if oldest is None:
+        return
     status["oldest_hpo_at"] = oldest
     with contextlib.suppress(ValueError):
         age = datetime.now(UTC) - datetime.fromisoformat(oldest)

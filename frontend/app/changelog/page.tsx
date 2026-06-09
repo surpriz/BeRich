@@ -49,8 +49,8 @@ const ENTRIES: Entry[] = [
         en: "On /training, the per-asset age is the oldest of the two sides (long or short) — an up-to-date side can't mask a lagging one. The color thresholds follow the sweep's real cadence (~2-day refresh cycle), so red genuinely flags an asset falling behind.",
       },
       {
-        fr: "Sur /ops, nouvelle ligne « Plus ancien modèle » : l'âge du modèle le plus ancien de tout l'univers, calculé en direct depuis la base d'optimisation. C'est la jauge de saturation de la machine — si ce chiffre dérive vers plusieurs jours, c'est le signal qu'il faut arrêter d'ajouter des actifs.",
-        en: "On /ops, a new 'Oldest model' row: the age of the single oldest model across the whole universe, computed live from the optimization database. It's the machine-saturation gauge — if this drifts toward several days, it's the signal to stop adding assets.",
+        fr: "Sur /ops, nouvelle ligne « Plus ancien modèle » : l'âge du modèle le plus ancien parmi les actifs actuellement suivis par le sweep, calculé en direct depuis la base d'optimisation. Le calcul est borné aux combos en rotation (les anciennes études orphelines des sous-systèmes retirés — modèle global, ranker market-neutral — sont ignorées), donc /ops s'accorde exactement avec /training. C'est la jauge de saturation de la machine — si ce chiffre dérive vers plusieurs jours, c'est le signal qu'il faut arrêter d'ajouter des actifs.",
+        en: "On /ops, a new 'Oldest model' row: the age of the oldest model among the assets the sweep currently tracks, computed live from the optimization database. It's scoped to the combos in rotation (orphan studies from retired subsystems — the global model, the market-neutral ranker — are ignored), so /ops reconciles exactly with /training. It's the machine-saturation gauge — if this drifts toward several days, it's the signal to stop adding assets.",
       },
     ],
     verdict: {
