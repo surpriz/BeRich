@@ -320,6 +320,72 @@ export type Replication = {
   closed_total: number;
 };
 
+// ----- Intraday V2 POC (1h crypto). Mirrors the daily shapes; equity benchmark is the pair (BTC),
+// not SPY, and timestamps carry the hour. The daily types above are untouched.
+export type IntradayPaperMetrics = {
+  n_open: number;
+  n_closed: number;
+  win_rate: number;
+  total_return_paper: number;
+  total_return_bench: number;
+  max_drawdown_paper: number;
+  capital: number;
+};
+
+export type IntradayPaperEquity = {
+  dates: string[];
+  equity_paper: number[];
+  equity_bench: Array<number | null>;
+  metrics: IntradayPaperMetrics;
+};
+
+export type IntradayPlannedOrder = {
+  ts_open: string;
+  ticker: string;
+  signal: "LONG" | "SHORT" | "BUY";
+  direction: "long" | "short";
+  entry: number;
+  stop: number;
+  target: number;
+  size_shares: number;
+  notional: number;
+  exit_strategy?: string | null;
+};
+
+export type IntradayReplication = {
+  as_of: string;
+  capital_base: number;
+  open: {
+    ticker: string;
+    direction: "long" | "short";
+    exit_strategy?: string | null;
+    entry: number;
+    stop: number;
+    target: number;
+    size_shares: number;
+    notional: number;
+    ts_open: string;
+  }[];
+  close: {
+    ticker: string;
+    direction: "long" | "short";
+    exit_strategy?: string | null;
+    status: string;
+    exit_price: number | null;
+    pnl_pct: number | null;
+    pnl_eur: number | null;
+    ts_close: string | null;
+  }[];
+  adjust: {
+    ticker: string;
+    direction: string;
+    exit_strategy?: string | null;
+    effective_stop: number;
+    target: number;
+  }[];
+  closed_total: number;
+};
+
 // One portfolio-coherent planned order for the Brief (post-caps; what the book would open today).
 export type PlannedOrder = {
   date_open: string;
@@ -465,6 +531,16 @@ export const api = {
   longshortBasket: () => get<LongShortLeg[]>("/longshort/basket"),
   longshortEquity: () => get<LongShortEquity>("/longshort/equity"),
   health: () => get<Health>("/health"),
+  // Intraday V2 POC (1h crypto) — a parallel surface; the daily endpoints above are unchanged.
+  intradaySignals: () => get<Signal[]>("/intraday/signals"),
+  intradayBriefPlan: () => get<IntradayPlannedOrder[]>("/intraday/brief-plan"),
+  intradayReplication: () => get<IntradayReplication>("/intraday/replication"),
+  intradayPaperPositions: (strategy?: string, tier?: string) =>
+    get<PaperPositions>(`/intraday/paper/positions${qs({ strategy, tier })}`),
+  intradayPaperEquity: (strategy?: string, tier?: string) =>
+    get<IntradayPaperEquity>(`/intraday/paper/equity${qs({ strategy, tier })}`),
+  intradayPaperClosed: (limit = 25, strategy?: string, tier?: string) =>
+    get<PaperClosedTrade[]>(`/intraday/paper/closed-trades${qs({ limit, strategy, tier })}`),
 };
 
 export const PAPER_EXPORT_URL = `${API_BASE}/paper/export.csv`;

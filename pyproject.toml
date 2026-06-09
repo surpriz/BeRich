@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "apscheduler>=3.11.2",
+    "ccxt>=4.4,<5",
     "duckdb>=1.5.3",
     "fastapi>=0.136.3",
     "httpx>=0.28.1",

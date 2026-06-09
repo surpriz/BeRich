@@ -56,25 +56,31 @@ def max_drawdown(equity: pd.Series) -> float:
     return float(drawdown.min())
 
 
-def sharpe_ratio(daily_returns: pd.Series, *, risk_free: float = 0.0) -> float:
-    """Annualized Sharpe ratio of a daily-returns series."""
-    excess = daily_returns.dropna() - risk_free / TRADING_DAYS
+def sharpe_ratio(
+    daily_returns: pd.Series,
+    *,
+    risk_free: float = 0.0,
+    bars_per_year: int = TRADING_DAYS,
+) -> float:
+    """Annualized Sharpe ratio of a per-bar returns series (252 bars/yr for daily)."""
+    excess = daily_returns.dropna() - risk_free / bars_per_year
     std = excess.std()
     if std == 0 or np.isnan(std):
         return 0.0
-    return float(excess.mean() / std * np.sqrt(TRADING_DAYS))
+    return float(excess.mean() / std * np.sqrt(bars_per_year))
 
 
 def compute_metrics(
     daily_returns: pd.Series,
     *,
     trade_returns: list[float] | None = None,
+    bars_per_year: int = TRADING_DAYS,
 ) -> PerfMetrics:
-    """Build a :class:`PerfMetrics` from daily returns and (optional) trade returns."""
+    """Build a :class:`PerfMetrics` from per-bar returns and (optional) trade returns."""
     daily_returns = daily_returns.dropna()
     equity = equity_curve(daily_returns)
     total = float(equity.iloc[-1] - 1.0) if not equity.empty else 0.0
-    years = len(daily_returns) / TRADING_DAYS if len(daily_returns) else np.nan
+    years = len(daily_returns) / bars_per_year if len(daily_returns) else np.nan
     end_equity = 1.0 + total
     # A non-positive end equity (e.g. the 2020 negative-crude episode poisoning a futures
     # series) makes the fractional power complex — clamp to a total loss instead of crashing.
@@ -91,8 +97,8 @@ def compute_metrics(
     return PerfMetrics(
         total_return=total,
         cagr=cagr,
-        ann_vol=float(daily_returns.std() * np.sqrt(TRADING_DAYS)) if len(daily_returns) else 0.0,
-        sharpe=sharpe_ratio(daily_returns),
+        ann_vol=float(daily_returns.std() * np.sqrt(bars_per_year)) if len(daily_returns) else 0.0,
+        sharpe=sharpe_ratio(daily_returns, bars_per_year=bars_per_year),
         max_drawdown=max_drawdown(equity),
         win_rate=win_rate,
         n_trades=len(trades),

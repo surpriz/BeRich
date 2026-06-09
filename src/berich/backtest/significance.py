@@ -111,7 +111,9 @@ def _expected_max_sr(se_sr: float, n_trials: int) -> float:
     return se_sr * ((1.0 - _EULER_GAMMA) * z1 + _EULER_GAMMA * z2)
 
 
-def _bootstrap_pvalue(returns: np.ndarray, *, avg_block: int, n_boot: int, seed: int) -> float:
+def _bootstrap_pvalue(
+    returns: np.ndarray, *, avg_block: int, n_boot: int, seed: int, bars_per_year: int
+) -> float:
     """Stationary-bootstrap P(annualized Sharpe <= 0) over ``n_boot`` resamples."""
     n = len(returns)
     if n < 3:  # noqa: PLR2004
@@ -127,7 +129,7 @@ def _bootstrap_pvalue(returns: np.ndarray, *, avg_block: int, n_boot: int, seed:
             idx[i] = rng.integers(n) if restart[i] else (idx[i - 1] + 1) % n
         sample = returns[idx]
         std = sample.std()
-        sr = 0.0 if std == 0 else sample.mean() / std * math.sqrt(TRADING_DAYS)
+        sr = 0.0 if std == 0 else sample.mean() / std * math.sqrt(bars_per_year)
         if sr <= 0:
             non_positive += 1
     return non_positive / n_boot
@@ -140,11 +142,12 @@ def assess_sharpe(
     avg_block: int = 10,
     n_boot: int = 500,
     seed: int = 42,
+    bars_per_year: int = TRADING_DAYS,
 ) -> SharpeSignificance:
-    """Compute Sharpe + PSR/DSR + bootstrap significance for a daily-returns series."""
+    """Compute Sharpe + PSR/DSR + bootstrap significance for a per-bar returns series."""
     r = daily_returns.dropna()
     n = len(r)
-    ann_sharpe = sharpe_ratio(r)
+    ann_sharpe = sharpe_ratio(r, bars_per_year=bars_per_year)
 
     if n < 3:  # noqa: PLR2004
         return SharpeSignificance(
@@ -174,7 +177,9 @@ def assess_sharpe(
     sr0 = _expected_max_sr(se_sr, n_trials)
     deflated = _norm_cdf((sr_period - sr0) / se_sr)
 
-    boot_p = _bootstrap_pvalue(arr, avg_block=avg_block, n_boot=n_boot, seed=seed)
+    boot_p = _bootstrap_pvalue(
+        arr, avg_block=avg_block, n_boot=n_boot, seed=seed, bars_per_year=bars_per_year
+    )
 
     return SharpeSignificance(
         sharpe=ann_sharpe,

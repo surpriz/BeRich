@@ -34,6 +34,23 @@ class DataConfig(BaseModel):
     auto_adjust: bool = True
 
 
+class IntradayConfig(BaseModel):
+    """Parallel intraday (1h crypto) POC subsystem — disabled by default.
+
+    Runs side-by-side with the daily swing pipeline without changing it. When
+    ``enabled`` is False nothing in the daily pipeline reads this block. ``horizon_bars``
+    is the forward window expressed explicitly in bars (1 day = 24 1h bars) — the field
+    that resolves the "name says days but means bars" ambiguity in the daily ``horizon_days``.
+    """
+
+    enabled: bool = False
+    interval: str = "1h"
+    bars_per_year: int = 24 * 365  # 8760 — continuous 1h crypto; makes the Sharpe honest
+    overnight_gap: bool = False  # crypto is 24/7 → gap_open is degenerate, drop it
+    horizon_bars: int = 24  # forward window in bars (24 = one day)
+    tickers: list[str] = Field(default_factory=lambda: ["BTC-USD"])
+
+
 class LabelingConfig(BaseModel):
     """Triple-barrier labeling parameters (consumed in Phase 1)."""
 
@@ -279,6 +296,7 @@ class Config(BaseModel):
 
     data_dir: Path = Path("data")
     data: DataConfig = Field(default_factory=DataConfig)
+    intraday: IntradayConfig = Field(default_factory=IntradayConfig)
     watchlist: list[str] = Field(default_factory=list)
     # Phase 6 — wider universes. Either may be empty; the helpers below treat
     # missing entries as "no extra tickers".
@@ -366,9 +384,23 @@ class Config(BaseModel):
         return self.data_dir / "ohlcv"
 
     @property
+    def ohlcv_intraday_dir(self) -> Path:
+        """Separate Parquet cache for intraday (1h) bars — never touches the daily tree."""
+        return self.data_dir / "ohlcv_1h"
+
+    @property
     def db_path(self) -> Path:
         """DuckDB catalog for generated signals and run history."""
         return self.data_dir / "berich.duckdb"
+
+    @property
+    def intraday_db_path(self) -> Path:
+        """Separate DuckDB catalog for the intraday subsystem.
+
+        Physically isolated from ``db_path`` so an intraday writer (which, like the daily
+        refresh, may ``DELETE FROM signals`` wholesale) can never corrupt the daily book.
+        """
+        return self.data_dir / "berich_intraday.duckdb"
 
     @property
     def optuna_db(self) -> Path:
@@ -392,15 +424,19 @@ class Config(BaseModel):
         return self.models_dir / asset_class
 
     def model_dir_for_ticker(
-        self, ticker: str, side: str = "long", strategy: str = "fixed"
+        self, ticker: str, side: str = "long", strategy: str = "fixed", *, interval: str = "1d"
     ) -> Path:
-        """Per-ticker registry namespace: ``data/models/tickers/<SLUG>/<side>[/<strategy>]/``.
+        """Per-ticker registry: ``data/models/tickers/<SLUG>/<side>[/<strategy>][/<interval>]/``.
 
         Each asset gets its own uniquely-trained/optimized model per side and exit strategy.
         ``strategy="fixed"`` keeps the historical ``.../<side>/`` path so existing artifacts and
         the daily serving path are unchanged; trailing variants get a ``/<strategy>`` suffix. The
         ``tickers/`` subtree never collides with the legacy root artifacts or the per-class
         subdirectories (``crypto/``, ``forex/`` …), so migration is additive.
+
+        ``interval="1d"`` returns the byte-identical legacy daily path; intraday timeframes
+        (``"1h"``) append an ``/<interval>`` leaf so intraday models live beside the daily ones
+        without collision.
         """
         if side not in ("long", "short"):
             msg = f"unknown side '{side}' (expected 'long' or 'short')"
@@ -409,7 +445,9 @@ class Config(BaseModel):
             msg = f"unknown strategy '{strategy}' (expected fixed | trailing | trailing_tp)"
             raise ValueError(msg)
         base = self.models_dir / "tickers" / safe_ticker_slug(ticker) / side
-        return base if strategy == "fixed" else base / strategy
+        if strategy != "fixed":
+            base = base / strategy
+        return base if interval == "1d" else base / interval
 
     def tradeable_tickers(self) -> list[str]:
         """Every configured asset eligible for a per-ticker model (union of universes)."""

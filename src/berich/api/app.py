@@ -55,6 +55,9 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
     config = Config.load(config_path)
     store = OhlcvStore(config.ohlcv_dir)
     signal_store = SignalStore(config.db_path)
+    # Intraday V2 POC — separate stores so the daily routes/singletons above are untouched.
+    intraday_store = OhlcvStore(config.ohlcv_intraday_dir, interval=config.intraday.interval)
+    intraday_signal_store = SignalStore(config.intraday_db_path)
 
     app = FastAPI(title="BeRich API", version="0.1.0")
     app.add_middleware(
@@ -341,6 +344,104 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=paper_trades.csv"},
         )
+
+    # ----------------------------------------------- Intraday V2 POC (parallel surface) ----
+    # Sibling routes under /api/intraday/*; every daily route above is byte-identical. The
+    # forecast-vs-executed split is preserved: /intraday/brief-plan = FORECAST, /intraday/
+    # replication = EXECUTED. Committed book defaults to the promoted tier.
+
+    @router.get("/intraday/signals", dependencies=guard)
+    def intraday_signals() -> list[dict]:
+        return intraday_signal_store.latest().to_dict(orient="records")
+
+    @router.get("/intraday/brief-plan", dependencies=guard)
+    def intraday_brief_plan() -> list[dict]:
+        """FORECAST order sheet for the intraday committed book (not an execution)."""
+        from berich.signals.paper_intraday import plan_committed_intraday_opens
+
+        rows = plan_committed_intraday_opens(config, intraday_store, intraday_signal_store)
+        if rows.empty:
+            return []
+        out = rows.copy()
+        out["direction"] = out["signal"].apply(
+            lambda s: "short" if str(s).upper() == "SHORT" else "long"
+        )
+        out["notional"] = out["entry"] * out["size_shares"]
+        out["ts_open"] = pd.to_datetime(out["date_open"]).astype(str)
+        keep = [
+            "ts_open",
+            "ticker",
+            "signal",
+            "direction",
+            "entry",
+            "stop",
+            "target",
+            "size_shares",
+            "notional",
+            "exit_strategy",
+        ]
+        return out[keep].to_dict(orient="records")
+
+    @router.get("/intraday/replication", dependencies=guard)
+    def intraday_replication() -> dict:
+        """EXECUTED list at the last hourly run — intraday copy actions, never a forecast."""
+        from berich.signals.paper_intraday import recent_intraday_executions
+
+        return dict(recent_intraday_executions(config, intraday_store))
+
+    @router.get("/intraday/paper/positions", dependencies=guard)
+    def intraday_paper_positions(
+        strategy: str | None = Query(default=None),
+        tier: str = Query(default=PROMOTED_TIER),
+    ) -> dict:
+        from berich.signals.paper_intraday import get_open_intraday_positions
+
+        positions = get_open_intraday_positions(
+            config, intraday_store, exit_strategy=strategy, tier=tier
+        )
+        return {"n": len(positions), "positions": [p.as_row() for p in positions]}
+
+    @router.get("/intraday/paper/equity", dependencies=guard)
+    def intraday_paper_equity(
+        strategy: str | None = Query(default=None),
+        tier: str = Query(default=PROMOTED_TIER),
+    ) -> dict:
+        from berich.signals.paper_intraday import (
+            get_intraday_equity_curve,
+            get_intraday_paper_metrics,
+        )
+
+        curve = get_intraday_equity_curve(config, intraday_store, exit_strategy=strategy, tier=tier)
+        metrics = get_intraday_paper_metrics(
+            config, intraday_store, exit_strategy=strategy, tier=tier
+        )
+        if curve.empty:
+            return {"dates": [], "equity_paper": [], "equity_bench": [], "metrics": metrics}
+        return {
+            "dates": curve["date"].tolist(),
+            "equity_paper": curve["equity_paper"].tolist(),
+            "equity_bench": [None if pd.isna(v) else float(v) for v in curve["equity_bench"]],
+            "metrics": metrics,
+        }
+
+    @router.get("/intraday/paper/closed-trades", dependencies=guard)
+    def intraday_paper_closed(
+        limit: int = Query(default=50, ge=1, le=500),
+        strategy: str | None = Query(default=None),
+        tier: str = Query(default=PROMOTED_TIER),
+    ) -> list[dict]:
+        from berich.signals.paper_intraday import IntradayPaperStore
+
+        df = IntradayPaperStore(config.intraday_db_path).closed_trades(
+            limit=limit, exit_strategy=strategy, tier=tier
+        )
+        if df.empty:
+            return []
+        df = df.copy()
+        for col in ("date_open", "date_close", "created_at", "updated_at"):
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col]).dt.strftime("%Y-%m-%dT%H:%M:%S")
+        return df.to_dict(orient="records")
 
     app.include_router(router)
     return app

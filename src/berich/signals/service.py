@@ -279,17 +279,18 @@ class _SideModel:
     decision_threshold: float | None = None
 
 
-def _select_strategy(config: Config, ticker: str, side: str) -> str | None:
+def _select_strategy(config: Config, ticker: str, side: str, *, interval: str = "1d") -> str | None:
     """Pick which exit strategy serves a (ticker, side); ``None`` if no artifact exists.
 
     Among the strategies that have a model, prefer a PROMOTED one with the best guard metric
     (Sharpe for long, deflated Sharpe for short); ties resolve to "fixed" (the baseline). If
     none is promoted, serve "fixed" advisory if present, else any available strategy. This keeps
-    the historical behavior when only the fixed baseline exists.
+    the historical behavior when only the fixed baseline exists. ``interval="1h"`` resolves the
+    intraday model namespace; ``"1d"`` keeps every daily caller byte-identical.
     """
     found: list[tuple[str, bool, float]] = []
     for strategy in ("fixed", "trailing", "trailing_tp"):
-        registry_dir = config.model_dir_for_ticker(ticker, side, strategy)
+        registry_dir = config.model_dir_for_ticker(ticker, side, strategy, interval=interval)
         loaded = load_best(registry_dir)
         if loaded is None:
             continue
@@ -306,7 +307,9 @@ def _select_strategy(config: Config, ticker: str, side: str) -> str | None:
     return next((f[0] for f in found if f[0] == "fixed"), found[0][0])
 
 
-def _ticker_side_model(config: Config, ticker: str, side: str) -> _SideModel | None:
+def _ticker_side_model(
+    config: Config, ticker: str, side: str, *, interval: str = "1d"
+) -> _SideModel | None:
     """Per-asset model for one side, served under the selected exit strategy (see
     :func:`_select_strategy`): the promoted winner if any, else the best optimized candidate
     (advisory). Returns ``None`` only when the asset has no artifact for ``side`` under any
@@ -314,19 +317,19 @@ def _ticker_side_model(config: Config, ticker: str, side: str) -> _SideModel | N
     its own trained models. Carries the model's trained horizon and exit strategy so serving
     builds its barriers the same way the model learned and is backtested on.
     """
-    strategy = _select_strategy(config, ticker, side)
+    strategy = _select_strategy(config, ticker, side, interval=interval)
     if strategy is None:
         return None
-    return _ticker_side_model_for(config, ticker, side, strategy)
+    return _ticker_side_model_for(config, ticker, side, strategy, interval=interval)
 
 
 def _ticker_side_model_for(
-    config: Config, ticker: str, side: str, strategy: str
+    config: Config, ticker: str, side: str, strategy: str, *, interval: str = "1d"
 ) -> _SideModel | None:
     """Load the per-asset model for a SPECIFIC exit strategy namespace (promoted winner if any,
     else best optimized candidate). ``None`` when that (side, strategy) has no artifact.
     """
-    registry_dir = config.model_dir_for_ticker(ticker, side, strategy)
+    registry_dir = config.model_dir_for_ticker(ticker, side, strategy, interval=interval)
     loaded = load_best(registry_dir)
     if loaded is None:
         return None
@@ -345,7 +348,7 @@ def _ticker_side_model_for(
     )
 
 
-def _strategies_with_long(config: Config, ticker: str) -> list[str]:
+def _strategies_with_long(config: Config, ticker: str, *, interval: str = "1d") -> list[str]:
     """Exit strategies that have a long model trained for ``ticker`` (fixed/trailing/trailing_tp).
 
     The signal service emits one signal per available strategy so the dashboard's toggle can
@@ -355,7 +358,8 @@ def _strategies_with_long(config: Config, ticker: str) -> list[str]:
     return [
         strategy
         for strategy in ("fixed", "trailing", "trailing_tp")
-        if load_best(config.model_dir_for_ticker(ticker, "long", strategy)) is not None
+        if load_best(config.model_dir_for_ticker(ticker, "long", strategy, interval=interval))
+        is not None
     ]
 
 
@@ -456,6 +460,64 @@ def generate_signals(config: Config, store: OhlcvStore) -> list[Signal]:
     return signals
 
 
+def generate_intraday_signals(config: Config, store: OhlcvStore) -> list[Signal]:
+    """Emit intraday (1h) signals for the configured crypto pair(s), served from their own
+    interval-dimensioned models. Parallel to :func:`generate_signals`; the daily path is untouched.
+
+    Reuses the exact serving machinery (``_select_strategy`` / ``_ticker_side_model_for`` /
+    ``_signal_for_ticker``) with ``interval="1h"`` so models resolve from the ``.../1h`` namespace,
+    and ``intraday=True`` so the feature matrix matches what the model trained on. Horizon is the
+    model's stored bar count. No earnings/news (crypto has neither).
+    """
+    label_cfg = LabelConfig(**config.labeling.model_dump())
+    if config.intraday.horizon_bars:
+        label_cfg = label_cfg.model_copy(update={"horizon_days": config.intraday.horizon_bars})
+    interval = config.intraday.interval
+    market_cache: dict[str, pd.DataFrame | None] = {}
+
+    signals: list[Signal] = []
+    for ticker in config.intraday.tickers:
+        df = store.load(ticker)
+        if df is None or df.empty:
+            continue
+        ref = market_reference_for(config.asset_class_for(ticker))
+        if ref not in market_cache:
+            market_cache[ref] = store.load(ref)
+        market = market_cache[ref]
+
+        for strategy in _strategies_with_long(config, ticker, interval=interval):
+            per_long = _ticker_side_model_for(config, ticker, "long", strategy, interval=interval)
+            if per_long is None:
+                continue
+            per_short = _ticker_side_model_for(config, ticker, "short", strategy, interval=interval)
+            signal = _signal_for_ticker(
+                ticker,
+                df,
+                per_long.model,
+                config,
+                label_cfg,
+                market=market,
+                feature_cols=per_long.cols,
+                calibrator=per_long.calibrator,
+                short_model=per_short.model if per_short else None,
+                short_feature_cols=per_short.cols if per_short else None,
+                short_calibrator=per_short.calibrator if per_short else None,
+                long_promoted=per_long.promoted,
+                short_promoted=per_short.promoted if per_short else False,
+                long_tier=per_long.tier,
+                short_tier=per_short.tier if per_short else "advisory",
+                long_threshold=per_long.decision_threshold,
+                short_threshold=per_short.decision_threshold if per_short else None,
+                horizon_days=per_long.horizon_days,
+                long_exit_strategy=per_long.exit_strategy,
+                short_exit_strategy=per_short.exit_strategy if per_short else strategy,
+                intraday=True,
+            )
+            if signal is not None:
+                signals.append(signal)
+    return signals
+
+
 def generate_multi_asset_signals(config: Config, store: OhlcvStore) -> list[Signal]:
     """Deprecated: non-US assets are now covered by :func:`generate_signals` (optimized-only,
     served from each asset's own model). Kept as a no-op so older callers don't break.
@@ -491,6 +553,7 @@ def _signal_for_ticker(  # noqa: C901, PLR0912, PLR0915
     horizon_days: int | None = None,
     long_exit_strategy: str = "fixed",
     short_exit_strategy: str = "fixed",
+    intraday: bool = False,
 ) -> Signal | None:
     # Serve on the model's own trained horizon (the per-asset HPO may have chosen != 10), so
     # the SL/TP barriers and the vol forecast match what the model learned on.
@@ -507,7 +570,7 @@ def _signal_for_ticker(  # noqa: C901, PLR0912, PLR0915
         news_arg = pd.DataFrame()
     with_micro = _needs_micro(feature_cols or []) or _needs_micro(short_feature_cols or [])
     feats = build_features(
-        df, market=market, earnings=earnings_arg, news=news_arg, micro=with_micro
+        df, market=market, earnings=earnings_arg, news=news_arg, micro=with_micro, intraday=intraday
     ).dropna()
     if feats.empty:
         return None

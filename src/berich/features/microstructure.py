@@ -24,8 +24,19 @@ MICRO_FEATURE_COLUMNS: list[str] = [
 _EPS = 1e-12
 
 
-def build_micro_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute the microstructure feature matrix aligned to ``df`` (causal; warm-ups NaN)."""
+def micro_feature_columns(*, overnight_gap: bool = True) -> list[str]:
+    """Microstructure column list; drops ``gap_open`` for 24/7 markets (degenerate)."""
+    if overnight_gap:
+        return list(MICRO_FEATURE_COLUMNS)
+    return [c for c in MICRO_FEATURE_COLUMNS if c != "gap_open"]
+
+
+def build_micro_features(df: pd.DataFrame, *, overnight_gap: bool = True) -> pd.DataFrame:
+    """Compute the microstructure feature matrix aligned to ``df`` (causal; warm-ups NaN).
+
+    On 24/7 markets (crypto) bars are continuous, so ``gap_open`` (open vs prior close)
+    is ~0 and meaningless; ``overnight_gap=False`` drops it.
+    """
     close = df["close"].astype(float)
     high = df["high"].astype(float)
     low = df["low"].astype(float)
@@ -36,7 +47,8 @@ def build_micro_features(df: pd.DataFrame) -> pd.DataFrame:
 
     rng = (high - low).replace(0.0, np.nan)
     feats["clv"] = (((close - low) - (high - close)) / rng).fillna(0.0)
-    feats["gap_open"] = open_ / close.shift(1) - 1.0
+    if overnight_gap:
+        feats["gap_open"] = open_ / close.shift(1) - 1.0
     feats["hl_range"] = (high - low) / close
 
     # Parkinson volatility: sqrt( mean( ln(H/L)^2 ) / (4 ln2) ) over a 10-day window.
@@ -63,4 +75,4 @@ def build_micro_features(df: pd.DataFrame) -> pd.DataFrame:
     return feats
 
 
-__all__ = ["MICRO_FEATURE_COLUMNS", "build_micro_features"]
+__all__ = ["MICRO_FEATURE_COLUMNS", "build_micro_features", "micro_feature_columns"]

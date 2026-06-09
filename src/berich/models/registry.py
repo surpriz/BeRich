@@ -76,6 +76,10 @@ class ModelMetadata(BaseModel):
     # (TP cap + ratcheting stop). Audit-only — the promotion gate is exit-strategy-agnostic (it
     # judges the resulting returns). Defaults to "fixed" so pre-existing artifacts are unchanged.
     exit_strategy: str = "fixed"
+    # Bar interval this model was trained/served on: "1d" (daily swing) or "1h" (intraday POC).
+    # Audit-only — the registry/guard are interval-agnostic. Defaults to "1d" so every
+    # pre-existing artifact deserializes unchanged. For intraday, ``horizon_days`` counts bars.
+    interval: str = "1d"
     # Per-asset decision threshold on the CALIBRATED win probability, chosen at training to
     # maximize OOS risk-adjusted expectancy for this (ticker, side). ``None`` => serve falls back
     # to the global ``signals.buy_threshold`` / ``short_threshold``. Defaults to None so every

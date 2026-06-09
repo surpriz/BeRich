@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, cast
 
 from berich.backtest import BacktestConfig, run_backtest
+from berich.backtest.annualization import bars_per_year
 from berich.backtest.significance import assess_sharpe
 from berich.data.store import OhlcvStore
 from berich.labeling.triple_barrier import LabelConfig
@@ -134,7 +135,7 @@ def _model_from_params(model_name: str, params: dict, *, device: str | None) -> 
     raise ValueError(msg)
 
 
-def train_candidate(
+def train_candidate(  # noqa: PLR0915 — linear train/backtest/gate/fit flow, clearer inline
     config: Config,
     store: OhlcvStore,
     ticker: str,
@@ -145,6 +146,7 @@ def train_candidate(
     device: str | None = None,
     calibrate: bool = True,
     n_trials: int = 1,
+    interval: str = "1d",
     factory_override: Callable[[], Model] | None = None,
     framework_override: str | None = None,
 ) -> tuple[Model, ModelMetadata, ProbaCalibrator | None, CandidateResult]:
@@ -160,13 +162,16 @@ def train_candidate(
     ``(model, metadata, calibrator_or_None, candidate_result)``. Nothing is saved or promoted
     here — that is the tournament's job once it has picked a winner.
     """
-    params, features = best_for_ticker(config, ticker, model_name, side, strategy)
+    params, features = best_for_ticker(
+        config, ticker, model_name, side, strategy, interval=interval
+    )
     # Reuse the HPO-chosen triple-barrier horizon so the candidate is trained, backtested AND
     # later served on the same horizon it was optimized for. None => the configured default.
-    horizon = best_horizon_for_ticker(config, ticker, model_name, side, strategy)
+    horizon = best_horizon_for_ticker(config, ticker, model_name, side, strategy, interval=interval)
     dataset, prices = _ticker_dataset(
-        config, ticker, side, horizon_days=horizon, exit_mode=strategy
+        config, ticker, side, horizon_days=horizon, exit_mode=strategy, interval=interval
     )
+    annualization = bars_per_year(interval)
     # An ensemble member slices the full frame to its own columns, so the ensemble candidate trains
     # on the FULL feature set; a single-model candidate keeps its HPO-selected subset.
     if features is not None and factory_override is None:
@@ -184,25 +189,34 @@ def train_candidate(
         return _model_from_params(model_name, params, device=device)
 
     oof = oof_predict(dataset, factory, embargo=label_cfg.horizon_days)
-    df = store.load(ticker)
-    if df is None or df.empty:  # defensive: _ticker_dataset already loaded it once
+    if interval != "1d":
+        # _ticker_dataset already loaded the correct intraday frame; never read the daily cache
+        # (the passed ``store`` is the daily one) for the same ticker.
         df = prices[ticker]
-    bt = run_backtest(
-        {ticker: df},
-        oof,
-        BacktestConfig(
-            entry_threshold=config.signals.buy_threshold,
-            horizon_days=label_cfg.horizon_days,
-            atr_window=label_cfg.atr_window,
-            take_profit_atr=label_cfg.take_profit_atr,
-            stop_loss_atr=label_cfg.stop_loss_atr,
-            direction=side,
-            exit_mode=strategy,
-            trailing_atr=label_cfg.trailing_atr,
-            trailing_tp_atr=label_cfg.trailing_tp_atr,
-            trailing_activation_atr=label_cfg.trailing_activation_atr,
-        ),
+    else:
+        df = store.load(ticker)
+        if df is None or df.empty:  # defensive: _ticker_dataset already loaded it once
+            df = prices[ticker]
+    bt_config = BacktestConfig(
+        entry_threshold=config.signals.buy_threshold,
+        horizon_days=label_cfg.horizon_days,
+        atr_window=label_cfg.atr_window,
+        take_profit_atr=label_cfg.take_profit_atr,
+        stop_loss_atr=label_cfg.stop_loss_atr,
+        direction=side,
+        exit_mode=strategy,
+        trailing_atr=label_cfg.trailing_atr,
+        trailing_tp_atr=label_cfg.trailing_tp_atr,
+        trailing_activation_atr=label_cfg.trailing_activation_atr,
+        bars_per_year=annualization,
     )
+    if interval != "1d":
+        # The volume-proportional slippage reference is SPY share volume — meaningless for a
+        # crypto pair quoted in coins. Charge a flat ~0.10%/side (Binance spot) instead.
+        bt_config = bt_config.model_copy(
+            update={"volume_proportional_slippage": False, "slippage_bps": 10.0}
+        )
+    bt = run_backtest({ticker: df}, oof, bt_config)
 
     framework = framework_override or _FRAMEWORK[model_name]
     auc = oof.auc
@@ -211,7 +225,7 @@ def train_candidate(
     # Deflated Sharpe + p-value are computed for BOTH sides (the long gate stays beats-buy-&-hold,
     # but storing significance lets the sweep-level FDR pass and the observation tier reason about
     # longs too). ``n_trials`` corrects the DSR for the search this candidate was selected from.
-    sig = assess_sharpe(bt.strategy_returns, n_trials=max(n_trials, 1))
+    sig = assess_sharpe(bt.strategy_returns, n_trials=max(n_trials, 1), bars_per_year=annualization)
     if side == "short":
         beats_guard = (
             enough_trades
@@ -291,6 +305,7 @@ def train_candidate(
         ticker=ticker,
         horizon_days=label_cfg.horizon_days,
         exit_strategy=strategy,
+        interval=interval,
         notes=f"[{strategy}] {notes}",
     )
     candidate = CandidateResult(
@@ -319,6 +334,7 @@ def _maybe_train_ensemble(
     device: str | None,
     calibrate: bool,
     n_trials: int,
+    interval: str = "1d",
 ) -> _Trained | None:
     """Build + evaluate an :class:`AveragingEnsemble` over the top frameworks; ``None`` if N/A.
 
@@ -342,7 +358,7 @@ def _maybe_train_ensemble(
 
     specs: list[MemberSpec] = []
     for name in chosen_names:
-        params_m, feats_m = best_for_ticker(config, ticker, name, side, strategy)
+        params_m, feats_m = best_for_ticker(config, ticker, name, side, strategy, interval=interval)
 
         def _mk(mn: str = name, p: dict = params_m) -> Model:
             return _model_from_params(mn, p, device=device)
@@ -363,6 +379,7 @@ def _maybe_train_ensemble(
             device=device,
             calibrate=calibrate,
             n_trials=n_trials,
+            interval=interval,
             factory_override=_ens_factory,
             framework_override="ensemble",
         )
@@ -404,6 +421,7 @@ def train_ticker_tournament(
     device: str | None = None,
     calibrate: bool = True,
     force: bool = False,
+    interval: str = "1d",
     trained_at: str | None = None,
 ) -> TournamentResult:
     """Run every candidate framework for one ticker x side x strategy and promote the honest winner.
@@ -411,7 +429,8 @@ def train_ticker_tournament(
     A winner is the gate-passing candidate with the best strategy Sharpe (long) / deflated
     Sharpe (short); it is saved + promoted into the per-ticker x strategy namespace. If none
     passes, the best-AUC candidate is saved unpromoted (advisory-only). Writes a ``status.json``
-    summary for the dashboard and returns the full verdict.
+    summary for the dashboard and returns the full verdict. ``interval="1h"`` trains the intraday
+    candidate into the interval-dimensioned namespace.
     """
     stamp = trained_at or datetime.now(UTC).isoformat()
     result = _run_tournament(
@@ -423,6 +442,7 @@ def train_ticker_tournament(
         device=device,
         calibrate=calibrate,
         force=force,
+        interval=interval,
     )
     _write_status(config, result, stamp=stamp)
     return result
@@ -438,11 +458,16 @@ def _run_tournament(  # noqa: C901 — linear train/gate/promote flow, clearer i
     device: str | None = None,
     calibrate: bool = True,
     force: bool = False,
+    interval: str = "1d",
 ) -> TournamentResult:
     """Train + gate the candidate frameworks (no side effects beyond the registry)."""
     model_names = models or config.zoo.ticker_tournament_models
-    registry_dir = config.model_dir_for_ticker(ticker, side, strategy)
-    store = OhlcvStore(config.ohlcv_dir)
+    registry_dir = config.model_dir_for_ticker(ticker, side, strategy, interval=interval)
+    store = (
+        OhlcvStore(config.ohlcv_intraday_dir, interval=interval)
+        if interval != "1d"
+        else OhlcvStore(config.ohlcv_dir)
+    )
 
     def _skip(reason: str) -> TournamentResult:
         logger.info("tournament skipped for %s/%s/%s: %s", ticker, side, strategy, reason)
@@ -451,7 +476,7 @@ def _run_tournament(  # noqa: C901 — linear train/gate/promote flow, clearer i
         )
 
     try:
-        probe, _ = _ticker_dataset(config, ticker, side, exit_mode=strategy)
+        probe, _ = _ticker_dataset(config, ticker, side, exit_mode=strategy, interval=interval)
     except ValueError as exc:
         return _skip(str(exc))
     if len(probe) < MIN_LABELED_ROWS:
@@ -461,7 +486,10 @@ def _run_tournament(  # noqa: C901 — linear train/gate/promote flow, clearer i
     # this (ticker, side, strategy). Feeding that total into the Deflated Sharpe corrects the gate
     # for the size of the search (anti data-mining). Floored at the framework count so a model
     # trained on defaults (no study) still counts as one trial per framework.
-    search_trials = sum(ticker_trial_count(config, ticker, m, side, strategy) for m in model_names)
+    search_trials = sum(
+        ticker_trial_count(config, ticker, m, side, strategy, interval=interval)
+        for m in model_names
+    )
     n_trials = max(search_trials, len(model_names))
 
     trained: list[tuple[Model, ModelMetadata, ProbaCalibrator | None, CandidateResult]] = []
@@ -478,6 +506,7 @@ def _run_tournament(  # noqa: C901 — linear train/gate/promote flow, clearer i
                     device=device,
                     calibrate=calibrate,
                     n_trials=n_trials,
+                    interval=interval,
                 )
             )
         except Exception:  # noqa: BLE001 — one bad framework must not abort the tournament
@@ -516,6 +545,7 @@ def _run_tournament(  # noqa: C901 — linear train/gate/promote flow, clearer i
             device=device,
             calibrate=calibrate,
             n_trials=n_trials,
+            interval=interval,
         )
         if ens is not None:
             trained.append(ens)

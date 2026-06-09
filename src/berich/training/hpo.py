@@ -428,18 +428,26 @@ def best_params_for(
 
 
 def ticker_study_name(
-    ticker: str, model_name: str, side: str, strategy: str = "fixed", metric: str = "auc"
+    ticker: str,
+    model_name: str,
+    side: str,
+    strategy: str = "fixed",
+    metric: str = "auc",
+    interval: str = "1d",
 ) -> str:
     """Optuna study name for one per-ticker x exit-strategy search (slugged, RDB-path-safe).
 
     ``strategy="fixed"`` keeps the legacy name (no strategy segment) so every pre-existing study
     keeps resolving; trailing variants get a ``-<strategy>`` segment before the metric.
+    ``interval="1d"`` keeps the legacy name; intraday timeframes get a ``-<interval>`` segment so a
+    1h study never collides with the daily study for the same ticker in the shared Optuna RDB.
     """
     from berich.config import safe_ticker_slug  # noqa: PLC0415
 
     slug = safe_ticker_slug(ticker)
     strat_seg = "" if strategy == "fixed" else f"-{strategy}"
-    return f"berich-hpo-{slug}-{model_name}-{side}{strat_seg}-{metric}"
+    interval_seg = "" if interval == "1d" else f"-{interval}"
+    return f"berich-hpo-{slug}-{model_name}-{side}{strat_seg}{interval_seg}-{metric}"
 
 
 def _ticker_dataset(
@@ -452,6 +460,7 @@ def _ticker_dataset(
     with_earnings: bool = True,
     horizon_days: int | None = None,
     exit_mode: str | None = None,
+    interval: str = "1d",
 ) -> tuple[SupervisedDataset, dict]:
     """Build a single-ticker supervised dataset (direction-aware) + its prices dict.
 
@@ -460,13 +469,21 @@ def _ticker_dataset(
     ``horizon_days`` overrides the config's triple-barrier horizon (used by the HPO horizon
     search); ``None`` keeps the configured default. ``exit_mode`` re-labels under a trailing
     exit strategy (``"trailing"`` / ``"trailing_tp"``); ``None`` keeps the configured default.
+    ``interval="1h"`` reads the intraday Parquet cache, builds the intraday feature set (no
+    calendar/gap features), defaults the horizon to ``config.intraday.horizon_bars``, and drops
+    the (nonexistent) crypto earnings/news caches.
     """
     from berich.data.earnings import EarningsStore  # noqa: PLC0415
     from berich.data.news import NewsStore  # noqa: PLC0415
     from berich.datasets.assemble import build_ticker_dataset  # noqa: PLC0415
     from berich.features.build import market_reference_for  # noqa: PLC0415
 
-    store = OhlcvStore(config.ohlcv_dir)
+    intraday = interval != "1d"
+    if intraday:  # crypto has no earnings/news caches; calendar/gap features are degenerate
+        with_news = with_earnings = False
+        store = OhlcvStore(config.ohlcv_intraday_dir, interval=interval)
+    else:
+        store = OhlcvStore(config.ohlcv_dir)
     df = store.load(ticker)
     if df is None or df.empty:
         msg = f"no cached OHLCV for ticker '{ticker}'"
@@ -489,6 +506,8 @@ def _ticker_dataset(
     update: dict[str, object] = {"direction": side}
     if horizon_days is not None:
         update["horizon_days"] = horizon_days
+    elif intraday:
+        update["horizon_days"] = config.intraday.horizon_bars
     if exit_mode is not None:
         update["exit_mode"] = exit_mode
     label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(update=update)
@@ -500,6 +519,7 @@ def _ticker_dataset(
         earnings=earnings,
         news=news,
         micro=micro,
+        intraday=intraday,
     )
     return dataset, {ticker: df}
 
@@ -514,6 +534,7 @@ def run_ticker_hpo(
     n_trials: int | None = None,
     device: str | None = None,
     metric: str = "auc",
+    interval: str = "1d",
 ) -> optuna.Study:
     """Run an Optuna study for one ticker x model x side x exit strategy, sharing the SQLite RDB.
 
@@ -521,18 +542,21 @@ def run_ticker_hpo(
     "trailing" | "trailing_tp"), so each strategy is optimized on its OWN target — the same
     HPO treatment everywhere. The objective is the direction-aware OOS AUC (default) with
     regularized priors and a joint feature search. A per-study SQLite ``connect_args`` timeout
-    lets concurrent GPU workers write the same RDB without locking out.
+    lets concurrent GPU workers write the same RDB without locking out. ``interval="1h"`` searches
+    the intraday dataset under its own study name.
     """
     import optuna  # noqa: PLC0415
 
     label_cfg = LabelConfig(**config.labeling.model_dump()).model_copy(
         update={"direction": side, "exit_mode": strategy}
     )
-    dataset, prices = _ticker_dataset(config, ticker, side, exit_mode=strategy)
+    dataset, prices = _ticker_dataset(config, ticker, side, exit_mode=strategy, interval=interval)
     horizons = config.zoo.ticker_hpo_horizons
 
     def _build_for_horizon(h: int) -> tuple[SupervisedDataset, dict]:
-        return _ticker_dataset(config, ticker, side, horizon_days=h, exit_mode=strategy)
+        return _ticker_dataset(
+            config, ticker, side, horizon_days=h, exit_mode=strategy, interval=interval
+        )
 
     objective = objective_for(
         model_name,
@@ -557,7 +581,7 @@ def run_ticker_hpo(
     study = optuna.create_study(
         direction="maximize",
         storage=storage,
-        study_name=ticker_study_name(ticker, model_name, side, strategy, metric),
+        study_name=ticker_study_name(ticker, model_name, side, strategy, metric, interval),
         load_if_exists=True,
     )
     trials = n_trials if n_trials is not None else config.zoo.ticker_initial_hpo_trials
@@ -581,6 +605,7 @@ def best_for_ticker(
     side: str = "long",
     strategy: str = "fixed",
     metric: str = "auc",
+    interval: str = "1d",
 ) -> tuple[dict, list[str] | None]:
     """Best (params, selected-features) for one ticker x model x side x strategy from its study.
 
@@ -592,7 +617,7 @@ def best_for_ticker(
 
     try:
         study = optuna.load_study(
-            study_name=ticker_study_name(ticker, model_name, side, strategy, metric),
+            study_name=ticker_study_name(ticker, model_name, side, strategy, metric, interval),
             storage=f"sqlite:///{config.optuna_db}",
         )
         best = study.best_trial
@@ -617,6 +642,7 @@ def ticker_trial_count(
     side: str = "long",
     strategy: str = "fixed",
     metric: str = "auc",
+    interval: str = "1d",
 ) -> int:
     """Number of completed HPO trials behind a per-ticker x model x side x strategy study.
 
@@ -628,7 +654,7 @@ def ticker_trial_count(
 
     try:
         study = optuna.load_study(
-            study_name=ticker_study_name(ticker, model_name, side, strategy, metric),
+            study_name=ticker_study_name(ticker, model_name, side, strategy, metric, interval),
             storage=f"sqlite:///{config.optuna_db}",
         )
     except (KeyError, ValueError):
@@ -646,13 +672,14 @@ def best_horizon_for_ticker(
     side: str = "long",
     strategy: str = "fixed",
     metric: str = "auc",
+    interval: str = "1d",
 ) -> int | None:
     """Triple-barrier horizon chosen by the best HPO trial, or None if no study/horizon search."""
     import optuna  # noqa: PLC0415
 
     try:
         study = optuna.load_study(
-            study_name=ticker_study_name(ticker, model_name, side, strategy, metric),
+            study_name=ticker_study_name(ticker, model_name, side, strategy, metric, interval),
             storage=f"sqlite:///{config.optuna_db}",
         )
         h = study.best_trial.user_attrs.get("horizon_days")

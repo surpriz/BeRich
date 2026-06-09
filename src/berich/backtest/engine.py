@@ -55,6 +55,7 @@ class BacktestConfig(BaseModel):
     volume_ref: float = 80_000_000.0
     slippage_cap_bps: float = 100.0  # safety cap to keep micro-caps sane
     borrow_bps_annual: float = 0.0  # short borrow fee, bps/yr; only charged on shorts
+    bars_per_year: int = 252  # annualization for the daily borrow accrual (1h crypto = 8760)
     direction: str = "long"
     # Exit strategy: "fixed" = the historical TP/SL barrier; "trailing" rides a ratcheting stop
     # with no TP; "trailing_tp" keeps the TP as a cap. Trailing uses the two params below.
@@ -134,8 +135,10 @@ def run_backtest(
     trade_rets = [t.gross_return - 2 * (fee + slip) for t in all_trades]
 
     return BacktestResult(
-        strategy=compute_metrics(strat_daily, trade_returns=trade_rets),
-        benchmark=compute_metrics(bench_daily),
+        strategy=compute_metrics(
+            strat_daily, trade_returns=trade_rets, bars_per_year=config.bars_per_year
+        ),
+        benchmark=compute_metrics(bench_daily, bars_per_year=config.bars_per_year),
         strategy_returns=strat_daily,
         benchmark_returns=bench_daily,
         trades=all_trades,
@@ -189,7 +192,9 @@ def _simulate_ticker(
     proba = proba.reindex(df.index)
 
     direction = config.direction
-    borrow_per_day = config.borrow_bps_annual / 1e4 / 252.0 if direction == "short" else 0.0
+    borrow_per_day = (
+        config.borrow_bps_annual / 1e4 / config.bars_per_year if direction == "short" else 0.0
+    )
 
     dates = df.index
     daily = pd.Series(0.0, index=dates)
