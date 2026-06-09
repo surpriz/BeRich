@@ -918,3 +918,38 @@ then evaluate** when the forward test closes:
 **Guardrail:** any of these re-shapes the promoted set → must re-run the full sweep + FDR and
 restart the forward-test trade count. Fix the new gate rule BEFORE running it (do not tune the
 gate to make the assets we *want* pass).
+
+### CPCV / PBO — one-shot overfitting audit of the sweep (June 2026, deferred — diagnostic only, NOT a gate)
+
+**The gap.** The gate compensates for the huge search (HPO × frameworks × 900 combos)
+*analytically* — Deflated Sharpe with the real trial count + sweep-wide BH FDR — but BeRich
+never **measures empirically** how overfit its own selection procedure is. CPCV (Combinatorial
+Purged Cross-Validation) turns the single walk-forward path into a *distribution* of OOS Sharpes;
+PBO (Probability of Backtest Overfitting) collapses that to one number: *when we pick a winner by
+our criterion, how often does it land below the OOS median?* PBO ≈ 0.5 = selection is no better
+than chance; ≈ 0 = it generalizes. Crucially PBO judges the **machine that selects models**, not
+any one model — the one thing DSR/FDR don't report as a readable figure.
+
+**User constraint (2026-06-09): must NOT harden the rules.** So PBO stays a *thermometer*, never
+a veto: it lives nowhere near `promote()` or the live sweep. If built, it is a one-shot offline
+`scripts/measure_pbo.py` (sibling of `measure_gate_impact.py`) emitting a single context figure
+("sweep PBO ≈ X%") for `/training` or this doc. No model is ever auto-demoted by it.
+
+**Why deferred (and why it may be counter-productive *now*):**
+1. **The 20-trade floor.** CPCV needs many observations per path; slicing a 20-trade model into
+   combinatorial OOS folds leaves a handful of trades per path → per-path Sharpe is noise → the
+   PBO estimate is itself unreliable. Mitigation: run it **pooled at portfolio level**, and/or only
+   on history-rich assets (e.g. JPY crosses, 3 books each), not per-asset.
+2. **Compute.** C(N,k) retrains/asset would slow the perpetual sweep and starve newly-added assets
+   of their deep HPO. Keep it offline, never in the loop.
+3. **Partial redundancy** with DSR + FDR (same disease, analytic vs resampled — divergence would be
+   informative, but the core is already covered).
+4. **Causal-realism tension.** CPCV trains on blocks *after* the test block (purge stops leakage but
+   breaks chronology), slightly at odds with BeRich's "deploys like reality, no lookahead" pitch.
+
+**Best use = after the forward test, not during the freeze.** The live paper book *is* the empirical
+OOS path, so PBO's marginal value is highest before deployment and decays as real OOS trades
+accrue. Plan: once the ~30 committed trades close, run the one-shot PBO audit and **cross-check
+"what PBO predicted" against "what the forward test actually delivered."** Concord → a calibrated,
+reusable instrument; divergence → PBO adds nothing on daily-bar / low-trade data and is dropped —
+either way it never touched the gate.
