@@ -51,25 +51,40 @@ def _hpo_trial_counts(optuna_db: Path) -> dict[str, int]:
     return {name: int(n) for name, n in rows}
 
 
-def _study_matches(
-    name: str, slug: str, side: str, model: str | None, strategy: str | None
-) -> bool:
-    """Whether an Optuna study name belongs to this (ticker, side[, model][, strategy]).
+# Intraday timeframe segments a study name may carry (``berich-hpo-...-<side>[-<strategy>]
+# [-<interval>]-<metric>``). Daily studies carry NO interval segment, so a daily query must
+# exclude these — otherwise an intraday (e.g. ``-1h-``) study pollutes the daily trial count.
+_INTRADAY_SEGMENTS = ("1h", "4h")
 
-    Study names are ``berich-hpo-<SLUG>-<model>-<side>[-<strategy>]-<metric>`` (fixed has no
-    strategy segment), so ``strategy="fixed"`` matches names with no trailing segment, and a
-    trailing strategy matches names carrying its segment. ``model``/``strategy`` are ``None`` =
-    any.
+
+def _study_matches(
+    name: str,
+    slug: str,
+    side: str,
+    model: str | None,
+    strategy: str | None,
+    interval: str = "1d",
+) -> bool:
+    """Whether an Optuna study name belongs to this (ticker, side[, model][, strategy], interval).
+
+    Study names are ``berich-hpo-<SLUG>-<model>-<side>[-<strategy>][-<interval>]-<metric>`` (fixed
+    has no strategy segment, daily has no interval segment), so ``strategy="fixed"`` matches names
+    with no trailing strategy segment, a trailing strategy matches names carrying its segment, and
+    ``interval="1d"`` matches names with NO intraday segment (an intraday timeframe matches only its
+    own ``-<interval>-`` segment). ``model``/``strategy`` are ``None`` = any.
     """
-    if not name.startswith(f"berich-hpo-{slug}-"):
-        return False
-    if f"-{side}-" not in name:
+    if not name.startswith(f"berich-hpo-{slug}-") or f"-{side}-" not in name:
         return False
     if model is not None and f"-{model}-" not in name:
         return False
     if strategy == "fixed" and ("-trailing-" in name or "-trailing_tp-" in name):
         return False
-    return not (strategy is not None and strategy != "fixed" and f"-{strategy}-" not in name)
+    if strategy not in (None, "fixed") and f"-{strategy}-" not in name:
+        return False
+    # Interval gate: daily excludes any intraday segment; an intraday interval requires its own.
+    if interval == "1d":
+        return not any(f"-{seg}-" in name for seg in _INTRADAY_SEGMENTS)
+    return f"-{interval}-" in name
 
 
 def _hpo_trials_for(
@@ -78,10 +93,15 @@ def _hpo_trials_for(
     model: str | None,
     side: str,
     strategy: str | None = None,
+    interval: str = "1d",
 ) -> int:
     """Sum HPO trials across that ticker+side's studies (see ``_study_matches`` for filtering)."""
     slug = safe_ticker_slug(ticker)
-    return sum(n for name, n in counts.items() if _study_matches(name, slug, side, model, strategy))
+    return sum(
+        n
+        for name, n in counts.items()
+        if _study_matches(name, slug, side, model, strategy, interval)
+    )
 
 
 def _naive_local_to_utc_iso(raw: str | None) -> str | None:

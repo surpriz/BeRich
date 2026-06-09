@@ -134,6 +134,21 @@ def test_status_json_candidates_surface(tmp_path):
     assert short["trained_at"] == "2026-06-01T06:00:00+00:00"
 
 
+def test_study_matches_interval_isolates_intraday_from_daily():
+    """An intraday (-1h-) study must NOT count toward the daily trial total, and vice-versa."""
+    from berich.training.status import _hpo_trials_for, _study_matches  # noqa: PLC0415
+
+    daily = "berich-hpo-BTC-USD-lgbm-long-auc"
+    intraday = "berich-hpo-BTC-USD-lgbm-long-1h-auc"
+    assert _study_matches(daily, "BTC-USD", "long", None, "fixed") is True
+    assert _study_matches(intraday, "BTC-USD", "long", None, "fixed") is False
+    assert _study_matches(intraday, "BTC-USD", "long", None, "fixed", "1h") is True
+    assert _study_matches(daily, "BTC-USD", "long", None, "fixed", "1h") is False
+    counts = {daily: 30, intraday: 100}
+    assert _hpo_trials_for(counts, "BTC-USD", None, "long", "fixed") == 30
+    assert _hpo_trials_for(counts, "BTC-USD", None, "long", "fixed", "1h") == 100
+
+
 def test_naive_local_to_utc_iso_normalizes():
     from berich.training.status import _naive_local_to_utc_iso  # noqa: PLC0415
 

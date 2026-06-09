@@ -24,6 +24,8 @@ from pathlib import Path
 
 from berich.config import Config
 from berich.data import update_watchlist
+from berich.data.binance_adapter import update_intraday
+from berich.data.store import OhlcvStore
 from berich.scheduler.jobs import (
     _hpo_and_tournament,
     _pending_hpo_targets,
@@ -51,6 +53,16 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("sweep")
+
+
+def _refresh_intraday(config: Config) -> None:
+    """Refresh the intraday (1h) Binance cache for each configured intraday pair (best-effort)."""
+    store = OhlcvStore(config.ohlcv_intraday_dir, interval=config.intraday.interval)
+    for ticker in config.intraday.tickers:
+        try:
+            update_intraday(config, store, ticker)
+        except Exception:
+            log.exception("intraday data refresh failed for %s", ticker)
 
 
 def _fdr(config: Config, tag: str) -> None:
@@ -122,49 +134,63 @@ def _continuous(config: Config) -> int:
         config = Config.load("config/berich.yaml")
         deep_trials = config.zoo.ticker_initial_hpo_trials
         topup_trials = config.zoo.ticker_nightly_hpo_trials
+        # One driver covers BOTH timeframes. Daily (swing) combos at interval 1d; intraday (crypto
+        # 1h) combos appended when enabled, in their own disjoint Optuna studies + registry (the
+        # interval dimension), so the two never collide and share the GPUs under this single lock.
         combos = [
-            (ticker, side, strategy)
+            (ticker, side, strategy, "1d")
             for ticker in config.tradeable_tickers()
             for side in config.zoo.ticker_sides
             for strategy in config.zoo.ticker_exit_strategies
         ]
+        if config.intraday.enabled:
+            combos += [
+                (ticker, side, strategy, config.intraday.interval)
+                for ticker in config.intraday.tickers
+                for side in config.zoo.ticker_sides
+                for strategy in config.zoo.ticker_exit_strategies
+            ]
         try:
             update_watchlist(config)
+            if config.intraday.enabled:
+                _refresh_intraday(config)
             log.info("cycle %d: OHLCV refreshed, %d combos", cycle, len(combos))
         except Exception:
             log.exception("cycle %d: data refresh failed (training on cached bars)", cycle)
         # Priority: un-searched combos (new assets) first, then deepen the rest.
         counts = _hpo_trial_counts(config.optuna_db)
-        combos.sort(key=lambda c: _hpo_trials_for(counts, c[0], None, c[1], c[2]) > 0)
+        combos.sort(key=lambda c: _hpo_trials_for(counts, c[0], None, c[1], c[2], c[3]) > 0)
         promoted = 0
-        for i, (ticker, side, strategy) in enumerate(combos):
-            existing = _hpo_trials_for(counts, ticker, None, side, strategy)
+        for i, (ticker, side, strategy, interval) in enumerate(combos):
+            existing = _hpo_trials_for(counts, ticker, None, side, strategy, interval)
             n_trials = deep_trials if existing < deep_trials else topup_trials
             log.info(
-                "[cycle %d, %d/%d] start %s/%s/%s (%d trials, %d existing)",
+                "[cycle %d, %d/%d] start %s/%s/%s @%s (%d trials, %d existing)",
                 cycle,
                 i + 1,
                 len(combos),
                 ticker,
                 side,
                 strategy,
+                interval,
                 n_trials,
                 existing,
             )
             t0 = time.time()
             try:
-                ok = _hpo_and_tournament(config, ticker, side, n_trials, strategy)
+                ok = _hpo_and_tournament(config, ticker, side, n_trials, strategy, interval)
                 promoted += int(bool(ok))
                 log.info(
-                    "done %s/%s/%s in %.0fs promoted=%s",
+                    "done %s/%s/%s @%s in %.0fs promoted=%s",
                     ticker,
                     side,
                     strategy,
+                    interval,
                     time.time() - t0,
                     ok,
                 )
             except Exception:
-                log.exception("retrain failed %s/%s/%s", ticker, side, strategy)
+                log.exception("retrain failed %s/%s/%s @%s", ticker, side, strategy, interval)
             try:
                 refresh_signals(config)
             except Exception:

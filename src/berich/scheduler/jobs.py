@@ -384,6 +384,7 @@ def _ticker_hpo_task(
     side: str,
     n_trials: int,
     strategy: str = "fixed",
+    interval: str = "1d",
 ) -> None:
     """Module-level (picklable) per-ticker x exit-strategy HPO call for the GPU pool worker.
 
@@ -395,11 +396,24 @@ def _ticker_hpo_task(
 
     try:
         run_ticker_hpo(
-            config, ticker, model_name, side, strategy=strategy, n_trials=n_trials, device=device
+            config,
+            ticker,
+            model_name,
+            side,
+            strategy=strategy,
+            n_trials=n_trials,
+            device=device,
+            interval=interval,
         )
     except Exception:  # noqa: BLE001 — one ticker/model HPO failure must not abort the sweep
         logger.warning(
-            "ticker HPO failed for %s/%s/%s/%s", ticker, model_name, side, strategy, exc_info=True
+            "ticker HPO failed for %s/%s/%s/%s/%s",
+            ticker,
+            model_name,
+            side,
+            strategy,
+            interval,
+            exc_info=True,
         )
 
 
@@ -470,13 +484,18 @@ def ticker_nightly_refresh_job(config: Config) -> dict[str, int]:
 
 
 def _hpo_and_tournament(
-    config: Config, ticker: str, side: str, n_trials: int, strategy: str = "fixed"
+    config: Config,
+    ticker: str,
+    side: str,
+    n_trials: int,
+    strategy: str = "fixed",
+    interval: str = "1d",
 ) -> bool:
     """Full first-pass HPO (deep models on the GPU pool) + tournament for one ticker/side/strategy.
 
     Returns whether a model was promoted. Deep-model HPO runs across the GPU pool; LightGBM is
     searched in-process by the tournament's own best-params lookup. Raises on hard failure so
-    the caller can count it.
+    the caller can count it. ``interval="1h"`` trains the intraday namespace (own studies/registry).
     """
     from berich.training.gpu_pool import GpuTask, run_on_gpus  # noqa: PLC0415
     from berich.training.tournament import train_ticker_tournament  # noqa: PLC0415
@@ -484,18 +503,20 @@ def _hpo_and_tournament(
     deep_models = [m for m in config.zoo.ticker_tournament_models if m != "lgbm"]
     # LightGBM HPO runs in-process (CPU, fast); deep models go on the GPU pool.
     if "lgbm" in config.zoo.ticker_tournament_models:
-        _ticker_hpo_task(None, config, ticker, "lgbm", side, n_trials, strategy)
+        _ticker_hpo_task(None, config, ticker, "lgbm", side, n_trials, strategy, interval)
     tasks = [
         GpuTask(
             _ticker_hpo_task,
-            args=(config, ticker, model_name, side, n_trials, strategy),
-            label=f"{ticker}/{model_name}/{side}/{strategy}",
+            args=(config, ticker, model_name, side, n_trials, strategy, interval),
+            label=f"{ticker}/{model_name}/{side}/{strategy}/{interval}",
         )
         for model_name in deep_models
     ]
     if tasks:
         run_on_gpus(tasks, config.zoo.gpu_ids)
-    return train_ticker_tournament(config, ticker, side, strategy=strategy, calibrate=True).promoted
+    return train_ticker_tournament(
+        config, ticker, side, strategy=strategy, interval=interval, calibrate=True
+    ).promoted
 
 
 def _pending_hpo_targets(config: Config) -> list[tuple[str, str, str]]:
