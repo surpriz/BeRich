@@ -877,3 +877,44 @@ cross-sectional market-neutral ranker.** Both are settled under the hardened har
 The open direction is the **forward test of the 47 survivors** (systematic forex +
 crypto/commodity shorts): concentrate capital per (class × side) segment once ~30 closed
 paper trades accumulate with positive net realized expectancy; cut the segments that don't.
+
+---
+
+## Post-forward-test backlog — the US/FR stock gate (June 2026, deferred)
+
+**Symptom (measured 2026-06-09, 125-asset universe, 55 promoted).** The promoted set is
+forex-skewed: forex 30, crypto 6, US 4, FR 4, commodities 2. Cause is the **long gate's
+`beats_buy_hold` requirement** colliding with how trending each class is. Average buy-&-hold
+Sharpe a long model must beat, by class:
+
+| Class | avg B&H Sharpe to beat | promoted | trained-but-advisory |
+|---|---|---|---|
+| forex | **+0.11** (flat) | 30 | 18 |
+| commodities | +0.23 | 2 | 32 |
+| crypto | +0.57 | 6 | 30 |
+| FR stocks | +0.50 | 4 | 48 |
+| US stocks | **+0.72** (strong trend) | 4 | 76 |
+
+A daily-bar ML model rarely beats a strongly-trending stock's own buy & hold, so US/FR longs
+almost never promote, while forex clears a ~flat bar trivially. The forex dominance is the gate
+being honest — but it doubles as a warning (forex "wins" beat a near-zero benchmark = weak edge),
+and it means the honest product for trending stocks is **buy & hold itself**, not a model.
+
+**User decision (2026-06-09): fix this AFTER the forward test, not now** (changing the gate
+re-shapes the promoted set and resets the ~30-trade counter). Candidate fixes to **pre-register
+then evaluate** when the forward test closes:
+
+1. **Drawdown-aware promotion (Calmar / MAR).** Promote a long if it beats B&H on return ÷
+   max-drawdown rather than raw Sharpe — directly rewards the loss-control the tool is built for.
+   A model capturing 80% of the uptrend at half the drawdown is valuable even if raw Sharpe < B&H.
+2. **Risk-adjusted excess return.** Credit a model that matches B&H return at materially lower
+   max-DD or time-in-market (lower exposure → capital freed for other segments).
+3. **Neutralize the flat-benchmark advantage.** Rather than only lowering the stock bar, *raise*
+   the forex bar: require forex longs to clear a higher deflated-Sharpe-vs-cash significance, so a
+   ~flat B&H can't be cleared by a marginal model.
+4. **Buy-&-hold stock sleeve.** A separate non-ML "hold" allocation for US/FR (and an index),
+   tracked apart from the ML book — the honest baseline product where B&H is the edge.
+
+**Guardrail:** any of these re-shapes the promoted set → must re-run the full sweep + FDR and
+restart the forward-test trade count. Fix the new gate rule BEFORE running it (do not tune the
+gate to make the assets we *want* pass).
