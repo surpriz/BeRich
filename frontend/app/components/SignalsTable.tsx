@@ -16,10 +16,16 @@ const CLOSE_GAP = 0.05; // within 5 pts of threshold = "close to firing"
 function MiniAdvice({ s, cfg, t }: { s: Signal; cfg?: SignalConfig; t: (k: string) => string }) {
   if (!cfg) return null;
   const pctp = (x: number | null | undefined) => (x == null ? "—" : `${Math.round(x * 100)}%`);
+  // A non-validated model must never read as a buy/short instruction, however high P(win) is —
+  // that contradiction ("Achat" next to "Non validé") was the #1 source of visitor confusion.
   if (s.signal === "LONG" || s.signal === "BUY") {
+    if (!s.promoted)
+      return <span className="text-[var(--color-faint)]">{t("advice.mini.longAdvisory")}</span>;
     return <span className="text-[var(--color-bull)]/80">{t("advice.mini.long")}</span>;
   }
   if (s.signal === "SHORT") {
+    if (!s.promoted)
+      return <span className="text-[var(--color-faint)]">{t("advice.mini.shortAdvisory")}</span>;
     return <span className="text-[var(--color-bear)]/80">{t("advice.mini.short")}</span>;
   }
   // NEUTRAL: show the two probas vs threshold + flag the side closest to firing.
@@ -104,6 +110,9 @@ export function SignalsTable({ signals, cfg }: { signals: Signal[]; cfg?: Signal
   const plain = level === "simple"; // Discovery: show plain-language column headers
   const defaultCost = signals.find((s) => s.cost_bps_roundtrip != null)?.cost_bps_roundtrip;
   const [costBps, setCostBps] = useState<number>(defaultCost ?? DEFAULT_COST_BPS);
+  // Validated assets first (stable sort) so the followable signals lead, and the exploratory
+  // "not validated" ones sit visibly below rather than mixed in.
+  const ordered = [...signals].sort((a, b) => Number(b.promoted) - Number(a.promoted));
   if (signals.length === 0) {
     return (
       <div className="card p-6 text-sm text-[var(--color-faint)]">
@@ -160,7 +169,7 @@ export function SignalsTable({ signals, cfg }: { signals: Signal[]; cfg?: Signal
           </tr>
         </thead>
         <tbody>
-          {signals.map((s, i) => (
+          {ordered.map((s, i) => (
             <tr
               key={s.ticker}
               className="rise group border-b border-[var(--color-line)]/50 transition-colors last:border-0 hover:bg-[var(--color-surface-2)]"
@@ -178,11 +187,12 @@ export function SignalsTable({ signals, cfg }: { signals: Signal[]; cfg?: Signal
                 <Link href={`/ticker/${encodeURIComponent(s.ticker)}`} className="block">
                   <SignalBadge signal={s.signal} />
                   <span
-                    className={`mt-1 block text-[10px] uppercase tracking-wider ${
+                    title={s.promoted ? t("advice.promotedNote") : t("advice.advisoryNote")}
+                    className={`mt-1 block cursor-help text-[10px] uppercase tracking-wider ${
                       s.promoted ? "text-[var(--color-bull)]" : "text-[var(--color-faint)]"
                     }`}
                   >
-                    {s.promoted ? t("signal.validated") : t("signal.advisory")}
+                    {s.promoted ? t("signal.validated") : t("signal.advisory")} ⓘ
                   </span>
                   <span className="mt-1 block max-w-[16rem] text-[10px] leading-tight">
                     <MiniAdvice s={s} cfg={cfg} t={t} />

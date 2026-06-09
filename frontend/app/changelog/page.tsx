@@ -34,6 +34,36 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 const ENTRIES: Entry[] = [
   {
     date: "2026-06-09",
+    tone: "ship",
+    title: {
+      fr: "Clarté visiteur : accueil + Brief plus lisibles dès la première visite",
+      en: "Visitor clarity: home + Brief easier to grasp on first visit",
+    },
+    points: [
+      {
+        fr: "Confusion n°1 corrigée : un actif « Non validé » avec une confiance (P(win)) élevée affichait quand même « Achat — hausse probable ». Le mini-conseil est désormais nuancé pour ces modèles (« Piste à la hausse — modèle non validé, pas d'achat »), pour ne jamais lire comme un ordre. Confiance du jour et fiabilité prouvée du modèle sont deux choses distinctes.",
+        en: "Top confusion fixed: a 'Not validated' asset with high confidence (P(win)) still showed 'Buy — up-move likely'. The mini-advice is now hedged for those models ('Upside lead — model not validated, no buy'), so it never reads as an order. Today's confidence and the model's proven reliability are two separate things.",
+      },
+      {
+        fr: "Vocabulaire unifié : « Indicatif » devient « Non validé » partout (plus clair sur ce que ça veut dire), avec une infobulle d'explication au survol du badge et les actifs validés remontés en haut du tableau.",
+        en: "Unified vocabulary: 'Advisory' becomes 'Not validated' everywhere (clearer about what it means), with an explanatory tooltip on hover and validated assets sorted to the top of the table.",
+      },
+      {
+        fr: "Brief : la section « Prochains ordres » est renommée « Ce que le robot prévoit de faire ce soir — vous n'avez rien à faire » pour qu'on ne la prenne plus pour une liste d'actions. La section « À l'observation » est explicitement reliée aux modèles « Non validés » de l'accueil. Un aiguilleur d'une ligne indique quel onglet suivre selon qu'on copie le robot ou qu'on veut juste comprendre.",
+        en: "Brief: the 'Upcoming orders' section is renamed 'What the robot plans to do tonight — nothing for you to do' so it's no longer mistaken for an action list. The 'On watch' section is explicitly linked to the home page's 'Not validated' models. A one-line router says which tab to follow depending on whether you copy the robot or just want to understand.",
+      },
+      {
+        fr: "Nouvelle légende « Le vocabulaire en 30 secondes » (P(win), Validé/Non validé, Prévision/Exécuté, Observation) sur le Brief, et étape d'accueil renforcée pour bien séparer confiance et validation.",
+        en: "New 'The vocabulary in 30 seconds' legend (P(win), Validated/Not validated, Forecast/Executed, Observation) on the Brief, plus a strengthened onboarding step that cleanly separates confidence from validation.",
+      },
+    ],
+    verdict: {
+      fr: "Interface et formulations uniquement — aucun modèle, gate, sizing ni seuil touché ; le gel du forward test est respecté.",
+      en: "UI and wording only — no model, gate, sizing or threshold touched; the forward-test freeze is respected.",
+    },
+  },
+  {
+    date: "2026-06-09",
     tone: "infra",
     title: {
       fr: "État machine : verdict d'utilisation en un coup d'œil sur /ops",

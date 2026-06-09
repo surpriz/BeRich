@@ -11,6 +11,7 @@ import {
 } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
 import { PageIntro } from "@/app/components/PageIntro";
+import { KeyTerms } from "@/app/components/KeyTerms";
 import { ReplicationView } from "@/app/copy/page";
 
 /**
@@ -142,8 +143,8 @@ export default function BriefPage({ embedded = false }: { embedded?: boolean }) 
       : "Discipline says: stay flat. No validated signal clears the bar — don't force a trade.",
     observeTitle: fr ? "À l'observation (sans argent)" : "On watch (no money)",
     observeHint: fr
-      ? "Modèles « presque promus », suivis en direct sans capital. À NE PAS financer — pour information seulement."
-      : "Near-miss models, tracked live without capital. Do NOT fund — for information only.",
+      ? "Modèles encore « Non validés » (cf. la page d'accueil), suivis en direct sans capital pour accumuler des preuves. À NE PAS financer — pour information seulement."
+      : "Still-'Not validated' models (see the home page), tracked live without capital to gather evidence. Do NOT fund — for information only.",
     holdTitle: fr ? "Positions en cours — à conserver" : "Open positions — hold",
     holdHint: fr
       ? "Tout le portefeuille, tous livres confondus (badge = livre). Conserve jusqu'à la sortie (stop / objectif) — ne ferme pas « au feeling »."
@@ -151,7 +152,12 @@ export default function BriefPage({ embedded = false }: { embedded?: boolean }) 
     holdEmpty: fr
       ? "Aucune position ouverte — le robot est entièrement à plat."
       : "No open positions — the robot is fully flat.",
-    ordersTitle: fr ? "Prochains ordres — prévision" : "Upcoming orders — forecast",
+    ordersTitle: fr
+      ? "Ce que le robot prévoit de faire ce soir — vous n'avez rien à faire"
+      : "What the robot plans to do tonight — nothing for you to do",
+    tabRouter: fr
+      ? "Vous copiez le robot ? → onglet « À répliquer ce matin » (ordres réellement exécutés). Vous voulez juste comprendre ce qu'il fait ? → restez sur « Positions & prévisions »."
+      : "Copying the robot? → 'Copy this morning' tab (orders actually executed). Just want to understand what it's doing? → stay on 'Positions & forecast'.",
     forecastWarn: fr
       ? `⚠️ PRÉVISION, pas une instruction. Recalculée en continu : l'exécution réelle a lieu automatiquement le ${nextRunLabel(true)}, aux prix de clôture de ce jour-là. Les prix affichés (dernière clôture connue) sont indicatifs — l'ordre peut changer ou disparaître d'ici là. Ne reproduis pas ces ordres manuellement : le robot s'en charge, et ce qui a été réellement exécuté apparaît dans « Positions en cours ».`
       : `⚠️ FORECAST, not an instruction. Recomputed continuously: the real execution happens automatically on ${nextRunLabel(false)}, at that day's closing prices. Prices shown (last known close) are indicative — an order can change or vanish by then. Do not replicate these orders manually: the robot handles it, and what was actually executed shows up under "Open positions".`,
@@ -204,6 +210,10 @@ export default function BriefPage({ embedded = false }: { embedded?: boolean }) 
       <div className="mt-4">
         <PageIntro page="brief" />
       </div>
+
+      <KeyTerms />
+
+      <p className="mb-2 text-xs text-[var(--color-muted)]">{L.tabRouter}</p>
 
       <div className="mb-2 inline-flex rounded-full border border-[var(--color-line)] bg-[var(--color-surface)] p-0.5 text-sm">
         {(
