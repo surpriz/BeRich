@@ -585,18 +585,34 @@ def test_drawdown_kill_switch_halts_and_derisks(config, ohlcv_store, monkeypatch
     rows = pd.DataFrame([_candidate("AAA", 100.0, 10)])
 
     # >= halt threshold (default 20%) -> nothing opens.
-    monkeypatch.setattr(paper_mod, "_committed_drawdown", lambda *_a, **_k: 0.25)
+    monkeypatch.setattr(paper_mod, "_book_drawdown", lambda *_a, **_k: 0.25)
     assert _derisk_for_drawdown(rows, config, ohlcv_store).empty
 
     # between de-risk (10%) and halt -> sizes scaled by drawdown_derisk_factor (0.5).
-    monkeypatch.setattr(paper_mod, "_committed_drawdown", lambda *_a, **_k: 0.12)
+    monkeypatch.setattr(paper_mod, "_book_drawdown", lambda *_a, **_k: 0.12)
     derisked = _derisk_for_drawdown(rows, config, ohlcv_store)
     assert int(derisked.iloc[0]["size_shares"]) == 5
 
     # below de-risk -> full size.
-    monkeypatch.setattr(paper_mod, "_committed_drawdown", lambda *_a, **_k: 0.02)
+    monkeypatch.setattr(paper_mod, "_book_drawdown", lambda *_a, **_k: 0.02)
     full = _derisk_for_drawdown(rows, config, ohlcv_store)
     assert int(full.iloc[0]["size_shares"]) == 10
+
+
+def test_drawdown_kill_switch_applies_per_tier(config, ohlcv_store, monkeypatch):
+    # The diversified panel (observe) de-risks off its OWN drawdown, independently of the
+    # committed book — the money-management philosophy is the same, the books are separate.
+    rows = pd.DataFrame([_candidate("AAA", 100.0, 10)])
+    dd_by_tier = {PROMOTED_TIER: 0.02, OBSERVE_TIER: 0.25}
+    monkeypatch.setattr(
+        paper_mod, "_book_drawdown", lambda _c, _s, tier=PROMOTED_TIER: dd_by_tier[tier]
+    )
+    # committed book healthy -> full size; observe book in halt -> nothing.
+    assert (
+        int(_derisk_for_drawdown(rows, config, ohlcv_store, PROMOTED_TIER).iloc[0]["size_shares"])
+        == 10
+    )
+    assert _derisk_for_drawdown(rows, config, ohlcv_store, OBSERVE_TIER).empty
 
 
 def test_recent_executions_filters_by_tier(config, ohlcv_store):

@@ -52,6 +52,10 @@ const ENTRIES: Entry[] = [
         fr: "Le livre engagé (forward test rigoureux des ~30 trades) reste totalement intact et séparé. Le panel est explicitement étiqueté « exploratoire, confiance moindre » : à suivre pour la variété, pas comme conseil validé.",
         en: "The committed book (rigorous ~30-trade forward test) stays fully intact and separate. The panel is explicitly labelled 'exploratory, lower confidence': follow it for variety, not as validated advice.",
       },
+      {
+        fr: "Même discipline de gestion du risque que le Portefeuille appliquée au Panel : kill-switch de drawdown gradué (réduction à −10 %, arrêt à −20 %), plafond de positions et caps d'exposition — mais calculés sur le propre capital et le propre drawdown du Panel, indépendamment du livre engagé.",
+        en: "Same risk discipline as the committed Wallet applied to the Panel: graduated drawdown kill-switch (de-risk at −10%, halt at −20%), position cap and exposure caps — computed on the Panel's own capital and own drawdown, independently of the committed book.",
+      },
     ],
     verdict: {
       fr: "Variété immédiate sans attendre la révision du gate (planifiée après le forward test) et sans toucher au test rigoureux. Compromis assumé : plus de classes, edge plus faible.",

@@ -91,8 +91,8 @@ export default function PanelPage() {
   const L = {
     title: fr ? "Panel diversifié" : "Diversified panel",
     intro: fr
-      ? "Un second livre papier, sur capital simulé séparé (10 000 €), qui couvre TOUTES les classes — actions US/FR, crypto, matières premières, forex. Il fait tourner les modèles « observe » : presque promus, edge plus faible, suivis sans capital réel."
-      : "A second paper book, on its own separate simulated capital (10,000 €), spanning ALL classes — US/FR stocks, crypto, commodities, forex. It runs the 'observe' models: near-misses with a weaker edge, tracked with no real capital.",
+      ? "Un second livre papier, sur capital simulé séparé (10 000 €), qui couvre TOUTES les classes — actions US/FR, crypto, matières premières, forex. Il fait tourner les modèles « observe » : presque promus, edge plus faible, suivis sans capital réel. Même discipline de gestion du risque que le Portefeuille (kill-switch de drawdown, plafonds d'exposition et de positions), appliquée à son propre capital."
+      : "A second paper book, on its own separate simulated capital (10,000 €), spanning ALL classes — US/FR stocks, crypto, commodities, forex. It runs the 'observe' models: near-misses with a weaker edge, tracked with no real capital. Same risk discipline as the committed Wallet (drawdown kill-switch, exposure and position caps), applied to its own capital.",
     warn: fr
       ? "⚠️ Exploratoire, confiance moindre. Ces modèles n'ont pas passé le gate durci du livre engagé : à suivre par curiosité et pour la variété, PAS comme conseil validé. Le forward test rigoureux reste le livre « Portefeuille »."
       : "⚠️ Exploratory, lower confidence. These models did not clear the committed book's hardened gate: follow for variety and curiosity, NOT as validated advice. The rigorous forward test stays on the 'Wallet' book.",

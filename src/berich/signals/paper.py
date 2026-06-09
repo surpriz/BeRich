@@ -726,13 +726,14 @@ def _plan_book(
         return book
     sig = config.signals
     rows = _candidate_rows(book, book_tier)
-    # The drawdown kill-switch and position cap protect REAL capital, so they apply to the committed
-    # book only; the observation book just tracks forward evidence.
-    if book_tier == PROMOTED_TIER:
-        rows = _derisk_for_drawdown(rows, config, store)
-        rows = _cap_open_positions(rows, paper.open_trades(tier=book_tier), sig.max_open_positions)
-        if rows.empty:
-            return rows
+    # Same money-management philosophy on both books — drawdown kill-switch + position cap — each
+    # measured on its own tier (own equity, own open positions), so the diversified panel is a
+    # genuinely managed book, not an unbounded shadow. The committed book is unchanged (tier
+    # defaults to promoted).
+    rows = _derisk_for_drawdown(rows, config, store, book_tier)
+    rows = _cap_open_positions(rows, paper.open_trades(tier=book_tier), sig.max_open_positions)
+    if rows.empty:
+        return rows
     return _apply_exposure_caps(
         rows,
         paper.open_trades(tier=book_tier),
@@ -765,9 +766,13 @@ def plan_committed_opens(
     return _plan_book(config, store, paper, actionable[tier == PROMOTED_TIER], PROMOTED_TIER)
 
 
-def _committed_drawdown(config: Config, store: OhlcvStore) -> float:
-    """Current peak-to-now drawdown (>= 0) of the committed paper book, 0.0 with no history."""
-    eq = get_equity_curve(config, store, tier=PROMOTED_TIER)
+def _book_drawdown(config: Config, store: OhlcvStore, tier: str = PROMOTED_TIER) -> float:
+    """Current peak-to-now drawdown (>= 0) of one tier's paper book, 0.0 with no history.
+
+    Each book is measured on its own equity curve, so the committed and the observe (diversified
+    panel) books de-risk off their own drawdown, not a shared one.
+    """
+    eq = get_equity_curve(config, store, tier=tier)
     if eq.empty:
         return 0.0
     series = pd.Series(eq["equity_paper"].to_numpy(), dtype=float).dropna()
@@ -780,20 +785,23 @@ def _committed_drawdown(config: Config, store: OhlcvStore) -> float:
     return max(0.0, 1.0 - current / peak)
 
 
-def _derisk_for_drawdown(rows: pd.DataFrame, config: Config, store: OhlcvStore) -> pd.DataFrame:
-    """Scale (or zero) candidate sizes per the graduated drawdown kill-switch on the committed book.
+def _derisk_for_drawdown(
+    rows: pd.DataFrame, config: Config, store: OhlcvStore, tier: str = PROMOTED_TIER
+) -> pd.DataFrame:
+    """Scale (or zero) candidate sizes per the graduated drawdown kill-switch on ``tier``'s book.
 
     Full size below the de-risk threshold; ``drawdown_derisk_factor`` between de-risk and halt;
     nothing (empty frame) at or above the halt threshold. Sizes are floored to whole shares and
-    rows that shrink below one share are dropped.
+    rows that shrink below one share are dropped. Applied to both the committed and the observe
+    (diversified panel) books, each off its own drawdown.
     """
     if rows.empty:
         return rows
     sig = config.signals
-    dd = _committed_drawdown(config, store)
+    dd = _book_drawdown(config, store, tier)
     if dd >= sig.drawdown_halt_threshold:
         logger.info(
-            "paper.open_new_trades: drawdown %.1f%% >= halt — no committed trades", dd * 100
+            "paper.open_new_trades: %s drawdown %.1f%% >= halt — no new trades", tier, dd * 100
         )
         return rows.iloc[0:0]
     if dd < sig.drawdown_derisk_threshold:
