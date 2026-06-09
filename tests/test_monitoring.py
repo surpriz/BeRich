@@ -58,6 +58,7 @@ def test_build_scheduler_registers_jobs():
     job_ids = {job.id for job in scheduler.get_jobs()}
     assert job_ids == {
         "daily_paper",
+        "intraday_paper",
         "refresh_universe",
         "check_drift",
         "ticker_drift_monitor",

@@ -123,9 +123,10 @@ def test_tournament_promotes_when_candidate_passes(tmp_path, monkeypatch):
         device=None,
         calibrate=True,
         n_trials=1,
+        interval="1d",
     ):
         # stubbed: only side/model_name/strategy are used
-        del config, store, device, calibrate, n_trials
+        del config, store, device, calibrate, n_trials, interval
         model = LGBMModel().fit(pd.DataFrame({"f": [0.0, 1.0, 0.0, 1.0]}), pd.Series([0, 1, 0, 1]))
         meta = ModelMetadata(
             name=f"{model_name}-{side}",
