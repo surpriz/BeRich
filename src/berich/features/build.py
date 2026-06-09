@@ -26,8 +26,8 @@ from berich.features.fundamental_features import (
     build_fundamental_features,
 )
 from berich.features.microstructure import (
-    MICRO_FEATURE_COLUMNS,
     build_micro_features,
+    micro_feature_columns,
 )
 from berich.features.news_features import (
     NEWS_FEATURE_COLUMNS,
@@ -102,6 +102,21 @@ FEATURE_COLUMNS: list[str] = [
     "spy_rvol_20",
 ]
 
+# Calendar columns are daily-equity seasonality and are degenerate on continuous 1h
+# crypto bars; the intraday subsystem swaps them for hour-of-day / day-of-week cyclical
+# encodings (causal — each reads only ``index[t]``).
+DAILY_CALENDAR_COLUMNS = ["month_sin", "month_cos", "days_to_month_end"]
+INTRADAY_CALENDAR_COLUMNS = ["hour_sin", "hour_cos", "dow_sin", "dow_cos"]
+
+# Base column list for the intraday feature set: same as FEATURE_COLUMNS but with the
+# calendar block replaced by the intraday cyclical encodings (regime cols stay last).
+_REGIME_COLUMNS = ("spy_ret_20", "spy_rvol_20")
+INTRADAY_FEATURE_COLUMNS: list[str] = [
+    *[c for c in FEATURE_COLUMNS if c not in DAILY_CALENDAR_COLUMNS and c not in _REGIME_COLUMNS],
+    *INTRADAY_CALENDAR_COLUMNS,
+    *_REGIME_COLUMNS,
+]
+
 
 def feature_columns(
     *,
@@ -109,6 +124,7 @@ def feature_columns(
     news: bool = False,
     micro: bool = False,
     fundamentals: bool = False,
+    intraday: bool = False,
 ) -> list[str]:
     """Canonical ordered feature list.
 
@@ -118,17 +134,31 @@ def feature_columns(
     :mod:`~berich.features.microstructure` columns (in that order). Callers
     (training, scaling, serving) must use the same flags end-to-end — the model
     registry's metadata records which mode each artifact was trained with so
-    serving stays in sync.
+    serving stays in sync. ``intraday`` swaps the calendar block for hour/day-of-week
+    cyclicals and drops the degenerate ``gap_open`` from the micro group.
     """
-    out = list(FEATURE_COLUMNS)
+    out = list(INTRADAY_FEATURE_COLUMNS if intraday else FEATURE_COLUMNS)
     if earnings:
         out.extend(EARNINGS_FEATURE_COLUMNS)
     if news:
         out.extend(NEWS_FEATURE_COLUMNS)
     if micro:
-        out.extend(MICRO_FEATURE_COLUMNS)
+        out.extend(micro_feature_columns(overnight_gap=not intraday))
     if fundamentals:
         out.extend(FUNDAMENTAL_FEATURE_COLUMNS)
+    return out
+
+
+def _intraday_calendar_features(index: pd.DatetimeIndex) -> pd.DataFrame:
+    """Hour-of-day and day-of-week cyclical encodings (causal — reads only ``index[t]``)."""
+    out = pd.DataFrame(index=index)
+    idx = pd.Series(index)
+    hour = idx.dt.hour.to_numpy()
+    dow = idx.dt.dayofweek.to_numpy()
+    out["hour_sin"] = np.sin(2.0 * np.pi * hour / 24.0)
+    out["hour_cos"] = np.cos(2.0 * np.pi * hour / 24.0)
+    out["dow_sin"] = np.sin(2.0 * np.pi * dow / 7.0)
+    out["dow_cos"] = np.cos(2.0 * np.pi * dow / 7.0)
     return out
 
 
@@ -177,7 +207,7 @@ def _market_regime_features(
     return feats.reindex(target_index)
 
 
-def build_features(
+def build_features(  # noqa: C901 — linear feature assembly with optional groups, clearer inline
     df: pd.DataFrame,
     *,
     market: pd.DataFrame | None = None,
@@ -185,6 +215,7 @@ def build_features(
     news: pd.DataFrame | None = None,
     micro: bool = False,
     fundamentals: pd.DataFrame | None = None,
+    intraday: bool = False,
 ) -> pd.DataFrame:
     """Compute the canonical feature matrix from an OHLCV frame.
 
@@ -236,9 +267,14 @@ def build_features(
     feats["dist_high_60"] = ind.dist_to_rolling_high(close, high, DIST_LOOKBACK)
     feats["dist_low_60"] = ind.dist_to_rolling_low(close, low, DIST_LOOKBACK)
 
-    calendar = _calendar_features(pd.DatetimeIndex(df.index))
-    for col in ("month_sin", "month_cos", "days_to_month_end"):
-        feats[col] = calendar[col]
+    if intraday:
+        calendar = _intraday_calendar_features(pd.DatetimeIndex(df.index))
+        for col in INTRADAY_CALENDAR_COLUMNS:
+            feats[col] = calendar[col]
+    else:
+        calendar = _calendar_features(pd.DatetimeIndex(df.index))
+        for col in DAILY_CALENDAR_COLUMNS:
+            feats[col] = calendar[col]
 
     if market is not None:
         regime = _market_regime_features(pd.DatetimeIndex(df.index), market)
@@ -248,14 +284,17 @@ def build_features(
         feats["spy_ret_20"] = np.nan
         feats["spy_rvol_20"] = np.nan
 
-    base = feats[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan)
+    base_cols = INTRADAY_FEATURE_COLUMNS if intraday else FEATURE_COLUMNS
+    base = feats[base_cols].replace([np.inf, -np.inf], np.nan)
     extras: list[pd.DataFrame] = []
     if earnings is not None:
         extras.append(build_earnings_features(pd.DatetimeIndex(df.index), earnings))
     if news is not None:
         extras.append(build_news_features(pd.DatetimeIndex(df.index), news, close=close))
     if micro:
-        extras.append(build_micro_features(df).replace([np.inf, -np.inf], np.nan))
+        extras.append(
+            build_micro_features(df, overnight_gap=not intraday).replace([np.inf, -np.inf], np.nan)
+        )
     if fundamentals is not None:
         extras.append(build_fundamental_features(pd.DatetimeIndex(df.index), fundamentals))
     if not extras:

@@ -86,8 +86,8 @@ def inverse_vol_size(
     return min(ref_vol / asset_vol_20d, ceiling)
 
 
-def annualize_daily_vol(daily_std: float) -> float:
-    """Convenience: turn a daily-returns std into an annualized vol (sqrt 252)."""
+def annualize_daily_vol(daily_std: float, *, bars_per_year: int = 252) -> float:
+    """Convenience: turn a per-bar returns std into an annualized vol (sqrt 252 for daily)."""
     if daily_std is None or math.isnan(daily_std) or daily_std <= 0:
         return 0.0
-    return float(daily_std * math.sqrt(252.0))
+    return float(daily_std * math.sqrt(bars_per_year))

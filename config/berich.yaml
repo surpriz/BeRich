@@ -9,6 +9,17 @@ data:
   start_date: "2010-01-01"
   auto_adjust: true       # split/dividend-adjusted prices — avoids fake gaps
 
+# Intraday V2 POC (parallel subsystem — leaves the daily pipeline above untouched).
+# Crypto 1h bars, single pair BTC/USDT, same promote() guard. bars_per_year=8760
+# (24x365) is what makes the intraday Sharpe honest vs the daily 252.
+intraday:
+  enabled: true
+  interval: "1h"
+  bars_per_year: 8760
+  overnight_gap: false    # 24/7 market → no overnight gap feature
+  horizon_bars: 24        # forward window in bars (24 = one day)
+  tickers: ["BTC-USD"]    # mapped to BTC/USDT at fetch time
+
 # Tickers to track. Keep small for v1; expand once the pipeline is validated.
 watchlist:
   - AAPL

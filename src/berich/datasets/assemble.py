@@ -53,10 +53,17 @@ def build_ticker_dataset(
     news: pd.DataFrame | None = None,
     micro: bool = False,
     fundamentals: pd.DataFrame | None = None,
+    intraday: bool = False,
 ) -> SupervisedDataset:
     """Build a supervised dataset for a single OHLCV frame."""
     feats = build_features(
-        df, market=market, earnings=earnings, news=news, micro=micro, fundamentals=fundamentals
+        df,
+        market=market,
+        earnings=earnings,
+        news=news,
+        micro=micro,
+        fundamentals=fundamentals,
+        intraday=intraday,
     )
     labels = triple_barrier_labels(df, label_config)
 
@@ -67,6 +74,7 @@ def build_ticker_dataset(
         news=news is not None,
         micro=micro,
         fundamentals=fundamentals is not None,
+        intraday=intraday,
     )
     return SupervisedDataset(
         x=joined[cols],

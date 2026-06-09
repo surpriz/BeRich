@@ -33,6 +33,32 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-06-09",
+    tone: "infra",
+    title: {
+      fr: "Intraday V2 (POC) : signaux crypto 1h en direct, livre papier séparé",
+      en: "Intraday V2 (POC): live 1-hour crypto signals, a separate paper book",
+    },
+    points: [
+      {
+        fr: "Nouveau sous-système intraday entièrement parallèle au swing journalier : barres horaires (1h) sur une seule paire, BTC/USDT, données profondes et gratuites depuis Binance (via ccxt). Le pipeline journalier déployé n'est pas modifié — cache, base de données et modèles intraday vivent dans leurs propres espaces (data/ohlcv_1h, berich_intraday.duckdb, .../<côté>/1h).",
+        en: "A new intraday subsystem fully parallel to the daily swing book: hourly (1h) bars on a single pair, BTC/USDT, deep free history from Binance (via ccxt). The deployed daily pipeline is untouched — the intraday cache, database and models live in their own namespaces (data/ohlcv_1h, berich_intraday.duckdb, .../<side>/1h).",
+      },
+      {
+        fr: "Même garde-fou promote() que le swing, sans dérogation : un modèle 1h n'est promu que s'il bat l'achat-conservation de BTC (long) ou affiche un Sharpe positif et significatif (short), avec ≥ 20 trades hors-échantillon, des frais Binance réalistes (~0,10 %/côté) et une annualisation honnête (bars_per_year = 8760 = 24×365, et non 252 — sinon le Sharpe serait gonflé ~6×).",
+        en: "The same promote() guard as the swing book, no bypass: a 1h model is promoted only if it beats BTC buy-&-hold (long) or shows a positive, significant Sharpe (short), with ≥ 20 out-of-sample trades, realistic Binance fees (~0.10%/side) and honest annualization (bars_per_year = 8760 = 24×365, not 252 — which would inflate the Sharpe ~6×).",
+      },
+      {
+        fr: "Un job horaire (24/7, crypto ne ferme jamais) rafraîchit les données, génère le signal 1h, ouvre les trades promus sous les mêmes plafonds de money-management et fait évoluer/ferme les positions. Nouvelle page /intraday : signal courant, ordres PRÉVUS (prévision, à ne pas copier), EXÉCUTÉ (ce que le robot a réellement fait), et P&L papier face à l'achat-conservation BTC — la même séparation prévision/exécuté que /brief et /copy.",
+        en: "An hourly job (24/7 — crypto never closes) refreshes data, generates the 1h signal, opens promoted trades under the same money-management caps, and trails/closes positions. New /intraday page: current signal, FORECAST orders (a forecast, not to copy), EXECUTED (what the robot actually did), and paper P&L vs BTC buy-&-hold — the same forecast-vs-executed split as /brief and /copy.",
+      },
+    ],
+    verdict: {
+      fr: "POC — pas une preuve d'edge. On mesure si un edge intraday passe le même garde-fou après frais. Capital papier uniquement, aucun argent réel ; le swing journalier reste gelé et inchangé. Si l'edge 1h ne clear pas, il reste « advisory » et n'engage aucun capital.",
+      en: "POC — not an edge claim. It measures whether an intraday edge clears the same guard after costs. Paper capital only, no real money; the daily swing book stays frozen and unchanged. If the 1h edge doesn't clear, it stays advisory and engages no capital.",
+    },
+  },
+  {
     date: "2026-06-08",
     tone: "ship",
     title: {

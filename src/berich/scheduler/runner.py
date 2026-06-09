@@ -19,6 +19,7 @@ from berich.scheduler.jobs import (
     backup_job,
     check_drift_job,
     daily_paper_job,
+    intraday_paper_job,
     longshort_signals_job,
     nightly_hpo_job,
     refresh_signals_job,
@@ -79,6 +80,18 @@ def build_scheduler(config: Config) -> BlockingScheduler:
         args=[config],
         id="daily_paper",
         replace_existing=True,
+    )
+    # Intraday V2 POC — hourly, 24/7 (crypto never closes), fired at HH:02 UTC so the just-closed
+    # 1h bar is settled. Fully isolated: own DB, own functions; never takes the HPO lock. Skips
+    # itself when ``intraday.enabled`` is False, so it is a no-op until the POC is switched on.
+    scheduler.add_job(
+        intraday_paper_job,
+        CronTrigger(minute=2, timezone="UTC"),
+        args=[config],
+        id="intraday_paper",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
     # Wider long/short universe refresh at 22:45 Paris weekdays — after daily_paper (22:30),
     # before the nightly retrain (23:30) so the cross-sectional panel trains on fresh bars.

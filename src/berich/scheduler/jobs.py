@@ -122,6 +122,44 @@ def daily_paper_job(config: Config) -> dict[str, int]:
     }
 
 
+def intraday_paper_job(config: Config) -> dict[str, int]:
+    """Hourly intraday (1h crypto) chain — fully isolated from the daily chain above.
+
+    Refresh 1h Binance data → generate intraday signals → save to the SEPARATE intraday DuckDB →
+    open promoted-tier intraday trades under the same money-management caps → walk/close open
+    intraday trades. Disabled unless ``config.intraday.enabled``. Reuses the daily risk profile.
+    No email digest (POC); the scheduler's EVENT_JOB_ERROR listener still alerts on failure. Never
+    touches the daily DB, ``refresh_signals`` or the HPO lock.
+    """
+    if not config.intraday.enabled:
+        return {"signals_saved": 0, "trades_opened": 0, "trades_closed": 0}
+    config.apply_active_risk_profile()
+    # Lazy imports: keep the intraday subsystem (ccxt adapter, intraday paper book) out of the
+    # module-import path so the daily scheduler stays lean.
+    from berich.data.binance_adapter import update_intraday  # noqa: PLC0415
+    from berich.signals import SignalStore  # noqa: PLC0415
+    from berich.signals.paper_intraday import (  # noqa: PLC0415
+        open_new_intraday_trades,
+        update_open_intraday_trades,
+    )
+    from berich.signals.service import generate_intraday_signals  # noqa: PLC0415
+
+    store = OhlcvStore(config.ohlcv_intraday_dir, interval=config.intraday.interval)
+    for ticker in config.intraday.tickers:
+        try:
+            update_intraday(config, store, ticker)
+        except Exception:  # noqa: BLE001 — a transient ccxt error must not abort the chain
+            logger.warning("intraday_paper: data refresh failed for %s", ticker, exc_info=True)
+
+    signals = generate_intraday_signals(config, store)
+    signal_store = SignalStore(config.intraday_db_path)
+    saved = signal_store.save(signals)
+    opened = open_new_intraday_trades(config, store, signal_store)
+    closed = update_open_intraday_trades(config, store)
+    logger.info("intraday_paper: %d signals saved, %d opened, %d closed", saved, opened, closed)
+    return {"signals_saved": saved, "trades_opened": opened, "trades_closed": closed}
+
+
 def _try_news_refresh(config: Config) -> int:
     """Best-effort AV refresh; returns rows added, or -1 if news is opted out."""
     import os  # noqa: PLC0415 — local import keeps scheduler module-import lean

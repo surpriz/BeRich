@@ -22,8 +22,13 @@ INDEX_NAME = "date"
 class OhlcvStore:
     """Read/write/merge OHLCV frames in a Parquet cache directory."""
 
-    def __init__(self, ohlcv_dir: Path) -> None:
+    def __init__(self, ohlcv_dir: Path, *, interval: str = "1d") -> None:
         self.ohlcv_dir = ohlcv_dir
+        self.interval = interval
+        # Intraday bars carry a meaningful time component; daily bars are normalized
+        # to midnight so one calendar day is one row. ``.normalize()`` would collapse
+        # every 1h bar of a day onto the same midnight index — fatal for intraday.
+        self._intraday = interval != "1d"
 
     def _path(self, ticker: str) -> Path:
         return self.ohlcv_dir / f"{ticker.upper()}.parquet"
@@ -56,15 +61,15 @@ class OhlcvStore:
         df.to_parquet(tmp)
         tmp.replace(self._path(ticker))
 
-    @staticmethod
-    def _normalize(df: pd.DataFrame) -> pd.DataFrame:
+    def _normalize(self, df: pd.DataFrame) -> pd.DataFrame:
         """Coerce a frame to the canonical schema, raising on missing columns."""
         missing = set(OHLCV_COLUMNS) - set(df.columns)
         if missing:
             msg = f"OHLCV frame missing columns: {sorted(missing)}"
             raise ValueError(msg)
         out = df[OHLCV_COLUMNS].copy()
-        out.index = pd.DatetimeIndex(df.index).tz_localize(None).normalize()
+        idx = pd.DatetimeIndex(df.index).tz_localize(None)
+        out.index = idx if self._intraday else idx.normalize()
         out.index.name = INDEX_NAME
         return out[~out.index.duplicated(keep="last")].sort_index()
 

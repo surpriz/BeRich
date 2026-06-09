@@ -112,6 +112,25 @@ systemctl restart berich-frontend               # `next build` runs in ExecStart
 `ExecStartPre=/usr/bin/npm run build`), so a restart is enough — no manual
 `npm run build` step. The API/scheduler reload the Python source directly.
 
+### Intraday V2 POC (1h crypto)
+
+The intraday subsystem runs **inside the existing `berich-scheduler`** — no new systemd
+unit. `build_scheduler` registers an extra `intraday_paper` job firing **hourly, 24/7**
+(`CronTrigger(minute=2, timezone="UTC")` — crypto never closes), which refreshes 1h
+Binance data, generates the 1h signal, and rolls the **separate** intraday paper book
+(`data/berich_intraday.duckdb`). It is gated behind `intraday.enabled` in
+`config/berich.yaml`, never takes the HPO lock, and never touches the daily DB — so
+`berich-sweep` and the daily chain are unaffected. The deploy flow is unchanged:
+
+```bash
+systemctl restart berich-api berich-scheduler berich-frontend
+```
+
+`ccxt` is a new pinned dependency (`pyproject.toml`); `uv sync` on the box installs it.
+The intraday cache (`data/ohlcv_1h/`) and DB live under `data/`, so the rotating
+`backup_job` already covers them. Train the first candidate with
+`uv run python scripts/train_intraday_btc.py` before expecting any served signal.
+
 ### Polish v2 (multi-asset + i18n + ticker drill-down)
 
 Polish v2 added the `/api/signals/{ticker}/explain` and `/api/universes`
