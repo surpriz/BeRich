@@ -21,10 +21,10 @@ def config(tmp_path) -> Config:
 
 
 def test_scheduler_registers_intraday_job_without_disturbing_daily(config):
+    # build_scheduler returns an unstarted scheduler; inspect jobs without starting it.
     scheduler = build_scheduler(config)
     assert scheduler.get_job("intraday_paper") is not None
     assert scheduler.get_job("daily_paper") is not None  # daily job untouched
-    scheduler.shutdown(wait=False)
 
 
 def test_intraday_job_hourly_trigger(config):
@@ -32,7 +32,6 @@ def test_intraday_job_hourly_trigger(config):
     job = scheduler.get_job("intraday_paper")
     # Fires every hour (minute=2) — crypto trades 24/7, so no day-of-week restriction.
     assert "minute='2'" in str(job.trigger) or "minute=2" in str(job.trigger)
-    scheduler.shutdown(wait=False)
 
 
 def test_generate_intraday_signals_empty_without_models(config):
