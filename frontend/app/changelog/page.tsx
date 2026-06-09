@@ -36,6 +36,32 @@ const ENTRIES: Entry[] = [
     date: "2026-06-09",
     tone: "infra",
     title: {
+      fr: "Ré-entraînement par ancienneté : aucun actif laissé périmer",
+      en: "Staleness-first retraining: no asset left to go stale",
+    },
+    points: [
+      {
+        fr: "Le sweep continu re-entraînait les actifs déjà optimisés dans un ordre figé (l'ordre du fichier de configuration). Au moindre redémarrage du service, il repartait du haut de la liste — les actifs en fin de liste pouvaient donc être ré-optimisés bien moins souvent que les premiers, et rester sur des données plus anciennes.",
+        en: "The continuous sweep re-trained already-optimized assets in a fixed order (config-file order). On any service restart it resumed from the top of the list — so assets at the tail could be re-optimized far less often than those at the head, and sit on older data.",
+      },
+      {
+        fr: "Nouvel ordonnancement : les actifs sans modèle (nouveaux arrivants) passent toujours en premier — un actif sans modèle est la priorité absolue — puis tous les autres sont ré-entraînés du plus ancien au plus récent, en lisant la vraie date de dernière optimisation dans la base Optuna. L'actif dont le modèle est le plus vieux est donc toujours le prochain re-fit. Cela borne l'ancienneté maximale et résiste aux redémarrages : le sweep reprend sur l'actif réellement le plus ancien, jamais en re-faisant la tête de liste pendant que la queue patiente.",
+        en: "New ordering: assets with no model yet (newcomers) always go first — an asset with no model is the top priority — then every other asset is re-trained oldest-first, reading the real last-optimization time from the Optuna database. The asset whose model is oldest is always the next re-fit. This bounds worst-case staleness and survives restarts: the sweep resumes on the genuinely oldest asset, never redoing the head of the list while the tail waits.",
+      },
+      {
+        fr: "Qualité par actif inchangée : chaque ré-entraînement garde le tournoi complet (tous les modèles : LightGBM, LSTM, PatchTST, TFT) avec optimisation des hyper-paramètres, sur les dernières données fraîches. On ne coupe ni modèles ni HPO — on garantit seulement que personne n'est oublié. La barre /ops affiche désormais l'ancienneté du plus vieux modèle en file au début de chaque cycle.",
+        en: "Per-asset quality unchanged: every re-train keeps the full tournament (all models: LightGBM, LSTM, PatchTST, TFT) with hyper-parameter optimization, on the freshest data. No models or HPO are cut — we only guarantee no one is forgotten. The /ops log now shows the oldest queued model's age at the start of each cycle.",
+      },
+    ],
+    verdict: {
+      fr: "Infrastructure uniquement (ordre de la file d'entraînement) — aucun label, gate, sizing, seuil ni modèle promu touché ; le gel du forward test est respecté. Chaque actif reste entraîné et optimisé sur données fraîches, au plus vite, sans qu'aucun ne prenne du retard.",
+      en: "Infrastructure only (training-queue order) — no label, gate, sizing, threshold or promoted model touched; the forward-test freeze is respected. Every asset stays trained and optimized on fresh data, as fast as possible, with none falling behind.",
+    },
+  },
+  {
+    date: "2026-06-09",
+    tone: "infra",
+    title: {
       fr: "Univers élargi : 150 → 180 actifs (+30), capacité machine validée",
       en: "Universe expanded: 150 → 180 assets (+30), machine capacity validated",
     },

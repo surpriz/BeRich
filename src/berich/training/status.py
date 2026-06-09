@@ -156,15 +156,43 @@ def _hpo_last_for(
     model: str | None,
     side: str,
     strategy: str | None = None,
+    interval: str = "1d",
 ) -> str | None:
     """Most recent HPO trial completion (ISO-UTC) for that ticker+side, or None.
 
-    Same study-name matching as ``_hpo_trials_for``; ISO-UTC strings share one format so the
-    lexicographic max is the chronological max.
+    Same study-name matching as ``_hpo_trials_for`` (including the interval gate, so an intraday
+    timeframe reads only its own studies); ISO-UTC strings share one format so the lexicographic
+    max is the chronological max.
     """
     slug = safe_ticker_slug(ticker)
-    stamps = [ts for name, ts in times.items() if _study_matches(name, slug, side, model, strategy)]
+    stamps = [
+        ts
+        for name, ts in times.items()
+        if _study_matches(name, slug, side, model, strategy, interval)
+    ]
     return max(stamps) if stamps else None
+
+
+def hpo_combo_sort_key(
+    counts: dict[str, int],
+    times: dict[str, str],
+    ticker: str,
+    side: str,
+    strategy: str | None = None,
+    interval: str = "1d",
+) -> tuple[bool, str]:
+    """Re-fit ordering key for one (ticker, side, strategy, interval) combo in the continuous sweep.
+
+    Sorts un-searched combos first — an asset with no trained model yet is effectively infinitely
+    stale, so it must get its first deep HPO before anything is re-deepened — then already-searched
+    combos oldest-HPO-first, so the most stale model is always the next re-fit. Reading the real
+    last-trial time from the Optuna RDB (rather than a fixed config order) bounds the worst-case
+    staleness and is robust to restarts: the sweep resumes on the genuinely oldest combo instead of
+    redoing the top of the list while the tail starves.
+    """
+    searched = _hpo_trials_for(counts, ticker, None, side, strategy, interval) > 0
+    last = _hpo_last_for(times, ticker, None, side, strategy, interval) or ""
+    return (searched, last)
 
 
 def _strategy_entry(

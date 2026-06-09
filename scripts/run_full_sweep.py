@@ -33,7 +33,12 @@ from berich.scheduler.jobs import (
     refresh_signals,
 )
 from berich.training.promotion import reconcile_sweep_fdr
-from berich.training.status import _hpo_trial_counts, _hpo_trials_for
+from berich.training.status import (
+    _hpo_last_trial_times,
+    _hpo_trial_counts,
+    _hpo_trials_for,
+    hpo_combo_sort_key,
+)
 
 # Run the sweep-level FDR reconcile this often (every N tournaments) so the anti-luck demotion
 # happens continuously, instead of only at the end of a full 600-combo cycle that may never
@@ -157,9 +162,26 @@ def _continuous(config: Config) -> int:
             log.info("cycle %d: OHLCV refreshed, %d combos", cycle, len(combos))
         except Exception:
             log.exception("cycle %d: data refresh failed (training on cached bars)", cycle)
-        # Priority: un-searched combos (new assets) first, then deepen the rest.
+        # Priority: un-searched combos (new assets, no model yet) first, then re-fit the rest
+        # OLDEST-HPO-FIRST so no asset's model is left to rot while a fresher one is re-deepened.
+        # Reading the real last-trial time (not config order) bounds worst-case staleness and is
+        # restart-robust: after a restart the sweep resumes on the genuinely oldest combo instead
+        # of redoing the head of the list while the tail starves.
         counts = _hpo_trial_counts(config.optuna_db)
-        combos.sort(key=lambda c: _hpo_trials_for(counts, c[0], None, c[1], c[2], c[3]) > 0)
+        times = _hpo_last_trial_times(config.optuna_db)
+        keyed = sorted(
+            (hpo_combo_sort_key(counts, times, t, s, st, iv), (t, s, st, iv))
+            for (t, s, st, iv) in combos
+        )
+        combos = [c for _, c in keyed]
+        n_new = sum(1 for (searched, _), _ in keyed if not searched)
+        oldest = next((last for (searched, last), _ in keyed if searched), "")
+        log.info(
+            "cycle %d: re-fit order — %d un-searched first, then oldest-first (oldest last-HPO=%s)",
+            cycle,
+            n_new,
+            oldest or "n/a",
+        )
         promoted = 0
         for i, (ticker, side, strategy, interval) in enumerate(combos):
             existing = _hpo_trials_for(counts, ticker, None, side, strategy, interval)

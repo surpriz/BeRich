@@ -160,6 +160,44 @@ def test_naive_local_to_utc_iso_normalizes():
     assert out.endswith("+00:00")  # naive local timestamp anchored and converted to UTC
 
 
+def test_hpo_combo_sort_key_unsearched_first_then_oldest():
+    """The continuous sweep re-fit order: un-searched combos first, then oldest-HPO-first."""
+    from berich.training.status import hpo_combo_sort_key  # noqa: PLC0415
+
+    counts = {
+        "berich-hpo-AAA-lgbm-long-auc": 100,  # searched, daily fixed, older
+        "berich-hpo-BBB-lgbm-long-auc": 50,  # searched, daily fixed, newer
+        # CCC has no study at all -> never searched (no model yet)
+    }
+    times = {
+        "berich-hpo-AAA-lgbm-long-auc": "2026-06-01T06:00:00+00:00",
+        "berich-hpo-BBB-lgbm-long-auc": "2026-06-08T06:00:00+00:00",
+    }
+    k_aaa = hpo_combo_sort_key(counts, times, "AAA", "long", "fixed")
+    k_bbb = hpo_combo_sort_key(counts, times, "BBB", "long", "fixed")
+    k_ccc = hpo_combo_sort_key(counts, times, "CCC", "long", "fixed")
+
+    # An asset with no model yet is effectively infinitely stale -> sorts before any searched one.
+    assert k_ccc < k_aaa
+    assert k_ccc < k_bbb
+    # Among searched combos, the older last-HPO is re-fit first (bounds max staleness).
+    assert k_aaa < k_bbb
+    assert k_ccc == (False, "")
+    assert k_aaa[0] is True
+
+
+def test_hpo_combo_sort_key_isolates_intraday_interval():
+    """An intraday combo's staleness is read from its own (-1h-) study, not the daily one."""
+    from berich.training.status import hpo_combo_sort_key  # noqa: PLC0415
+
+    counts = {"berich-hpo-BTC-USD-lgbm-long-auc": 100}  # daily only; no intraday study
+    times = {"berich-hpo-BTC-USD-lgbm-long-auc": "2026-06-08T06:00:00+00:00"}
+    daily = hpo_combo_sort_key(counts, times, "BTC-USD", "long", "fixed", "1d")
+    intra = hpo_combo_sort_key(counts, times, "BTC-USD", "long", "fixed", "1h")
+    assert daily[0] is True  # daily side has a study
+    assert intra == (False, "")  # intraday side has none -> un-searched, sorts first
+
+
 def test_last_hpo_at_surfaces_latest_trial_time(tmp_path):
     import optuna  # noqa: PLC0415
 
