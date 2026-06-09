@@ -66,6 +66,32 @@ const ENTRIES: Entry[] = [
     date: "2026-06-09",
     tone: "infra",
     title: {
+      fr: "Univers élargi : 125 → 150 actifs, +5 par classe",
+      en: "Universe expanded: 125 → 150 assets, +5 per class",
+    },
+    points: [
+      {
+        fr: "25 actifs ajoutés, répartis sur les cinq classes : US +5 (Procter & Gamble, Cisco, Wells Fargo, Boeing, Nike → 45), France +5 (Renault, Carrefour, Publicis, Bouygues, Bureau Veritas → 31), forex +5 (AUDCAD, AUDNZD, CADCHF, GBPCAD, NZDCAD → 29), crypto +5 (Monero, Tezos, EOS, Aave, Filecoin → 23) et matières premières +5 (essence RBOB, porc maigre, bovin d'engraissement, huile de soja, jus d'orange → 22).",
+        en: "25 assets added, spread across all five classes: US +5 (Procter & Gamble, Cisco, Wells Fargo, Boeing, Nike → 45), France +5 (Renault, Carrefour, Publicis, Bouygues, Bureau Veritas → 31), forex +5 (AUDCAD, AUDNZD, CADCHF, GBPCAD, NZDCAD → 29), crypto +5 (Monero, Tezos, EOS, Aave, Filecoin → 23) and commodities +5 (RBOB gasoline, lean hogs, feeder cattle, soybean oil, orange juice → 22).",
+      },
+      {
+        fr: "Les 25 validés sur yfinance avant ajout : plus de 1 000 barres quotidiennes chacun (la plupart > 4 000), données fraîches au 8-9 juin. Le sweep continu passe désormais sur 900 combos (actif × sens × stratégie) et traite les combos jamais explorés EN PREMIER — les 25 nouveaux reçoivent leur recherche profonde (100 essais HPO) avant tout ré-approfondissement des anciens.",
+        en: "All 25 validated on yfinance before adding: 1,000+ daily bars each (most > 4,000), fresh data as of June 8-9. The continuous sweep now spans 900 combos (ticker × side × strategy) and processes never-searched combos FIRST — the 25 newcomers get their deep search (100 HPO trials) before any re-deepening of incumbents.",
+      },
+      {
+        fr: "Le forward test n'est pas pollué : un nouvel actif ne peut entrer dans le livre engagé qu'en passant le même gate durci (DSR ≥ 0.95, ≥ 20 trades hors-échantillon, FDR) que les autres. La plupart resteront advisory-only — c'est le résultat attendu du gate.",
+        en: "The forward test is not polluted: a newcomer can only enter the committed book by clearing the same hardened gate (DSR ≥ 0.95, ≥ 20 out-of-sample trades, FDR) as everyone else. Most will stay advisory-only — the gate's expected outcome.",
+      },
+    ],
+    verdict: {
+      fr: "Plus de candidats honnêtes pour le forward test, sans promesse : capital papier uniquement, livre engagé inchangé. Le gel du forward test est respecté — seul l'univers s'élargit, la logique de gate, de sizing et de seuils ne bouge pas.",
+      en: "More honest forward-test candidates, no promise: paper capital only, committed book unchanged. The forward-test freeze is respected — only the universe grows; the gate, sizing and threshold logic stays put.",
+    },
+  },
+  {
+    date: "2026-06-09",
+    tone: "infra",
+    title: {
       fr: "Intraday V2 (POC) : signaux crypto 1h en direct, livre papier séparé",
       en: "Intraday V2 (POC): live 1-hour crypto signals, a separate paper book",
     },

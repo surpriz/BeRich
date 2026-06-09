@@ -385,6 +385,12 @@ universes:
     - CAT          # Caterpillar
     - GS           # Goldman Sachs
     - IBM          # IBM
+    # June 2026 expansion (125 -> 150) — large, decades-deep liquid names.
+    - PG           # Procter & Gamble
+    - CSCO         # Cisco
+    - WFC          # Wells Fargo
+    - BA           # Boeing
+    - NKE          # Nike
   fr_stocks:
     - AIR.PA       # Airbus
     - MC.PA        # LVMH
@@ -412,6 +418,12 @@ universes:
     - SGO.PA       # Saint-Gobain
     - ORA.PA       # Orange
     - LR.PA        # Legrand
+    # June 2026 expansion (125 -> 150) — CAC 40 / SBF 120 large caps.
+    - RNO.PA       # Renault
+    - CA.PA        # Carrefour
+    - PUB.PA       # Publicis
+    - EN.PA        # Bouygues
+    - BVI.PA       # Bureau Veritas
   forex:
     - EURUSD=X
     - GBPUSD=X
@@ -439,6 +451,12 @@ universes:
     - GBPAUD=X
     - GBPCHF=X
     - EURNZD=X
+    # June 2026 expansion (125 -> 150) — additional commodity-bloc / cross pairs.
+    - AUDCAD=X
+    - AUDNZD=X
+    - CADCHF=X
+    - GBPCAD=X
+    - NZDCAD=X
   crypto:
     - BTC-USD
     - ETH-USD
@@ -458,6 +476,12 @@ universes:
     - ETC-USD      # Ethereum Classic
     - NEAR-USD     # NEAR Protocol
     - ALGO-USD     # Algorand
+    # June 2026 expansion (125 -> 150) — deep-history alt-L1 / DeFi names.
+    - XMR-USD      # Monero
+    - XTZ-USD      # Tezos
+    - EOS-USD      # EOS
+    - AAVE-USD     # Aave
+    - FIL-USD      # Filecoin
   commodities:
     - GC=F         # gold front-month
     - CL=F         # WTI crude front-month
@@ -476,3 +500,9 @@ universes:
     - HO=F         # heating oil
     - CC=F         # cocoa
     - LE=F         # live cattle
+    # June 2026 expansion (125 -> 150) — energy, livestock, grain-complex futures.
+    - RB=F         # RBOB gasoline front-month
+    - HE=F         # lean hogs
+    - GF=F         # feeder cattle
+    - ZL=F         # soybean oil
+    - OJ=F         # orange juice

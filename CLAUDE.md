@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
   BeRich is a personal swing-trading advisory tool. ML predicts a **trend probability**
   (triple-barrier label: did the upper barrier hit before the lower one within N bars),
-  not a price. Daily bars; per-asset models across **125 assets** (US 40 / FR 26 /
-  forex 24 / crypto 18 / commodities 17), each carrying a **long and a short** side
-  (Phase 12) and three exit strategies (Phase 13) = 750 (ticker, side, strategy) combos.
+  not a price. Daily bars; per-asset models across **150 assets** (US 45 / FR 31 /
+  forex 29 / crypto 23 / commodities 22), each carrying a **long and a short** side
+  (Phase 12) and three exit strategies (Phase 13) = 900 (ticker, side, strategy) combos.
   The triple-barrier label and backtest engine are direction-aware.
 
   **Exit strategies (Phase 13).** Beyond the fixed TP/SL triple barrier, the label + backtest
@@ -170,7 +170,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
   **Observability & ops (deployed).** Four systemd units: `berich-api`,
   `berich-scheduler`, `berich-frontend`, **`berich-sweep`**
-  (`scripts/run_full_sweep.py --continuous`): a perpetual loop over all 750 combos —
+  (`scripts/run_full_sweep.py --continuous`): a perpetual loop over all 900 combos —
   fresh OHLCV each cycle, **un-searched combos first** (so newly added assets get their
   deep 100-trial HPO before incumbents are re-deepened with 4-trial top-ups), config
   reloaded every cycle, FDR reconciliation at startup + every 30 combos + cycle end
