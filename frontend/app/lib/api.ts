@@ -277,6 +277,8 @@ export type OpsSweep = {
   idle_seconds: number | null;
   avg_seconds: number | null;
   gave_up: number;
+  oldest_hpo_at: string | null;
+  oldest_hpo_age_seconds: number | null;
 };
 
 export type OpsLogLine = {

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, type OpsSnapshot } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
+import { freshnessColor, freshnessTierFromSeconds } from "@/app/lib/freshness";
 import { Show } from "@/app/components/Show";
 import { Info } from "@/app/components/Term";
 import { PageIntro } from "@/app/components/PageIntro";
@@ -208,6 +209,18 @@ export default function OpsPage() {
                   <span className="text-[var(--color-muted)]">{t("ops.lastActivity")}</span>
                   <span className="tabular" style={{ color: (snap.sweep.idle_seconds ?? 0) > 600 ? WARN : "inherit" }}>
                     {snap.sweep.idle_seconds != null ? `${t("ops.ago")} ${fmtAgo(snap.sweep.idle_seconds)}` : "—"}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[var(--color-muted)]">{t("ops.oldestModel")}</span>
+                  <span
+                    className="tabular"
+                    title={snap.sweep.oldest_hpo_at ?? ""}
+                    style={{ color: freshnessColor(freshnessTierFromSeconds(snap.sweep.oldest_hpo_age_seconds)) }}
+                  >
+                    {snap.sweep.oldest_hpo_age_seconds != null
+                      ? `${t("ops.ago")} ${fmtAgo(snap.sweep.oldest_hpo_age_seconds)}`
+                      : "—"}
                   </span>
                 </div>
                 <Show min="standard">

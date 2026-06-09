@@ -79,6 +79,38 @@ def test_sweep_status_parses_drainer_log(monkeypatch, tmp_path):
     assert st["last_activity"] == "2026-06-02T16:01:00"
 
 
+def test_sweep_status_surfaces_oldest_hpo(monkeypatch, tmp_path):
+    log = tmp_path / "sweep.log"
+    log.write_text(
+        "2026-06-02 16:00:00,1 INFO sweep: done NVDA/long/fixed in 100s promoted=False\n",
+        encoding="utf-8",
+    )
+    lines = log.read_text(encoding="utf-8").splitlines()
+
+    def _fake_run(cmd):
+        if cmd[0] == "pgrep":
+            return "1\n"
+        if cmd[0] == "grep":
+            return "\n".join(lines)
+        if cmd[0] == "tail":
+            return lines[-1]
+        return None
+
+    monkeypatch.setattr("berich.ops._run", _fake_run)
+    # Two studies with different last-trial times; the OLDEST must be the staleness floor reported.
+    monkeypatch.setattr(
+        "berich.training.status._hpo_last_trial_times",
+        lambda _db: {
+            "berich-hpo-AAA-lgbm-long-auc": "2026-06-08T06:00:00+00:00",
+            "berich-hpo-BBB-lgbm-long-auc": "2026-06-01T06:00:00+00:00",
+        },
+    )
+    st = sweep_status(Config(data_dir=tmp_path))
+    assert st["oldest_hpo_at"] == "2026-06-01T06:00:00+00:00"
+    assert isinstance(st["oldest_hpo_age_seconds"], int)
+    assert st["oldest_hpo_age_seconds"] > 0
+
+
 def test_log_level_classifies_by_real_level_not_keywords():
     # An INFO summary that merely contains the dict key 'failed' is NOT an error (the bug).
     assert _log_level("INFO berich.scheduler.jobs: ticker_hpo_queue: {'failed': 0}") == "info"

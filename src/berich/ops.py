@@ -131,6 +131,26 @@ def _meminfo() -> tuple[float, float]:
     return total, avail
 
 
+def _set_oldest_hpo(config: Config, status: dict[str, object]) -> None:
+    """Stamp the oldest last-HPO across the trained universe — the staleness floor the sweep bounds.
+
+    The tournament re-fits *all* of a combo's framework studies together each cycle, so the oldest
+    single study timestamp tracks the oldest combo: cheap (one indexed GROUP BY) and accurate. Lets
+    /ops show 'oldest model optimized X ago' so a drift toward several days is a visible warning
+    that the machine is saturating and can't keep every asset fresh.
+    """
+    from berich.training.status import _hpo_last_trial_times  # noqa: PLC0415
+
+    times = _hpo_last_trial_times(config.optuna_db)
+    if not times:
+        return
+    oldest = min(times.values())  # ISO-UTC strings: lexicographic min == chronological oldest
+    status["oldest_hpo_at"] = oldest
+    with contextlib.suppress(ValueError):
+        age = datetime.now(UTC) - datetime.fromisoformat(oldest)
+        status["oldest_hpo_age_seconds"] = max(0, int(age.total_seconds()))
+
+
 def _sweep_log_path(config: Config) -> Path:
     return config.data_dir / _SWEEP_LOG
 
@@ -151,7 +171,10 @@ def sweep_status(config: Config) -> dict[str, object]:
         "idle_seconds": None,
         "avg_seconds": None,
         "gave_up": 0,
+        "oldest_hpo_at": None,
+        "oldest_hpo_age_seconds": None,
     }
+    _set_oldest_hpo(config, status)
     log = _sweep_log_path(config)
     if not log.exists():
         return status

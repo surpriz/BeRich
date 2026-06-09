@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type HpoProgress, type TournamentCandidate, type TrainingStatus } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
+import { fmtAgo, freshnessColor, freshnessTier } from "@/app/lib/freshness";
 import { Show } from "@/app/components/Show";
 import { PageIntro } from "@/app/components/PageIntro";
 
@@ -34,11 +35,6 @@ const STRATEGY_CHIP: Record<string, string> = {
   advisory_only: "text-[var(--color-muted)] border-[var(--color-line)]",
   never_trained: "text-[var(--color-faint)] border-[var(--color-line)]",
 };
-
-function when(iso: string | null): string {
-  if (!iso) return "—";
-  return iso.slice(0, 16).replace("T", " ");
-}
 
 type Grouped = { ticker: string; asset_class: string; long?: TrainingStatus; short?: TrainingStatus };
 
@@ -314,12 +310,16 @@ export default function TrainingPage() {
                 <th className="px-4 py-3">{t("training.col.class")}</th>
                 <th className="px-4 py-3">{t("training.col.long")}</th>
                 <th className="px-4 py-3">{t("training.col.short")}</th>
-                <th className="px-4 py-3">{t("training.col.lastTrained")}</th>
+                <th className="px-4 py-3">{t("training.col.lastOptimized")}</th>
               </tr>
             </thead>
             <tbody>
               {grouped.map((g) => {
-                const last = [g.long?.trained_at, g.short?.trained_at].filter(Boolean).sort().pop() ?? null;
+                // Freshness floor: the OLDEST optimization across the asset's two sides, so a
+                // lagging side can't be hidden by a fresh one. Colored green/amber/red by tier.
+                const hpoStamps = [g.long?.last_hpo_at, g.short?.last_hpo_at].filter(Boolean) as string[];
+                const lastOpt = hpoStamps.length ? hpoStamps.sort()[0] : null;
+                const opt = fmtAgo(lastOpt, t("ops.ago"));
                 return (
                   <tr key={g.ticker} className="border-b border-[var(--color-line)]/50 align-top">
                     <td className="px-4 py-3">
@@ -335,7 +335,13 @@ export default function TrainingPage() {
                     <td className="px-4 py-3 text-xs text-[var(--color-muted)]">{g.asset_class}</td>
                     <td className="px-4 py-3"><SideCell s={g.long} t={t} /></td>
                     <td className="px-4 py-3"><SideCell s={g.short} t={t} /></td>
-                    <td className="tabular px-4 py-3 text-xs text-[var(--color-faint)]">{when(last)}</td>
+                    <td
+                      className="tabular px-4 py-3 text-xs"
+                      style={{ color: freshnessColor(freshnessTier(lastOpt)) }}
+                      title={opt.exact}
+                    >
+                      {opt.rel}
+                    </td>
                   </tr>
                 );
               })}

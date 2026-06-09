@@ -36,6 +36,32 @@ const ENTRIES: Entry[] = [
     date: "2026-06-09",
     tone: "infra",
     title: {
+      fr: "Fraîcheur visible : âge de dernière optimisation par actif (vert / ambre / rouge)",
+      en: "Freshness made visible: per-asset last-optimization age (green / amber / red)",
+    },
+    points: [
+      {
+        fr: "Chaque actif affiche désormais depuis combien de temps son modèle a été optimisé pour la dernière fois (date du dernier réglage des hyper-paramètres), codé couleur : vert si < 2 jours, ambre jusqu'à 5 jours, rouge au-delà. Visible sur trois pages : la colonne « Optimisé » du tableau /training, le panneau « Entraînement & HPO » du détail de chaque actif, et /ops.",
+        en: "Every asset now shows how long ago its model was last optimized (the last hyper-parameter tuning), color-coded: green if < 2 days, amber up to 5 days, red beyond. Surfaced on three pages: the 'Optimized' column of the /training table, each asset's 'Training & HPO' drill-down panel, and /ops.",
+      },
+      {
+        fr: "Sur /training, l'âge retenu par actif est celui du côté le plus ancien (long ou court) — un côté à jour ne peut pas masquer un côté en retard. Les seuils de couleur suivent le rythme réel du sweep (cycle de rafraîchissement ~2 jours), donc le rouge signale vraiment un actif qui décroche.",
+        en: "On /training, the per-asset age is the oldest of the two sides (long or short) — an up-to-date side can't mask a lagging one. The color thresholds follow the sweep's real cadence (~2-day refresh cycle), so red genuinely flags an asset falling behind.",
+      },
+      {
+        fr: "Sur /ops, nouvelle ligne « Plus ancien modèle » : l'âge du modèle le plus ancien de tout l'univers, calculé en direct depuis la base d'optimisation. C'est la jauge de saturation de la machine — si ce chiffre dérive vers plusieurs jours, c'est le signal qu'il faut arrêter d'ajouter des actifs.",
+        en: "On /ops, a new 'Oldest model' row: the age of the single oldest model across the whole universe, computed live from the optimization database. It's the machine-saturation gauge — if this drifts toward several days, it's the signal to stop adding assets.",
+      },
+    ],
+    verdict: {
+      fr: "Affichage uniquement (la donnée existait déjà dans l'API) — aucun label, gate, sizing, seuil ni modèle promu touché ; le gel du forward test est respecté. Tu vois maintenant d'un coup d'œil quels actifs restent frais et lesquels décrochent.",
+      en: "Display only (the data already existed in the API) — no label, gate, sizing, threshold or promoted model touched; the forward-test freeze is respected. You can now see at a glance which assets stay fresh and which fall behind.",
+    },
+  },
+  {
+    date: "2026-06-09",
+    tone: "infra",
+    title: {
       fr: "Ré-entraînement par ancienneté : aucun actif laissé périmer",
       en: "Staleness-first retraining: no asset left to go stale",
     },

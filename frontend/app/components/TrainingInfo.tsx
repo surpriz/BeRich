@@ -8,6 +8,7 @@ import {
   type TrainingStatus,
 } from "@/app/lib/api";
 import { useTranslate } from "@/app/lib/i18n";
+import { fmtAgo, freshnessColor, freshnessTier } from "@/app/lib/freshness";
 import { ProbaGauge } from "@/app/components/bars";
 
 // Compact "Training & HPO" panel for the ticker drill-down: last training, last HPO, trial
@@ -20,19 +21,6 @@ import { ProbaGauge } from "@/app/components/bars";
 function latestSignal(history: Signal[] | undefined, strategy: string | null | undefined) {
   const want = strategy ?? "fixed";
   return history?.find((s) => (s.exit_strategy ?? "fixed") === want);
-}
-
-function fmtAgo(iso: string | null | undefined, ago: string): { rel: string; exact: string } {
-  if (!iso) return { rel: "—", exact: "" };
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) return { rel: "—", exact: "" };
-  const s = Math.max(0, (Date.now() - ms) / 1000);
-  let dur: string;
-  if (s < 60) dur = `${Math.round(s)}s`;
-  else if (s < 3600) dur = `${Math.floor(s / 60)}m`;
-  else if (s < 86400) dur = `${Math.floor(s / 3600)}h`;
-  else dur = `${Math.floor(s / 86400)}j`;
-  return { rel: `${ago} ${dur}`, exact: new Date(ms).toLocaleString() };
 }
 
 function StatusChip({ status }: { status: TrainingStatus["status"] }) {
@@ -108,7 +96,11 @@ function SideColumn({
         {trained.rel}
       </span>
       <span className="text-[var(--color-faint)]">{t("ticker.hpoLast")}</span>
-      <span className="tabular text-right" title={hpo.exact}>
+      <span
+        className="tabular text-right"
+        style={{ color: freshnessColor(freshnessTier(row.last_hpo_at)) }}
+        title={hpo.exact}
+      >
         {hpo.rel}
       </span>
       <span className="text-[var(--color-faint)]">{t("ticker.hpoTrials")}</span>
