@@ -34,6 +34,28 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 const ENTRIES: Entry[] = [
   {
     date: "2026-06-09",
+    tone: "infra",
+    title: {
+      fr: "État machine : verdict d'utilisation en un coup d'œil sur /ops",
+      en: "Machine status: one-glance utilization verdict on /ops",
+    },
+    points: [
+      {
+        fr: "La page /ops affichait six jauges brutes (deux cartes GPU + CPU) sans dire ce qu'elles signifient ensemble. Nouvelle ligne de synthèse : « Utilisation : sous-utilisée / bien utilisée / saturée / au repos », calculée côté serveur (donc testée) à partir des chiffres déjà collectés.",
+        en: "The /ops page showed six raw gauges (two GPU cards + CPU) without saying what they mean together. New synthesis line: 'Utilization: under-utilized / well-utilized / saturated / at rest', computed server-side (so it's tested) from the numbers already collected.",
+      },
+      {
+        fr: "Le signal clé sur une machine bi-GPU est l'asymétrie : une carte à fond pendant que sa jumelle est à 0 % alors que le sweep tourne, c'est du débit perdu, pas une saturation saine — le sweep entraîne un combo à la fois. Le verdict explicite cette cause, ainsi qu'un CPU peu sollicité (charge1 ÷ cœurs).",
+        en: "The key signal on a dual-GPU box is asymmetry: one card pegged while its twin sits at 0% during an active sweep is wasted throughput, not healthy saturation — the sweep trains one combo at a time. The verdict spells out that cause, plus a mostly-idle CPU (load1 ÷ cores).",
+      },
+    ],
+    verdict: {
+      fr: "Observabilité uniquement — aucune logique de trading, de gate, de sizing ni de seuils touchée ; le gel du forward test est respecté.",
+      en: "Observability only — no trading, gate, sizing or threshold logic touched; the forward-test freeze is respected.",
+    },
+  },
+  {
+    date: "2026-06-09",
     tone: "ship",
     title: {
       fr: "Panel diversifié : un 2e livre papier qui couvre toutes les classes (US/FR/crypto/matières/forex)",

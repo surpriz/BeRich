@@ -50,6 +50,13 @@ function band(pct: number | null | undefined, warn = 85, bad = 95): string {
   return GOOD;
 }
 
+const UTIL_TONE: Record<string, string> = {
+  balanced: GOOD,
+  under: WARN,
+  over: BAD,
+  idle: "var(--color-neutral)",
+};
+
 function Metric({ label, value, pct, color }: { label: string; value: string; pct: number | null | undefined; color: string }) {
   return (
     <div>
@@ -151,6 +158,36 @@ export default function OpsPage() {
               <span className="ml-auto text-[var(--color-faint)]">{warnCount} ⚠</span>
             )}
           </div>
+
+          {/* Utilization verdict — translates the raw GPU/CPU gauges into one plain read. */}
+          {(() => {
+            const u = snap.utilization;
+            const tone = UTIL_TONE[u.verdict] ?? "var(--color-neutral)";
+            return (
+              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                <span className="text-[var(--color-muted)]">{t("ops.util.title")}</span>
+                <span className="font-semibold" style={{ color: tone }}>
+                  {t(`ops.util.${u.verdict}`)}
+                </span>
+                {u.n_gpus > 0 && u.gpu_avg_pct != null && (
+                  <span className="tabular text-[var(--color-faint)]">
+                    {t("ops.util.gpuAvg")} {u.gpu_avg_pct}%
+                    {u.idle_gpus > 0 ? ` · ${u.idle_gpus}/${u.n_gpus} ${t("ops.util.idleGpu")}` : ""}
+                  </span>
+                )}
+                {u.cpu_ratio != null && (
+                  <span className="tabular text-[var(--color-faint)]">{t("ops.cpu")} ×{u.cpu_ratio}</span>
+                )}
+                <Show min="standard">
+                  {u.reasons.length > 0 && (
+                    <span className="text-[var(--color-muted)]">
+                      — {u.reasons.map((r) => t(`ops.util.r.${r}`)).join(" · ")}
+                    </span>
+                  )}
+                </Show>
+              </div>
+            );
+          })()}
 
           <div className="mt-6 grid gap-6 md:grid-cols-2">
             {/* Sweep activity */}

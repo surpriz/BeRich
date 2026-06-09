@@ -11,6 +11,7 @@ from berich.ops import (
     scheduled_jobs,
     sweep_status,
     system_metrics,
+    utilization,
 )
 
 
@@ -113,9 +114,47 @@ def test_ops_snapshot_shape(monkeypatch, tmp_path):
         "scheduler",
         "jobs",
         "hpo",
+        "utilization",
         "alerts",
         "logs",
     }
     assert snap["gpus"] == []
     assert isinstance(snap["hpo"]["total"], int)
     assert snap["sweep"]["running"] is False
+    # No sweep load -> the box is idle, not under-used.
+    assert snap["utilization"]["verdict"] == "idle"
+
+
+def test_utilization_flags_idle_twin_gpu_as_underused():
+    # One card pegged, its twin parked, CPU barely loaded, while the sweep runs: throughput on the
+    # table -> "under", with the asymmetry called out explicitly.
+    gpu_list = [
+        {"index": 0, "util_pct": 95, "mem_used_mb": 7000, "mem_total_mb": 24467, "temp_c": 48},
+        {"index": 1, "util_pct": 0, "mem_used_mb": 2700, "mem_total_mb": 24467, "temp_c": 27},
+    ]
+    system = {"load_ratio": 0.1, "n_cpus": 24}
+    out = utilization(gpu_list, system, {"running": True})
+    assert out["verdict"] == "under"
+    assert "gpu_idle_card" in out["reasons"]
+    assert "cpu_low" in out["reasons"]
+    assert out["idle_gpus"] == 1
+    assert out["gpu_avg_pct"] == 48
+
+
+def test_utilization_balanced_and_saturated():
+    both_busy = [
+        {"index": 0, "util_pct": 70, "mem_used_mb": 1, "mem_total_mb": 2, "temp_c": 60},
+        {"index": 1, "util_pct": 65, "mem_used_mb": 1, "mem_total_mb": 2, "temp_c": 60},
+    ]
+    assert utilization(both_busy, {"load_ratio": 0.8}, {"running": True})["verdict"] == "balanced"
+    maxed = [{"index": 0, "util_pct": 98, "mem_used_mb": 1, "mem_total_mb": 2, "temp_c": 80}]
+    out = utilization(maxed, {"load_ratio": 1.5}, {"running": True})
+    assert out["verdict"] == "over"
+    assert {"gpu_high", "cpu_high"} <= set(out["reasons"])
+
+
+def test_utilization_idle_when_sweep_stopped():
+    busy = [{"index": 0, "util_pct": 5, "mem_used_mb": 1, "mem_total_mb": 2, "temp_c": 30}]
+    out = utilization(busy, {"load_ratio": 0.05}, {"running": False})
+    assert out["verdict"] == "idle"
+    assert out["reasons"] == ["sweep_stopped"]

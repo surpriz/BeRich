@@ -411,6 +411,16 @@ export type HpoProgress = {
   advisory: number;
 };
 
+// One-glance synthesis of the raw gauges: is the box under-/well-/over-utilized (or idle)?
+export type OpsUtilization = {
+  verdict: "idle" | "under" | "balanced" | "over";
+  gpu_avg_pct: number | null;
+  idle_gpus: number;
+  n_gpus: number;
+  cpu_ratio: number | null;
+  reasons: string[];
+};
+
 export type OpsSnapshot = {
   gpus: OpsGpu[];
   system: OpsSystem;
@@ -418,6 +428,7 @@ export type OpsSnapshot = {
   scheduler: { unit: string; state: string; active_since: string | null };
   jobs: OpsJob[];
   hpo: HpoProgress & { recent: OpsHpoRecent[] };
+  utilization: OpsUtilization;
   alerts: OpsLogLine[];
   logs: OpsLogLine[];
 };

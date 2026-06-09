@@ -32,6 +32,16 @@ _SWEEP_LOG = "sweep.log"  # under config.data_dir — the background training dr
 _SWEEP_PROC = "run_full_sweep.py"
 _TS_RE = re.compile(r"(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d:\d\d)")
 
+# Utilization-verdict thresholds (see ``utilization``). A GPU below _GPU_IDLE_PCT is treated as
+# parked; the average across cards is "under-fed" below _GPU_LOW_PCT and "near capacity" at/above
+# _GPU_HIGH_PCT. CPU is judged on load1/n_cpus: idle below _CPU_LOW_RATIO, saturated at/above
+# _CPU_HIGH_RATIO (so a 24-core box at load 2.3 reads as idle, not busy).
+_GPU_IDLE_PCT = 10
+_GPU_LOW_PCT = 50
+_GPU_HIGH_PCT = 85
+_CPU_LOW_RATIO = 0.3
+_CPU_HIGH_RATIO = 1.2
+
 
 def _run(cmd: list[str]) -> str | None:
     """Run a read-only command, returning stdout or None on any failure/timeout."""
@@ -375,17 +385,89 @@ def recent_logs(config: Config, lines: int = 24) -> list[dict[str, str]]:
     return merged[-lines:]
 
 
+def utilization(
+    gpu_list: list[dict[str, object]],
+    system: dict[str, object],
+    sweep: dict[str, object],
+) -> dict[str, object]:
+    """One-glance verdict: is the box under-, well-, or over-utilized right now?
+
+    The raw /ops gauges (six numbers across two cards + CPU) don't answer the question the reader
+    actually has — *should I worry, and which way?* This collapses them into a single tier plus the
+    machine-readable reasons behind it, so the frontend can render a localized sentence.
+
+    The headline signal on a multi-GPU box is **asymmetry**: a card pegged while its twin sits at
+    0 % during an active sweep is throughput left on the table, not healthy saturation — the
+    continuous sweep drains combos in series, so a deep neural fit lights one card while the other
+    waits. We only judge utilization while the sweep is running; with no training load a quiet box
+    is expected, not under-used (``verdict == "idle"``).
+    """
+    utils = [u for g in gpu_list if isinstance((u := g.get("util_pct")), int)]
+    n_gpus = len(utils)
+    gpu_avg = round(sum(utils) / n_gpus) if utils else None
+    gpu_max = max(utils) if utils else None
+    idle_gpus = sum(1 for u in utils if u < _GPU_IDLE_PCT)
+    ratio = system.get("load_ratio")
+    cpu_ratio = float(ratio) if isinstance(ratio, (int, float)) else None
+
+    if not sweep.get("running"):
+        return {
+            "verdict": "idle",
+            "gpu_avg_pct": gpu_avg,
+            "idle_gpus": idle_gpus,
+            "n_gpus": n_gpus,
+            "cpu_ratio": cpu_ratio,
+            "reasons": ["sweep_stopped"],
+        }
+
+    reasons: list[str] = []
+    if n_gpus >= 2 and idle_gpus >= 1 and gpu_max is not None and gpu_max >= _GPU_LOW_PCT:  # noqa: PLR2004
+        reasons.append("gpu_idle_card")
+    elif gpu_avg is not None and gpu_avg < _GPU_LOW_PCT:
+        reasons.append("gpu_low")
+    if cpu_ratio is not None and cpu_ratio < _CPU_LOW_RATIO:
+        reasons.append("cpu_low")
+
+    gpu_hot = gpu_avg is not None and gpu_avg >= _GPU_HIGH_PCT
+    cpu_hot = cpu_ratio is not None and cpu_ratio >= _CPU_HIGH_RATIO
+    if gpu_hot:
+        reasons.append("gpu_high")
+    if cpu_hot:
+        reasons.append("cpu_high")
+
+    under = {"gpu_idle_card", "gpu_low", "cpu_low"} & set(reasons)
+    if gpu_hot and cpu_hot:
+        verdict = "over"
+    elif under:
+        verdict = "under"
+    else:
+        verdict = "balanced"
+
+    return {
+        "verdict": verdict,
+        "gpu_avg_pct": gpu_avg,
+        "idle_gpus": idle_gpus,
+        "n_gpus": n_gpus,
+        "cpu_ratio": cpu_ratio,
+        "reasons": reasons,
+    }
+
+
 def ops_snapshot(config: Config) -> dict[str, object]:
     """Full machine-status payload for the /ops dashboard (all collectors, best-effort)."""
     logs = recent_logs(config)
     alerts = [line_log for line_log in logs if line_log["level"] in ("error", "warning")]
+    gpu_list = gpus()
+    system = system_metrics(config)
+    sweep = sweep_status(config)
     return {
-        "gpus": gpus(),
-        "system": system_metrics(config),
-        "sweep": sweep_status(config),
+        "gpus": gpu_list,
+        "system": system,
+        "sweep": sweep,
         "scheduler": scheduler_status(),
         "jobs": scheduled_jobs(config),
         "hpo": hpo_progress(config),
+        "utilization": utilization(gpu_list, system, sweep),
         "alerts": alerts[-6:],
         "logs": logs,
     }
