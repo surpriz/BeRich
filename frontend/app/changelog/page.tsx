@@ -34,6 +34,32 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 const ENTRIES: Entry[] = [
   {
     date: "2026-06-09",
+    tone: "ship",
+    title: {
+      fr: "Panel diversifié : un 2e livre papier qui couvre toutes les classes (US/FR/crypto/matières/forex)",
+      en: "Diversified panel: a 2nd paper book spanning all classes (US/FR/crypto/commodities/forex)",
+    },
+    points: [
+      {
+        fr: "Constat mesuré : le livre engagé est dominé par le forex car le gate des longs exige de battre le buy & hold de l'actif — barre quasi nulle sur le forex (Sharpe B&H +0,11), très haute sur les actions US (+0,72) et FR (+0,50). Une action en tendance se bat difficilement par un modèle quotidien ; le gate refuse à juste titre de prétendre le contraire.",
+        en: "Measured finding: the committed book is forex-dominated because the long gate must beat the asset's buy & hold — a near-flat bar on forex (B&H Sharpe +0.11), a steep one on US (+0.72) and FR (+0.50) stocks. A daily model rarely beats a trending stock; the gate rightly refuses to pretend otherwise.",
+      },
+      {
+        fr: "Nouvelle page « Panel diversifié » : surface le tier « observe » (modèles presque-promus, toutes classes) comme un vrai 2e livre, sur capital simulé séparé de 10 000 €. P&L, courbe, positions par classe (la variété rendue visible) et liste de réplication propre.",
+        en: "New 'Diversified panel' page: surfaces the 'observe' tier (near-miss models, all classes) as a real 2nd book on its own separate 10,000 € simulated capital. P&L, equity curve, positions by class (variety made visible) and its own replication list.",
+      },
+      {
+        fr: "Le livre engagé (forward test rigoureux des ~30 trades) reste totalement intact et séparé. Le panel est explicitement étiqueté « exploratoire, confiance moindre » : à suivre pour la variété, pas comme conseil validé.",
+        en: "The committed book (rigorous ~30-trade forward test) stays fully intact and separate. The panel is explicitly labelled 'exploratory, lower confidence': follow it for variety, not as validated advice.",
+      },
+    ],
+    verdict: {
+      fr: "Variété immédiate sans attendre la révision du gate (planifiée après le forward test) et sans toucher au test rigoureux. Compromis assumé : plus de classes, edge plus faible.",
+      en: "Immediate variety without waiting for the gate revision (planned after the forward test) and without touching the rigorous test. Accepted trade-off: more classes, weaker edge.",
+    },
+  },
+  {
+    date: "2026-06-09",
     tone: "infra",
     title: {
       fr: "Intraday V2 (POC) : signaux crypto 1h en direct, livre papier séparé",

@@ -193,6 +193,7 @@
   "nav.brief": "Brief du jour",
   "nav.wallet": "Portefeuille",
   "nav.copy": "Réplication",
+  "nav.panel": "Panel diversifié",
   "nav.intraday": "Intraday (POC)",
   "wallet.cardTitle": "Mon portefeuille (papier)",
   "wallet.cardHint": "Capital de départ, valeur actuelle, courbe d'évolution, positions ouvertes et historique des trades.",

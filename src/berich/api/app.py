@@ -148,18 +148,19 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
         return {"active": name, "profiles": RISK_PROFILES}
 
     @router.get("/replication", dependencies=guard)
-    def replication() -> dict:
+    def replication(tier: str = Query(default=PROMOTED_TIER)) -> dict:
         """The morning copy-trading action list, built from EXECUTIONS (facts), never forecasts.
 
-        - ``open``: committed trades the robot opened at the last daily run (last 30h),
-        - ``close``: committed trades it closed at the last run,
+        - ``open``: trades the robot opened at the last daily run (last 30h),
+        - ``close``: trades it closed at the last run,
         - ``adjust``: open trailing positions whose effective (ratcheting) stop to mirror today.
         Amounts are for the 10k base capital; the UI rescales to the user's broker capital.
         Shares its data builder with the daily email digest (``recent_executions``).
+        ``tier`` selects the book: ``promoted`` (committed) or ``observe`` (diversified panel).
         """
         from berich.signals.paper import recent_executions
 
-        return dict(recent_executions(config, store))
+        return dict(recent_executions(config, store, tier=tier))
 
     @router.get("/brief-plan", dependencies=guard)
     def brief_plan() -> list[dict]:

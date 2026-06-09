@@ -12,6 +12,7 @@ import { StrategySwitch } from "./StrategySwitch";
 const PRIMARY = [
   { href: "/brief", key: "nav.today" },
   { href: "/wallet", key: "nav.wallet" },
+  { href: "/panel", key: "nav.panel" },
   { href: "/", key: "nav.opportunities" },
 ];
 

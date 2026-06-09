@@ -35,6 +35,7 @@ from berich.signals.paper import (
     _derisk_for_drawdown,
     get_open_positions,
     get_paper_metrics,
+    recent_executions,
 )
 from berich.signals.service import BUY, SHORT, Signal
 from berich.signals.store import SignalStore
@@ -596,3 +597,33 @@ def test_drawdown_kill_switch_halts_and_derisks(config, ohlcv_store, monkeypatch
     monkeypatch.setattr(paper_mod, "_committed_drawdown", lambda *_a, **_k: 0.02)
     full = _derisk_for_drawdown(rows, config, ohlcv_store)
     assert int(full.iloc[0]["size_shares"]) == 10
+
+
+def test_recent_executions_filters_by_tier(config, ohlcv_store):
+    # The diversified-panel page reads the observe book via recent_executions(tier=observe);
+    # the committed copy list reads tier=promoted. Each must see only its own executions.
+    df = _ramp(start=100.0, end=110.0, n=20, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    _save_ohlcv(ohlcv_store, "BBB", df)
+    sigstore = SignalStore(config.db_path)
+    sigstore.save(
+        [
+            _signal(df.index[0], "AAA", entry=100.0, stop=95.0, target=110.0),
+            _signal(
+                df.index[0],
+                "BBB",
+                entry=100.0,
+                stop=95.0,
+                target=110.0,
+                promoted=False,
+                tier=OBSERVE_TIER,
+            ),
+        ]
+    )
+    assert open_new_trades(config, ohlcv_store, sigstore) == 2
+
+    committed = recent_executions(config, ohlcv_store, tier=PROMOTED_TIER)
+    observe = recent_executions(config, ohlcv_store, tier=OBSERVE_TIER)
+
+    assert [o["ticker"] for o in committed["open"]] == ["AAA"]
+    assert [o["ticker"] for o in observe["open"]] == ["BBB"]
