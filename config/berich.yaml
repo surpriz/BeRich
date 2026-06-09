@@ -391,6 +391,16 @@ universes:
     - WFC          # Wells Fargo
     - BA           # Boeing
     - NKE          # Nike
+    # June 2026 expansion (150 -> 180) — deep-history blue chips, new sectors
+    # (defense, rail, telecom, ag machinery).
+    - GE           # General Electric
+    - RTX          # RTX (Raytheon)
+    - LMT          # Lockheed Martin
+    - DE           # Deere
+    - T            # AT&T
+    - LOW          # Lowe's
+    - UNP          # Union Pacific
+    - C            # Citigroup
   fr_stocks:
     - AIR.PA       # Airbus
     - MC.PA        # LVMH
@@ -424,6 +434,14 @@ universes:
     - PUB.PA       # Publicis
     - EN.PA        # Bouygues
     - BVI.PA       # Bureau Veritas
+    # June 2026 expansion (150 -> 180) — SBF 120 large caps, new sectors
+    # (insurance, services, semiconductors, autos).
+    - CS.PA        # AXA
+    - TEP.PA       # Teleperformance
+    - ERF.PA       # Eurofins Scientific
+    - SW.PA        # Sodexo
+    - STMPA.PA     # STMicroelectronics
+    - STLAP.PA     # Stellantis
   forex:
     - EURUSD=X
     - GBPUSD=X
@@ -457,6 +475,12 @@ universes:
     - CADCHF=X
     - GBPCAD=X
     - NZDCAD=X
+    # June 2026 expansion (150 -> 180) — new currency blocs (SEK / NOK / SGD / PLN / HKD).
+    - EURSEK=X
+    - EURNOK=X
+    - USDHKD=X
+    - USDSGD=X
+    - USDPLN=X
   crypto:
     - BTC-USD
     - ETH-USD
@@ -482,6 +506,13 @@ universes:
     - EOS-USD      # EOS
     - AAVE-USD     # Aave
     - FIL-USD      # Filecoin
+    # June 2026 expansion (150 -> 180) — deep-history (~2017) L1 / DeFi / metaverse names.
+    - ZEC-USD      # Zcash
+    - DASH-USD     # Dash
+    - NEO-USD      # Neo
+    - MANA-USD     # Decentraland
+    - ENJ-USD      # Enjin
+    - MKR-USD      # Maker
   commodities:
     - GC=F         # gold front-month
     - CL=F         # WTI crude front-month
@@ -506,3 +537,9 @@ universes:
     - GF=F         # feeder cattle
     - ZL=F         # soybean oil
     - OJ=F         # orange juice
+    # June 2026 expansion (150 -> 180) — new exposures: aluminium, grain complex, milk.
+    - ZR=F         # rough rice
+    - ZO=F         # oats
+    - ZM=F         # soybean meal
+    - DC=F         # class III milk
+    - ALI=F        # aluminium

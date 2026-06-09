@@ -34,6 +34,32 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 const ENTRIES: Entry[] = [
   {
     date: "2026-06-09",
+    tone: "infra",
+    title: {
+      fr: "Univers élargi : 150 → 180 actifs (+30), capacité machine validée",
+      en: "Universe expanded: 150 → 180 assets (+30), machine capacity validated",
+    },
+    points: [
+      {
+        fr: "30 actifs ajoutés sur les cinq classes : US +8 (General Electric, RTX, Lockheed Martin, Deere, AT&T, Lowe's, Union Pacific, Citigroup → 53), France +6 (AXA, Teleperformance, Eurofins, Sodexo, STMicroelectronics, Stellantis → 37), forex +5 (EUR/SEK, EUR/NOK, USD/HKD, USD/SGD, USD/PLN → 34), crypto +6 (Zcash, Dash, Neo, Decentraland, Enjin, Maker → 29) et matières premières +5 (riz, avoine, tourteau de soja, lait, aluminium → 27).",
+        en: "30 assets added across all five classes: US +8 (General Electric, RTX, Lockheed Martin, Deere, AT&T, Lowe's, Union Pacific, Citigroup → 53), France +6 (AXA, Teleperformance, Eurofins, Sodexo, STMicroelectronics, Stellantis → 37), forex +5 (EUR/SEK, EUR/NOK, USD/HKD, USD/SGD, USD/PLN → 34), crypto +6 (Zcash, Dash, Neo, Decentraland, Enjin, Maker → 29) and commodities +5 (rough rice, oats, soybean meal, milk, aluminium → 27).",
+      },
+      {
+        fr: "Choix guidés par la capacité réelle du serveur, mesurée avant d'ajouter : ~8 min par combo en recherche profonde (100 essais), ~2,5 min en ré-entraînement léger. À 180 actifs (1 080 combos), chaque modèle reste rafraîchi sur données fraîches en moins de 2 jours — très en deçà du plafond où le refresh dépasserait la semaine (~450-670 actifs). On privilégie l'historique profond et la diversité sectorielle (défense, rail, assurance, semi-conducteurs, nouveaux blocs de devises, aluminium).",
+        en: "Picks driven by the server's real capacity, measured before adding: ~8 min per combo on deep search (100 trials), ~2.5 min on a light re-fit. At 180 assets (1,080 combos) every model still gets refreshed on fresh data in under 2 days — well below the ceiling where refresh would exceed a week (~450-670 assets). Priority on deep history and sector diversity (defense, rail, insurance, semiconductors, new currency blocs, aluminium).",
+      },
+      {
+        fr: "Les 30 validés sur yfinance avant ajout : plus de 1 000 barres quotidiennes chacun (la plupart > 3 000), données fraîches au 9 juin. Le sweep continu passe sur 1 080 combos et traite les combos jamais explorés EN PREMIER — les 30 nouveaux reçoivent leur recherche profonde avant tout ré-approfondissement des anciens. Le gel du forward test est respecté : un nouvel actif ne peut entrer dans le livre engagé qu'en passant le même gate durci ; capital papier uniquement, gate / sizing / seuils inchangés.",
+        en: "All 30 validated on yfinance before adding: 1,000+ daily bars each (most > 3,000), fresh data as of June 9. The continuous sweep now spans 1,080 combos and processes never-searched combos FIRST — the 30 newcomers get their deep search before any re-deepening of incumbents. The forward-test freeze is respected: a newcomer can only enter the committed book by clearing the same hardened gate; paper capital only, gate / sizing / thresholds unchanged.",
+      },
+    ],
+    verdict: {
+      fr: "Univers plus large et plus diversifié, calibré sur la capacité mesurée du serveur pour que chaque actif reste entraîné en temps utile. Seul l'univers grandit — la logique de gate, de sizing et de seuils ne bouge pas.",
+      en: "A broader, more diversified universe, calibrated to the server's measured capacity so every asset stays trained in time. Only the universe grows — the gate, sizing and threshold logic stays put.",
+    },
+  },
+  {
+    date: "2026-06-09",
     tone: "ship",
     title: {
       fr: "Clarté visiteur : accueil + Brief plus lisibles dès la première visite",
