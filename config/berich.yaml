@@ -9,11 +9,13 @@ data:
   start_date: "2010-01-01"
   auto_adjust: true       # split/dividend-adjusted prices — avoids fake gaps
 
-# Intraday V2 POC (parallel subsystem — leaves the daily pipeline above untouched).
-# Crypto 1h bars, single pair BTC/USDT, same promote() guard. bars_per_year=8760
-# (24x365) is what makes the intraday Sharpe honest vs the daily 252.
+# Intraday V2 POC — PAUSED (2026-06-10). The POC showed no promotable 1h edge on BTC after a
+# full deep HPO (longs Sharpe ~-5, shorts negative; nothing cleared the guard), and each 1h fit
+# costs ~20x a daily fit (77k bars). Disabled to give 100% of the GPU back to the 180-asset swing
+# book. Reversible: set enabled=true + restart berich-{sweep,scheduler}; the 1h models, Optuna
+# studies, DB and cache are all preserved on disk. Crypto 1h, single pair BTC/USDT, same guard.
 intraday:
-  enabled: true
+  enabled: false
   interval: "1h"
   bars_per_year: 8760
   overnight_gap: false    # 24/7 market → no overnight gap feature
