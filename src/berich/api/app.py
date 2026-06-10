@@ -202,6 +202,13 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
         out = out[present].astype(object).where(pd.notna(out[present]), None)
         return out.to_dict(orient="records")
 
+    @router.get("/video-script", dependencies=guard)
+    def video_script() -> dict:
+        """Daily ready-to-read video script (French) built from the book's FACTS — see /studio."""
+        from berich.notifications.video_script import build_video_script
+
+        return build_video_script(config, store)
+
     @router.get("/hpo-progress", dependencies=guard)
     def hpo_progress_endpoint() -> dict:
         """Lightweight HPO sweep coverage (combo grain) for the /training progress bar.

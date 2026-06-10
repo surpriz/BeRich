@@ -34,6 +34,28 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 const ENTRIES: Entry[] = [
   {
     date: "2026-06-10",
+    tone: "ship",
+    title: {
+      fr: "Studio : le script vidéo quotidien, généré automatiquement depuis les faits",
+      en: "Studio: the daily video script, auto-generated from the facts",
+    },
+    points: [
+      {
+        fr: "Nouvelle page /studio : chaque jour, un texte prêt-à-dire pour une vidéo — état du portefeuille (gains ET pertes, nets de frais), ce que le robot a réellement exécuté au dernier pointage, le « pourquoi » de chaque trade traduit en langage simple depuis les facteurs du modèle (contributions SHAP), les positions en cours, une leçon de discipline qui tourne chaque jour, et le disclaimer obligatoire. Bouton « Copier le script ».",
+        en: "New /studio page: every day, a ready-to-read text for a video — portfolio state (gains AND losses, net of fees), what the robot actually executed at the last run, the 'why' of each trade translated to plain language from the model's factors (SHAP contributions), open positions, a rotating discipline lesson, and the mandatory disclaimer. 'Copy script' button.",
+      },
+      {
+        fr: "Même contrat d'honnêteté que le reste de la plateforme : le script ne raconte que des FAITS (exécutions, P&L réalisé) — jamais les prévisions recalculées en continu — et rappelle systématiquement que le système est en test, sans argent réel, et que rien n'est un conseil en investissement.",
+        en: "Same honesty contract as the rest of the platform: the script narrates FACTS only (executions, realized P&L) — never the continuously recomputed forecasts — and systematically states that the system is under test, with no real money, and that nothing is investment advice.",
+      },
+    ],
+    verdict: {
+      fr: "Outil de communication uniquement — aucun modèle, gate, sizing ni donnée de trading touché. Préparation du second objectif du projet (documenter publiquement le robot), dont la monétisation reste conditionnée au track record ET à la vérification du cadre réglementaire (AMF).",
+      en: "Communication tool only — no model, gate, sizing or trading data touched. Groundwork for the project's second goal (publicly documenting the robot), whose monetization remains conditional on the track record AND on checking the regulatory framework (AMF).",
+    },
+  },
+  {
+    date: "2026-06-10",
     tone: "infra",
     title: {
       fr: "Machine mieux utilisée : GPU et CPU travaillent ensemble, recherches ciblées, essais sans espoir coupés tôt",

@@ -514,6 +514,13 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Daily ready-to-read video script (French), built from executions — never forecasts.
+export type VideoScript = {
+  date: string;
+  title: string;
+  script: string;
+};
+
 // Open forex exposure aggregated per currency — several crosses sharing a leg are one bet.
 export type CurrencyConcentration = {
   warn_pct: number;
@@ -550,6 +557,7 @@ export const api = {
   paperCalibration: () => get<PaperCalibration>("/paper/calibration"),
   paperConcentration: (tier?: string) =>
     get<CurrencyConcentration>(`/paper/concentration${qs({ tier })}`),
+  videoScript: () => get<VideoScript>("/video-script"),
   universes: () => get<Universes>("/universes"),
   signalConfig: () => get<SignalConfig>("/config"),
   training: () => get<TrainingStatus[]>("/training"),
