@@ -206,6 +206,11 @@ class ZooConfig(BaseModel):
     # existing model keeps getting touched instead of waiting for the whole backlog to drain).
     # <= 0 disables interleaving (pure new-first, then oldest-first).
     sweep_interleave_every: int = 4
+    # Targeted incumbent top-ups: on WEEKDAYS a light refresh re-searches only the served
+    # winner's framework + LightGBM (the cheap challenger) instead of re-paying 3 deep-model
+    # trainings per combo per night; the full 4-framework contest re-opens every WEEKEND.
+    # Scheduling-only: gate criteria and DSR trial counting are unchanged. False = old behavior.
+    topup_winner_only: bool = True
 
 
 UNIVERSE_NAMES = ("mega", "mid", "small", "all")

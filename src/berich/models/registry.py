@@ -249,6 +249,19 @@ def load_active(registry_dir: Path) -> tuple[Model, ModelMetadata] | None:
     return load_model(name, registry_dir=registry_dir)
 
 
+def served_model_name(registry_dir: Path) -> str | None:
+    """Zoo model name ("lgbm" | "lstm" | "patchtst" | "tft") of the served winner.
+
+    Reads only the active pointer (names are ``<model>-<side>``), never the model weights —
+    cheap enough for scheduling decisions like the targeted nightly top-up.
+    """
+    pointer = registry_dir / ACTIVE_POINTER
+    if not pointer.exists():
+        return None
+    name = str(json.loads(pointer.read_text(encoding="utf-8")).get("name", ""))
+    return name.split("-", maxsplit=1)[0] or None
+
+
 def load_best(registry_dir: Path) -> tuple[Model, ModelMetadata] | None:
     """Load the promoted model if any, else the best saved candidate by AUC (advisory).
 

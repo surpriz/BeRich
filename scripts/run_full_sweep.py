@@ -195,7 +195,8 @@ def _continuous(config: Config) -> int:
         promoted = 0
         for i, (ticker, side, strategy, interval) in enumerate(combos):
             existing = _hpo_trials_for(counts, ticker, None, side, strategy, interval)
-            n_trials = deep_trials if existing < deep_trials else topup_trials
+            topup = existing >= deep_trials
+            n_trials = topup_trials if topup else deep_trials
             log.info(
                 "[cycle %d, %d/%d] start %s/%s/%s @%s (%d trials, %d existing)",
                 cycle,
@@ -210,7 +211,9 @@ def _continuous(config: Config) -> int:
             )
             t0 = time.time()
             try:
-                ok = _hpo_and_tournament(config, ticker, side, n_trials, strategy, interval)
+                ok = _hpo_and_tournament(
+                    config, ticker, side, n_trials, strategy, interval, topup=topup
+                )
                 promoted += int(bool(ok))
                 log.info(
                     "done %s/%s/%s @%s in %.0fs promoted=%s",

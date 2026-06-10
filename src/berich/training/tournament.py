@@ -484,13 +484,16 @@ def _run_tournament(  # noqa: C901 — linear train/gate/promote flow, clearer i
 
     # The served winner is the best of every HPO trial across all the tournament's frameworks for
     # this (ticker, side, strategy). Feeding that total into the Deflated Sharpe corrects the gate
-    # for the size of the search (anti data-mining). Floored at the framework count so a model
-    # trained on defaults (no study) still counts as one trial per framework.
+    # for the size of the search (anti data-mining). Counted over the FULL zoo + the requested
+    # frameworks — a targeted top-up that retrains only the winner must not shrink the correction
+    # for searches already spent on the other frameworks. Floored at the framework count so a
+    # model trained on defaults (no study) still counts as one trial per framework.
+    counted_models = list(dict.fromkeys([*config.zoo.ticker_tournament_models, *model_names]))
     search_trials = sum(
         ticker_trial_count(config, ticker, m, side, strategy, interval=interval)
-        for m in model_names
+        for m in counted_models
     )
-    n_trials = max(search_trials, len(model_names))
+    n_trials = max(search_trials, len(counted_models))
 
     trained: list[tuple[Model, ModelMetadata, ProbaCalibrator | None, CandidateResult]] = []
     for model_name in model_names:

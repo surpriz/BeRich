@@ -34,6 +34,32 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 const ENTRIES: Entry[] = [
   {
     date: "2026-06-10",
+    tone: "infra",
+    title: {
+      fr: "Machine mieux utilisée : GPU et CPU travaillent ensemble, recherches ciblées, essais sans espoir coupés tôt",
+      en: "Better machine utilization: GPU and CPU work together, targeted searches, hopeless trials cut early",
+    },
+    points: [
+      {
+        fr: "Chevauchement CPU/GPU : jusqu'ici, pour chaque actif, la recherche LightGBM (CPU) tournait seule pendant que les 2 GPU restaient inactifs, puis les modèles profonds prenaient les GPU pendant que le CPU attendait. Désormais les deux phases tournent en même temps — les GPU démarrent immédiatement et LightGBM est cherché pendant qu'ils travaillent.",
+        en: "CPU/GPU overlap: until now, for each asset, the LightGBM search (CPU) ran alone while both GPUs sat idle, then the deep models took the GPUs while the CPU waited. Both phases now run at the same time — the GPUs start immediately and LightGBM is searched while they work.",
+      },
+      {
+        fr: "Recherches ciblées en semaine : sur un actif dont le champion est connu (ex. LightGBM gagne depuis des semaines), re-payer chaque nuit 3 entraînements profonds pour les perdants était le principal gaspillage GPU. En semaine, le rafraîchissement ne re-cherche plus que le champion + LightGBM (le challenger bon marché) ; le week-end, la compétition complète des 4 modèles est rouverte pour que personne ne soit enterré à tort. Réglable (`topup_winner_only`).",
+        en: "Targeted weekday searches: on an asset whose champion is known (e.g. LightGBM has won for weeks), re-paying 3 deep-model trainings every night for the losers was the main GPU waste. On weekdays the refresh now re-searches only the champion + LightGBM (the cheap challenger); on weekends the full 4-model contest re-opens so nobody is wrongly buried. Configurable (`topup_winner_only`).",
+      },
+      {
+        fr: "Élagage des essais sans espoir : pendant l'optimisation d'un modèle profond, chaque essai paie plusieurs entraînements complets (un par segment de validation). Le score partiel est maintenant rapporté après chaque segment et un essai manifestement sous la médiane est arrêté tôt (MedianPruner) — 30 à 50 % de GPU économisé sur les mauvais essais, sans toucher aux bons. Les essais élagués comptent toujours dans la correction anti-chance (Deflated Sharpe) du gate.",
+        en: "Pruning hopeless trials: while optimizing a deep model, each trial pays several full trainings (one per validation segment). The partial score is now reported after each segment and a trial clearly below the median is stopped early (MedianPruner) — 30-50% of GPU saved on bad trials, without touching good ones. Pruned trials still count in the gate's anti-luck correction (Deflated Sharpe).",
+      },
+    ],
+    verdict: {
+      fr: "Ordonnancement et débit uniquement — les critères du gate, les labels, le sizing et le comptage des essais du Deflated Sharpe sont inchangés (le comptage couvre toujours le zoo complet, même quand la recherche est restreinte). Objectif : plus de combos rafraîchis par jour sur la même machine, donc des modèles plus frais.",
+      en: "Scheduling and throughput only — gate criteria, labels, sizing and the Deflated Sharpe trial counting are unchanged (counting still covers the full zoo even when the search is narrowed). Goal: more combos refreshed per day on the same machine, hence fresher models.",
+    },
+  },
+  {
+    date: "2026-06-10",
     tone: "risk",
     title: {
       fr: "Audit complet : le paper book paie désormais les vrais coûts, le Brief dit tout, la réforme du gate est pré-enregistrée",

@@ -162,6 +162,7 @@ def objective_for(
     regularized: bool = False,
     horizon_choices: list[int] | None = None,
     dataset_builder: Callable[[int], tuple[SupervisedDataset, dict]] | None = None,
+    pruning: bool = False,
 ) -> Callable[[optuna.Trial], float]:
     """Return an Optuna objective.
 
@@ -176,6 +177,11 @@ def objective_for(
     searches the triple-barrier horizon: it rebuilds the dataset/prices/label_cfg for the
     chosen horizon and records it as ``trial.user_attrs["horizon_days"]``. Without them the
     horizon is fixed at ``label_cfg.horizon_days`` — the pooled-path behavior, unchanged.
+
+    ``pruning`` reports the partial OOS AUC to the trial after each walk-forward fold so the
+    study's pruner can kill a hopeless trial before it pays for every remaining fold — only
+    worth it for the deep models, where each fold is a full GPU training. Pruned trials still
+    count in the study (and therefore in the gate's DSR trial correction).
     """
     builder = dataset_builder
     horizons = list(horizon_choices) if horizon_choices else []
@@ -199,7 +205,21 @@ def objective_for(
         factory: Callable[[], Model] = _factory_from_trial(
             model_name, trial, device=device, regularized=regularized
         )
-        oof = oof_predict(ds, factory, embargo=lcfg.horizon_days)
+
+        fold_cb = None
+        if pruning:
+            import optuna as optuna_runtime  # noqa: PLC0415 — module import is TYPE_CHECKING-only
+            from sklearn.metrics import roc_auc_score  # noqa: PLC0415
+
+            def fold_cb(fold_idx: int, partial: pd.DataFrame) -> None:
+                y = partial["y_true"]
+                if y.nunique() < 2:  # noqa: PLR2004 — single-class partial OOF: nothing to score
+                    return
+                trial.report(float(roc_auc_score(y, partial["proba"])), step=fold_idx)
+                if trial.should_prune():
+                    raise optuna_runtime.TrialPruned
+
+        oof = oof_predict(ds, factory, embargo=lcfg.horizon_days, fold_callback=fold_cb)
         bt = run_backtest(
             bt_prices,
             oof,
@@ -558,6 +578,9 @@ def run_ticker_hpo(
             config, ticker, side, horizon_days=h, exit_mode=strategy, interval=interval
         )
 
+    # Per-fold pruning only pays for the deep models, where one walk-forward fold is a full GPU
+    # training; LightGBM trials finish in seconds and pruning would just add noise to the TPE.
+    pruning = model_name != "lgbm" and metric == "auc"
     objective = objective_for(
         model_name,
         dataset,
@@ -571,6 +594,7 @@ def run_ticker_hpo(
         regularized=True,
         horizon_choices=horizons,
         dataset_builder=_build_for_horizon,
+        pruning=pruning,
     )
 
     config.optuna_db.parent.mkdir(parents=True, exist_ok=True)
@@ -578,11 +602,19 @@ def run_ticker_hpo(
         url=f"sqlite:///{config.optuna_db}",
         engine_kwargs={"connect_args": {"timeout": 60}},
     )
+    # n_startup_trials keeps the first trials un-prunable (a baseline median must exist) and
+    # n_warmup_steps spares the noisy first fold; pruned trials still count toward the DSR.
+    pruner = (
+        optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=1)
+        if pruning
+        else optuna.pruners.NopPruner()
+    )
     study = optuna.create_study(
         direction="maximize",
         storage=storage,
         study_name=ticker_study_name(ticker, model_name, side, strategy, metric, interval),
         load_if_exists=True,
+        pruner=pruner,
     )
     trials = n_trials if n_trials is not None else config.zoo.ticker_initial_hpo_trials
     study.optimize(objective, n_trials=trials)

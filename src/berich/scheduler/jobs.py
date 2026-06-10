@@ -497,18 +497,16 @@ def ticker_nightly_refresh_job(config: Config) -> dict[str, int]:
     (``zoo.ticker_nightly_hpo_trials``) into the shared study, then re-run the tournament to
     re-fit / re-promote the honest winner. Bounded and best-effort: only touches tickers that
     already cleared the gate once, and wraps each ticker's work so one failure never aborts the
-    batch. The deep-model HPO runs on the GPU pool; the tournament re-fit runs in-process.
+    batch. Shares ``_hpo_and_tournament``'s top-up path: CPU/GPU overlap, and on weekdays the
+    contest narrows to the served winner + LightGBM (full zoo again on weekends).
     """
     from berich.models.registry import load_active  # noqa: PLC0415
-    from berich.training.gpu_pool import GpuTask, run_on_gpus  # noqa: PLC0415
-    from berich.training.tournament import train_ticker_tournament  # noqa: PLC0415
 
     lock = acquire_hpo_lock(config)
     if lock is None:
         logger.info("ticker_nightly_refresh: HPO lock held (sweep service running), skipping")
         return {"refreshed": 0, "promoted": 0, "skipped": 0, "failed": 0}
     n_trials = config.zoo.ticker_nightly_hpo_trials
-    deep_models = [m for m in config.zoo.ticker_tournament_models if m != "lgbm"]
     refreshed = 0
     promoted = 0
     skipped = 0
@@ -520,21 +518,9 @@ def ticker_nightly_refresh_job(config: Config) -> dict[str, int]:
                     skipped += 1
                     continue
                 try:
-                    tasks = [
-                        GpuTask(
-                            _ticker_hpo_task,
-                            args=(config, ticker, model_name, side, n_trials, strategy),
-                            label=f"{ticker}/{model_name}/{side}/{strategy}",
-                        )
-                        for model_name in deep_models
-                    ]
-                    if tasks:
-                        run_on_gpus(tasks, config.zoo.gpu_ids)
-                    result = train_ticker_tournament(
-                        config, ticker, side, strategy=strategy, calibrate=True
-                    )
+                    ok = _hpo_and_tournament(config, ticker, side, n_trials, strategy, topup=True)
                     refreshed += 1
-                    promoted += int(result.promoted)
+                    promoted += int(ok)
                 except Exception:  # noqa: BLE001 — one bad ticker must not abort the nightly batch
                     logger.warning(
                         "ticker_nightly_refresh: %s/%s/%s failed",
@@ -556,6 +542,36 @@ def ticker_nightly_refresh_job(config: Config) -> dict[str, int]:
     return summary
 
 
+def _topup_models(
+    config: Config,
+    ticker: str,
+    side: str,
+    strategy: str,
+    interval: str = "1d",
+    *,
+    when: datetime | None = None,
+) -> list[str]:
+    """Framework list for an incumbent's light refresh (``topup_winner_only`` scheduling).
+
+    Weekdays: only the served winner's framework + LightGBM (the cheap challenger) — re-paying
+    three deep-model searches per combo per night on a converged contest is the main GPU waste.
+    Weekends (or flag off, or no winner yet): the full zoo, so every framework periodically gets
+    to re-open the contest. Scheduling only — gate criteria and DSR trial counts are unchanged.
+    """
+    from berich.models.registry import served_model_name  # noqa: PLC0415
+
+    full = list(config.zoo.ticker_tournament_models)
+    now = when or datetime.now(UTC)
+    if not config.zoo.topup_winner_only or now.weekday() >= 5:  # noqa: PLR2004 — Sat/Sun
+        return full
+    winner = served_model_name(
+        config.model_dir_for_ticker(ticker, side, strategy, interval=interval)
+    )
+    if winner not in full:
+        return full
+    return list(dict.fromkeys(["lgbm", winner]))
+
+
 def _hpo_and_tournament(
     config: Config,
     ticker: str,
@@ -563,20 +579,28 @@ def _hpo_and_tournament(
     n_trials: int,
     strategy: str = "fixed",
     interval: str = "1d",
+    *,
+    topup: bool = False,
 ) -> bool:
     """Full first-pass HPO (deep models on the GPU pool) + tournament for one ticker/side/strategy.
 
-    Returns whether a model was promoted. Deep-model HPO runs across the GPU pool; LightGBM is
-    searched in-process by the tournament's own best-params lookup. Raises on hard failure so
-    the caller can count it. ``interval="1h"`` trains the intraday namespace (own studies/registry).
+    Returns whether a model was promoted. Deep-model HPO runs across the GPU pool while the
+    LightGBM search runs concurrently in-process on the CPU (the GPUs used to idle through the
+    whole LightGBM phase). ``topup=True`` marks an incumbent's light refresh, which may restrict
+    the contest to the served winner + LightGBM on weekdays (see ``_topup_models``). Raises on
+    hard failure so the caller can count it. ``interval="1h"`` trains the intraday namespace.
     """
+    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
     from berich.training.gpu_pool import GpuTask, run_on_gpus  # noqa: PLC0415
     from berich.training.tournament import train_ticker_tournament  # noqa: PLC0415
 
-    deep_models = [m for m in config.zoo.ticker_tournament_models if m != "lgbm"]
-    # LightGBM HPO runs in-process (CPU, fast); deep models go on the GPU pool.
-    if "lgbm" in config.zoo.ticker_tournament_models:
-        _ticker_hpo_task(None, config, ticker, "lgbm", side, n_trials, strategy, interval)
+    models = (
+        _topup_models(config, ticker, side, strategy, interval)
+        if topup
+        else list(config.zoo.ticker_tournament_models)
+    )
+    deep_models = [m for m in models if m != "lgbm"]
     tasks = [
         GpuTask(
             _ticker_hpo_task,
@@ -585,10 +609,23 @@ def _hpo_and_tournament(
         )
         for model_name in deep_models
     ]
+
+    def _lgbm() -> None:
+        if "lgbm" in models:
+            _ticker_hpo_task(None, config, ticker, "lgbm", side, n_trials, strategy, interval)
+
     if tasks:
-        run_on_gpus(tasks, config.zoo.gpu_ids)
+        # Overlap CPU and GPU: the deep searches go to the GPU pool first, and LightGBM's
+        # CPU-bound Optuna loop runs in the main process while they train. The Optuna SQLite
+        # storage already serves concurrent GPU workers, so one more writer is the same pattern.
+        with ThreadPoolExecutor(max_workers=1) as overlap:
+            gpu_future = overlap.submit(run_on_gpus, tasks, config.zoo.gpu_ids)
+            _lgbm()
+            gpu_future.result()
+    else:
+        _lgbm()
     return train_ticker_tournament(
-        config, ticker, side, strategy=strategy, interval=interval, calibrate=True
+        config, ticker, side, strategy=strategy, interval=interval, calibrate=True, models=models
     ).promoted
 
 

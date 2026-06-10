@@ -48,6 +48,7 @@ def oof_predict(
     train_frac: float = 0.5,
     test_frac: float = 0.1,
     embargo: int = 10,
+    fold_callback: Callable[[int, pd.DataFrame], None] | None = None,
 ) -> OofResult:
     """Run walk-forward training and collect out-of-sample probabilities.
 
@@ -57,6 +58,10 @@ def oof_predict(
         train_frac: initial train window as a fraction of all samples.
         test_frac: test block size as a fraction of all samples.
         embargo: rows skipped between train and test (>= label horizon).
+        fold_callback: called after each non-final fold with ``(fold_index,
+            accumulated_oof_frame)``. An HPO caller can report the partial score and raise
+            (e.g. ``optuna.TrialPruned``) to abort a hopeless trial early — the exception
+            propagates. Walk-forward itself stays Optuna-agnostic.
     """
     n = len(dataset)
     folds = walk_forward_splits(
@@ -71,7 +76,7 @@ def oof_predict(
         raise ValueError(msg)
 
     rows: list[pd.DataFrame] = []
-    for fold in folds:
+    for fold_idx, fold in enumerate(folds):
         model = model_factory()
         x_tr = dataset.x.iloc[fold.train_idx]
         y_tr = dataset.y.iloc[fold.train_idx]
@@ -92,6 +97,8 @@ def oof_predict(
                 index=dataset.dates[fold.test_idx],
             )
         )
+        if fold_callback is not None and fold_idx < len(folds) - 1:
+            fold_callback(fold_idx, pd.concat(rows))
     frame = pd.concat(rows)
     frame.index.name = "date"
     return OofResult(frame=frame.sort_index())
