@@ -295,12 +295,22 @@ export default function OpsPage() {
                   pct={snap.system.mem_used_pct}
                   color={band(snap.system.mem_used_pct)}
                 />
-                <Metric
-                  label={t("ops.disk")}
-                  value={`${snap.system.disk_used_gb ?? "—"} / ${snap.system.disk_total_gb ?? "—"} GB`}
-                  pct={snap.system.disk_used_pct}
-                  color={band(snap.system.disk_used_pct)}
-                />
+                <div>
+                  <Metric
+                    label={t("ops.disk")}
+                    value={`${snap.system.disk_used_gb ?? "—"} / ${snap.system.disk_total_gb ?? "—"} GB`}
+                    pct={snap.system.disk_used_pct}
+                    color={band(snap.system.disk_used_pct)}
+                  />
+                  {snap.system.disk_free_gb != null && (
+                    <div className="mt-1 flex justify-between text-[11px] text-[var(--color-faint)]">
+                      <span>{t("ops.diskFree")}</span>
+                      <span className="tabular" style={{ color: band(snap.system.disk_used_pct) }}>
+                        {snap.system.disk_free_gb} GB
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
             </section>
 

@@ -34,6 +34,24 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 const ENTRIES: Entry[] = [
   {
     date: "2026-06-10",
+    tone: "infra",
+    title: {
+      fr: "/ops affiche l'espace disque restant",
+      en: "/ops shows remaining disk space",
+    },
+    points: [
+      {
+        fr: "La carte « Système » de /ops affichait l'espace disque utilisé (ex. 95 / 1830 Go) mais pas la place encore libre. Une ligne « Espace libre » indique désormais directement les Go restants sur le disque de données (le volume où grandissent les modèles et la base d'optimisation Optuna), avec le même code couleur que la barre d'usage.",
+        en: "The /ops 'System' card showed disk space used (e.g. 95 / 1830 GB) but not how much was still free. A new 'Free space' row now reports the remaining GB directly on the data disk (the volume where models and the Optuna optimization database grow), color-coded like the usage bar.",
+      },
+    ],
+    verdict: {
+      fr: "Affichage uniquement — aucun modèle, gate, sizing ni donnée de trading touché. La machine n'a qu'un seul disque de données utile (~1,8 To) ; c'est lui qui est suivi.",
+      en: "Display only — no model, gate, sizing or trading data touched. The machine has a single meaningful data disk (~1.8 TB); that is the one tracked.",
+    },
+  },
+  {
+    date: "2026-06-10",
     tone: "ship",
     title: {
       fr: "Studio : le script vidéo quotidien, généré automatiquement depuis les faits",

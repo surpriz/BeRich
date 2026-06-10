@@ -105,6 +105,7 @@ def system_metrics(config: Config) -> dict[str, object]:
         du = shutil.disk_usage(str(config.data_dir))
         out["disk_total_gb"] = round(du.total / 1e9, 1)
         out["disk_used_gb"] = round(du.used / 1e9, 1)
+        out["disk_free_gb"] = round(du.free / 1e9, 1)
         out["disk_used_pct"] = round(100.0 * du.used / du.total) if du.total else None
     except OSError:
         pass

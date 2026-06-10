@@ -303,6 +303,7 @@
   "ops.cpu": "CPU",
   "ops.ram": "RAM",
   "ops.disk": "Disque",
+  "ops.diskFree": "Espace libre",
   "ops.load": "Charge",
   "ops.util.title": "Utilisation",
   "ops.util.idle": "Au repos",

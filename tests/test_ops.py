@@ -131,6 +131,7 @@ def test_system_metrics_has_core_fields(tmp_path):
     assert "cpu_pct" in m
     assert isinstance(m.get("n_cpus"), int)
     assert isinstance(m.get("disk_total_gb"), float)
+    assert isinstance(m.get("disk_free_gb"), float)
 
 
 def test_scheduled_jobs_have_next_run():

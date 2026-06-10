@@ -270,6 +270,7 @@ export type OpsSystem = {
   disk_used_pct?: number | null;
   disk_used_gb?: number;
   disk_total_gb?: number;
+  disk_free_gb?: number;
 };
 
 export type OpsSweep = {
