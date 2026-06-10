@@ -26,9 +26,11 @@ import { ReplicationView } from "@/app/copy/page";
 
 const ACTIONABLE = new Set(["LONG", "SHORT", "BUY"]);
 
-const fmtEur = (n: number) =>
-  n.toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + " €";
-const fmtPx = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 4 });
+// Null-safe: a position may lack market data (failed mark-to-market on a fresh trade) — show a dash.
+const fmtEur = (n: number | null | undefined) =>
+  n == null ? "—" : n.toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + " €";
+const fmtPx = (n: number | null | undefined) =>
+  n == null ? "—" : n.toLocaleString("en-US", { maximumFractionDigits: 4 });
 
 function dirOf(s: Signal): "long" | "short" {
   if (s.direction) return s.direction;
@@ -484,9 +486,9 @@ function HoldCard({
   const isLong = (p.direction ?? "long") === "long";
   const color = isLong ? "var(--color-bull)" : "var(--color-bear)";
   const pnlColor =
-    p.mtm_pct > 0
+    p.mtm_pct != null && p.mtm_pct > 0
       ? "var(--color-bull)"
-      : p.mtm_pct < 0
+      : p.mtm_pct != null && p.mtm_pct < 0
         ? "var(--color-bear)"
         : "var(--color-muted)";
   // For a trailing trade the live ratcheting stop is the effective stop to watch.
@@ -516,8 +518,9 @@ function HoldCard({
         </div>
         <div className="text-right">
           <div className="font-semibold" style={{ color: pnlColor }}>
-            {p.mtm_pct >= 0 ? "+" : ""}
-            {(p.mtm_pct * 100).toFixed(2)}%
+            {p.mtm_pct == null
+              ? "—"
+              : `${p.mtm_pct >= 0 ? "+" : ""}${(p.mtm_pct * 100).toFixed(2)}%`}
           </div>
           <div className="text-xs text-[var(--color-muted)]">{L.mtm}</div>
         </div>

@@ -15,10 +15,14 @@ function bookLabel(strategy: string | null | undefined, fr: boolean): string {
   return fr ? "Fixe" : "Fixed";
 }
 
-const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const pct = (n: number) => `${(n * 100).toFixed(2)}%`;
+// Null-safe: a position can lack market data (e.g. the mark-to-market price fetch failed for a
+// freshly opened trade), in which case current_price / mtm_* arrive null — render a dash, never crash.
+const fmt = (n: number | null | undefined) =>
+  n == null ? "—" : n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const pct = (n: number | null | undefined) => (n == null ? "—" : `${(n * 100).toFixed(2)}%`);
 
-function pnlColor(n: number): string {
+function pnlColor(n: number | null | undefined): string {
+  if (n == null) return "text-[var(--color-muted)]";
   if (n > 0) return "text-[var(--color-bull)]";
   if (n < 0) return "text-[var(--color-bear)]";
   return "text-[var(--color-muted)]";
@@ -225,7 +229,7 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
                   {fmt(p.trail_stop ?? p.stop)}
                 </td>
                 <td className="px-3 py-2">
-                  {p.target > 0 ? (
+                  {p.target > 0 && p.current_price != null ? (
                     <div className="flex justify-center">
                       <RangeBar
                         low={p.trail_stop ?? p.stop}

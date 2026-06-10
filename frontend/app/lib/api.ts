@@ -105,10 +105,12 @@ export type PaperPosition = {
   stop: number;
   target: number;
   size_shares: number;
-  current_price: number;
+  // Market-data fields are null when the mark-to-market price fetch failed for this position
+  // (e.g. a fresh trade whose ticker had no quote at the last paper run).
+  current_price: number | null;
   days_held: number;
-  mtm_pct: number;
-  mtm_eur: number;
+  mtm_pct: number | null;
+  mtm_eur: number | null;
   // Exit strategy of the trade; for a trailing trade ``trail_stop`` is the live ratcheting stop.
   exit_strategy?: string | null;
   trail_stop?: number | null;

@@ -36,6 +36,28 @@ const ENTRIES: Entry[] = [
     date: "2026-06-10",
     tone: "infra",
     title: {
+      fr: "Correctif : une position sans prix ne casse plus les pages (wallet, brief, panel)",
+      en: "Fix: a position with no price no longer breaks pages (wallet, brief, panel)",
+    },
+    points: [
+      {
+        fr: "Quand le prix courant d'une position fraîchement ouverte n'a pas pu être récupéré au dernier pointage (ex. un creux de données sur le ticker), ses champs marché (prix courant, P&L) arrivaient à « null ». Le formatage de ces valeurs plantait alors le rendu de toute la page — wallet, brief et panel affichaient « This page couldn't load ».",
+        en: "When a freshly opened position's current price couldn't be fetched at the last mark-to-market (e.g. a data gap on the ticker), its market fields (current price, P&L) arrived as null. Formatting those values then crashed the whole page render — wallet, brief and panel showed 'This page couldn't load'.",
+      },
+      {
+        fr: "Les formateurs et les colonnes concernées sont désormais résilients : une donnée manquante affiche « — » au lieu de faire planter la page. Les types ont aussi été corrigés pour refléter que ces champs peuvent manquer, afin que le compilateur force la prise en compte du cas à l'avenir.",
+        en: "The formatters and affected columns are now resilient: a missing value renders '—' instead of crashing the page. The types were also fixed to reflect that these fields can be absent, so the compiler enforces handling that case going forward.",
+      },
+    ],
+    verdict: {
+      fr: "Correctif d'affichage uniquement — aucun modèle, gate, sizing ni donnée de trading touché. La valeur manquante est transitoire (repointée au prochain run quotidien) ; en attendant, les pages restent accessibles.",
+      en: "Display fix only — no model, gate, sizing or trading data touched. The missing value is transient (re-marked at the next daily run); meanwhile the pages stay accessible.",
+    },
+  },
+  {
+    date: "2026-06-10",
+    tone: "infra",
+    title: {
       fr: "Entraînement entrelacé : les modèles existants ne vieillissent plus pendant l'ajout d'actifs",
       en: "Interleaved training: existing models no longer go stale while new assets are onboarded",
     },

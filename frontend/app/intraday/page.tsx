@@ -72,8 +72,10 @@ export default function IntradayPage() {
   const ret = m?.total_return_paper ?? 0;
   const benchRet = m?.total_return_bench ?? 0;
   const value = capital * (1 + ret);
-  const eur = (n: number) => n.toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + " €";
-  const pct = (n: number) => `${n >= 0 ? "+" : ""}${(n * 100).toFixed(2)}%`;
+  const eur = (n: number | null | undefined) =>
+    n == null ? "—" : n.toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + " €";
+  const pct = (n: number | null | undefined) =>
+    n == null ? "—" : `${n >= 0 ? "+" : ""}${(n * 100).toFixed(2)}%`;
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-12">
@@ -232,8 +234,8 @@ export default function IntradayPage() {
                     <td className="py-1">{p.ticker}</td>
                     <td>{p.direction}</td>
                     <td>{p.entry.toFixed(2)}</td>
-                    <td>{p.current_price.toFixed(2)}</td>
-                    <td style={{ color: p.mtm_pct >= 0 ? "var(--color-bull)" : "var(--color-bear)" }}>
+                    <td>{p.current_price != null ? p.current_price.toFixed(2) : "—"}</td>
+                    <td style={{ color: (p.mtm_pct ?? 0) >= 0 ? "var(--color-bull)" : "var(--color-bear)" }}>
                       {pct(p.mtm_pct)}
                     </td>
                     <td>{p.days_held}</td>
