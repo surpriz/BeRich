@@ -102,7 +102,14 @@ def _fmt_px(value: float) -> str:
 
 
 def _fmt_pct(value: float) -> str:
+    if value == 0:
+        value = 0.0  # normalize -0.0 so it never renders as "+-0.0%"
     return f"{'+' if value >= 0 else ''}{value * 100:.1f}%"
+
+
+def _fmt_eur(value: float) -> str:
+    """Thousands-spaced euros — scoped to the number so sentence commas survive."""
+    return f"{value:,.0f}".replace(",", " ") + " €"
 
 
 def _humanize_factors(factors: list[dict[str, object]], *, short: bool) -> str:
@@ -151,9 +158,9 @@ def _portfolio_section(config: Config, store: OhlcvStore) -> list[str]:
     spy = float(metrics["total_return_spy"])
     spy_txt = "" if pd.isna(spy) else f" Sur la même période, le marché (SPY) fait {_fmt_pct(spy)}."
     return [
-        f"LE PORTEFEUILLE (simulation, capital fictif de {capital:,.0f} €)".replace(",", " "),
-        f"Valeur actuelle : {value:,.0f} € ({_fmt_pct(float(metrics['total_return_paper']))} "
-        f"depuis le départ).{spy_txt}".replace(",", " "),
+        f"LE PORTEFEUILLE (simulation, capital fictif de {_fmt_eur(capital)})",
+        f"Valeur actuelle : {_fmt_eur(value)} "
+        f"({_fmt_pct(float(metrics['total_return_paper']))} depuis le départ).{spy_txt}",
         f"Repli depuis le plus haut : {_fmt_pct(-dd)}. "
         f"{int(metrics['n_open'])} position(s) en cours, "
         f"{int(metrics['n_closed'])} clôturée(s) au total"
@@ -206,7 +213,7 @@ def build_video_script(config: Config, store: OhlcvStore) -> dict[str, object]:
         lines.append(
             f"• {o['ticker']} — {sens} : entrée {_fmt_px(entry)}, "
             f"stop {_fmt_px(stop)}, objectif {_fmt_px(target)}, "
-            f"taille {o['size_shares']} (≈{notional:,.0f} €).".replace(",", " ")
+            f"taille {o['size_shares']} (≈{_fmt_eur(notional)})."
         )
         why = _why_for_ticker(config, store, str(o["ticker"]), short=short)
         if why:
@@ -232,7 +239,8 @@ def build_video_script(config: Config, store: OhlcvStore) -> dict[str, object]:
     if not positions:
         lines.append("Aucune — le robot est entièrement à plat.")
     for p in positions:
-        mtm = f" — latent {_fmt_pct(p.mtm_pct)}" if p.mtm_pct is not None else ""
+        has_mtm = p.mtm_pct is not None and not pd.isna(p.mtm_pct)
+        mtm = f" — latent {_fmt_pct(p.mtm_pct)}" if has_mtm else ""
         lines.append(
             f"• {p.ticker} ({'baisse' if p.direction == 'short' else 'hausse'}), "
             f"jour {p.days_held}{mtm}, stop effectif "
