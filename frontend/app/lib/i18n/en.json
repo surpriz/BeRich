@@ -207,6 +207,7 @@
   "nav.wallet": "Wallet",
   "nav.copy": "Replicate",
   "nav.panel": "Diversified panel",
+  "nav.studio": "Studio",
   "nav.intraday": "Intraday (POC)",
   "wallet.cardTitle": "My paper portfolio",
   "wallet.cardHint": "Starting capital, current value, equity curve, open positions and trade history.",

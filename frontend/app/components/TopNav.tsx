@@ -17,6 +17,7 @@ const PRIMARY = [
 ];
 
 const BACKSTAGE = [
+  { href: "/studio", key: "nav.studio" },
   { href: "/intraday", key: "nav.intraday" },
   { href: "/strategies", key: "nav.strategies" },
   { href: "/training", key: "nav.training" },
