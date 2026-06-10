@@ -34,6 +34,44 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 const ENTRIES: Entry[] = [
   {
     date: "2026-06-10",
+    tone: "risk",
+    title: {
+      fr: "Audit complet : le paper book paie désormais les vrais coûts, le Brief dit tout, la réforme du gate est pré-enregistrée",
+      en: "Full audit: the paper book now pays real costs, the Brief tells everything, the gate reform is pre-registered",
+    },
+    points: [
+      {
+        fr: "Honnêteté du forward test : chaque nouveau trade papier fige à l'ouverture son coût aller-retour estimé (commissions + slippage proportionnel au volume — le même modèle de coûts que le backtest qui a promu les modèles) et le déduit du P&L réalisé à la clôture. Les trades déjà ouverts ne sont pas réécrits. Le forward test ne peut plus être « moins cher » que la promesse backtestée.",
+        en: "Forward-test honesty: every new paper trade freezes its estimated round-trip cost at open (commissions + volume-proportional slippage — the same cost model as the backtest that promoted the models) and deducts it from the realized P&L at close. Already-open trades are not rewritten. The forward test can no longer be 'cheaper' than the backtested promise.",
+      },
+      {
+        fr: "Bug corrigé dans les statistiques par trade du backtest : le slippage était compté deux fois (déjà inclus dans les prix d'exécution, puis re-soustrait), et le slippage du dernier actif de la boucle s'appliquait à tous les trades multi-actifs. Le Sharpe du gate (calculé sur la série quotidienne) n'était pas affecté — la population promue ne change pas.",
+        en: "Bug fixed in the backtest's per-trade statistics: slippage was double-counted (already in the fill prices, then subtracted again), and the last asset's slippage applied to every trade in multi-asset runs. The gate's Sharpe (computed on the daily series) was unaffected — the promoted population does not change.",
+      },
+      {
+        fr: "Le Brief dit désormais tout sur chaque ordre prévu : validité (~N jours de bourse, l'horizon du modèle), P(gain) calibrée, gain attendu net et coût estimé en points de base — en plus du prix, du stop, de l'objectif et de la taille.",
+        en: "The Brief now tells everything about each planned order: shelf life (~N trading days, the model's horizon), calibrated P(win), net expected return and estimated cost in basis points — on top of price, stop, target and size.",
+      },
+      {
+        fr: "Alerte de concentration devise : trois paires JPY ouvertes = un seul pari corrélé que les plafonds par classe ne voient pas. Le portefeuille et le digest quotidien signalent désormais toute devise portant ≥ 50 % du capital (information seulement — aucun sizing modifié pendant le gel).",
+        en: "Currency-concentration warning: three open JPY crosses = one correlated bet the per-class caps can't see. The wallet and the daily digest now flag any currency carrying ≥ 50% of capital (information only — no sizing changed during the freeze).",
+      },
+      {
+        fr: "Infra durcie (gratuit) : sauvegarde atomique (.tmp + rename) avec copie off-site optionnelle via rclone, watchdog systemd indépendant qui alerte par email si le run de 22:30 n'a pas eu lieu, et contre-vérification hebdomadaire des clôtures yfinance face à Stooq (source indépendante gratuite).",
+        en: "Infra hardened (free): atomic backup (.tmp + rename) with optional off-site copy via rclone, an independent systemd watchdog that emails when the 22:30 run did not happen, and a weekly cross-check of yfinance closes against Stooq (free independent source).",
+      },
+      {
+        fr: "Réforme du gate PRÉ-ENREGISTRÉE (docs/GATE_REFORM.md), à appliquer uniquement à la fin du forward test : le gate devra backtester la politique réellement servie (proba calibrée + seuil par actif — aujourd'hui il teste la proba brute au seuil global), fin du triple usage des OOF, MIN_TRADES 20→50, AUC_FLOOR 0,52, gaps remplis à l'open, réforme du gate long, caps par devise. Les critères sont figés maintenant pour qu'aucun choix ne soit fait après lecture des résultats.",
+        en: "Gate reform PRE-REGISTERED (docs/GATE_REFORM.md), to be applied only when the forward test ends: the gate must backtest the actually-served policy (calibrated proba + per-asset threshold — today it tests raw proba at the global threshold), end of the triple OOF reuse, MIN_TRADES 20→50, AUC_FLOOR 0.52, gap-aware stop fills, long-gate reform, per-currency caps. The criteria are frozen now so no choice is made after seeing the results.",
+      },
+    ],
+    verdict: {
+      fr: "Verdict de l'audit : le socle méthodologique (causalité, walk-forward, Deflated Sharpe, FDR) est solide ; les failles trouvées sont des raffinements + 2 bugs réels, corrigés sans toucher à la population promue. Le gel du forward test est respecté : tout changement de validation attend les ~30 trades fermés.",
+      en: "Audit verdict: the methodological core (causality, walk-forward, Deflated Sharpe, FDR) is sound; the findings are refinements + 2 real bugs, fixed without touching the promoted population. The forward-test freeze is honored: every validation change waits for the ~30 closed trades.",
+    },
+  },
+  {
+    date: "2026-06-10",
     tone: "infra",
     title: {
       fr: "Correctif : une position sans prix ne casse plus les pages (wallet, brief, panel)",

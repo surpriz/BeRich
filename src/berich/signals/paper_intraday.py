@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     pnl_eur       DOUBLE,
     exit_strategy VARCHAR   NOT NULL DEFAULT 'fixed',
     tier          VARCHAR   NOT NULL DEFAULT 'promoted',
+    cost_bps      DOUBLE,
     source        VARCHAR   NOT NULL DEFAULT 'intraday_1h',
     created_at    TIMESTAMP DEFAULT now(),
     updated_at    TIMESTAMP DEFAULT now(),

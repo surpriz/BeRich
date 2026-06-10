@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the BeRich daily-run watchdog at 23:15 on weekdays
+
+[Timer]
+OnCalendar=Mon..Fri 23:15
+Persistent=true
+Unit=berich-watchdog.service
+
+[Install]
+WantedBy=timers.target

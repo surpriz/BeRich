@@ -9,11 +9,13 @@ mirrors the rest of the codebase (``PaperStore`` owns CRUD; top-level functions 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pandas as pd
 
 from berich.signals.paper import (
+    CURRENCY_CONCENTRATION_WARN_PCT,
+    currency_concentration,
     get_equity_curve,
     get_open_positions,
     get_paper_metrics,
@@ -51,6 +53,9 @@ class DailyDigest:
     # --- good to know ---
     open_positions: list[dict] = field(default_factory=list)  # ticker/direction/mtm/days_held
     stale_tickers: list[str] = field(default_factory=list)
+    # Currencies whose open forex exposure exceeds the concentration warning threshold —
+    # several crosses sharing a leg are one correlated bet the per-class caps can't see.
+    concentrated_currencies: list[dict] = field(default_factory=list)
     n_promoted_models: int = 0
     n_promoted_tickers: int = 0
     signals_total: int = 0
@@ -143,6 +148,11 @@ def build_daily_digest(config: Config, store: OhlcvStore, signals: list[Signal])
         adjust=executions["adjust"],
         open_positions=positions,
         stale_tickers=_stale_held_tickers(store, positions),
+        concentrated_currencies=[
+            c
+            for c in currency_concentration(config)
+            if cast("float", c["pct_capital"]) >= CURRENCY_CONCENTRATION_WARN_PCT
+        ],
         n_promoted_models=n_promoted_models,
         n_promoted_tickers=n_promoted_tickers,
         signals_total=len(signals),

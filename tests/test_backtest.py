@@ -10,8 +10,10 @@ from berich.backtest.engine import (
     _resolve_exit,
     _resolve_exit_trailing,
     _simulate_ticker,
+    run_backtest,
 )
 from berich.backtest.metrics import compute_metrics, max_drawdown
+from berich.training.walk_forward import OofResult
 
 
 def test_max_drawdown_known_curve():
@@ -56,6 +58,32 @@ def test_simulate_ticker_takes_winning_trade():
     assert trades[0].gross_return > 0  # uptrend long is profitable
     assert len(daily) == len(df)
     assert all(t.direction == "long" for t in trades)
+
+
+def test_run_backtest_trade_returns_charge_slippage_once():
+    # Fill prices already include slippage; the trade-level net must only add commissions
+    # on top, otherwise slippage is double-counted (and with several tickers the loop's
+    # last slip used to be applied to every trade).
+    df = _ramp()
+    df["volume"] = 1_000_000.0
+    proba = pd.Series(0.9, index=df.index)
+    oof = OofResult(
+        frame=pd.DataFrame({"proba": proba, "y_true": 1, "ticker": "TEST"}, index=df.index)
+    )
+    cfg = BacktestConfig(
+        entry_threshold=0.5,
+        horizon_days=10,
+        atr_window=3,
+        fee_bps=0.0,
+        slippage_bps=50.0,
+        volume_proportional_slippage=False,
+    )
+    result = run_backtest({"TEST": df}, oof, cfg)
+    assert result.trades
+    win_rate = result.strategy.win_rate
+    # With zero commission the net trade return is exactly the (slipped) gross return.
+    expected = float(np.mean([t.gross_return > 0 for t in result.trades]))
+    assert abs(win_rate - expected) < 1e-12
 
 
 def _slide(n: int = 30) -> pd.DataFrame:

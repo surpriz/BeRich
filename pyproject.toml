@@ -51,8 +51,9 @@ ignore = ["D", "COM812", "ISC001", "ANN401", "PLR0913", "TD", "FIX"]
 "src/berich/api/app.py" = ["PLC0415", "FAST002"]
 # Inline-styled HTML email templates: markup lines legitimately exceed the 100-col cap.
 "src/berich/notifications/email.py" = ["E501"]
-# One-off scripts: prints are the output mechanism; not a Python package.
-"scripts/*" = ["T201", "INP001"]
+# One-off scripts: prints are the output mechanism; not a Python package. Imports happen
+# after the sys.path bootstrap, so they can't be top-level.
+"scripts/*" = ["T201", "INP001", "PLC0415"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

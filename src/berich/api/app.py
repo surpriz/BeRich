@@ -192,8 +192,15 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
             "size_shares",
             "notional",
             "exit_strategy",
+            # Order shelf life + the frictions/edge behind the call (None when unavailable).
+            "horizon_days",
+            "cost_bps",
+            "proba_calibrated",
+            "exp_return_net",
         ]
-        return out[keep].to_dict(orient="records")
+        present = [c for c in keep if c in out.columns]
+        out = out[present].astype(object).where(pd.notna(out[present]), None)
+        return out.to_dict(orient="records")
 
     @router.get("/hpo-progress", dependencies=guard)
     def hpo_progress_endpoint() -> dict:
@@ -288,6 +295,20 @@ def create_app(config_path: str = str(DEFAULT_CONFIG_PATH)) -> FastAPI:  # noqa:
         return {
             "n": len(positions),
             "positions": [p.as_row() for p in positions],
+        }
+
+    @router.get("/paper/concentration", dependencies=guard)
+    def paper_concentration(tier: str = Query(default=PROMOTED_TIER)) -> dict:
+        """Open forex exposure per currency — flags one-bet books the per-class caps can't see."""
+        from berich.signals.paper import (
+            CURRENCY_CONCENTRATION_WARN_PCT,
+            currency_concentration,
+        )
+
+        rows = currency_concentration(config, tier=tier)
+        return {
+            "warn_pct": CURRENCY_CONCENTRATION_WARN_PCT,
+            "currencies": rows,
         }
 
     @router.get("/paper/equity", dependencies=guard)

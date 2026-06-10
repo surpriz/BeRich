@@ -70,6 +70,7 @@ def test_build_scheduler_registers_jobs():
         "longshort_signals",
         "refresh_signals",
         "backup",
+        "cross_check_data",
     }
 
 

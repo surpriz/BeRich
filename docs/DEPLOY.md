@@ -155,6 +155,35 @@ not just the US ones.
 
 If you change a systemd unit file, `systemctl daemon-reload` first.
 
+### Watchdog du run quotidien (timer indépendant)
+
+The scheduler is a single process: if it dies before 22:30, no job runs and no
+EVENT_JOB_ERROR alert fires either. An independent systemd timer checks the
+heartbeat (`data/last_daily_run.json`, stamped by `daily_paper_job`) at 23:15 on
+weekdays and emails an alert when the evening run is missing. Install:
+
+```bash
+sudo cp /root/BeRich/deploy/berich-watchdog.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now berich-watchdog.timer
+systemctl list-timers berich-watchdog.timer   # next firing
+```
+
+### Backup off-site (rclone, gratuit)
+
+`backup_job` (21:00 daily) writes the archive atomically (`.tmp` + rename) and,
+when `BERICH_BACKUP_REMOTE` is set, copies it to an rclone remote — local-only
+backups don't survive disk loss or ransomware. One-time setup:
+
+```bash
+rclone config            # interactive: create a remote, e.g. "gdrive" (Google Drive)
+echo 'BERICH_BACKUP_REMOTE=gdrive:berich-backups' | sudo tee -a /etc/berich/env
+sudo systemctl restart berich-scheduler
+```
+
+A failed sync raises inside `backup_job`, so the scheduler's error listener
+emails the alert. Leaving the variable unset keeps backups local-only (logged).
+
 ### Rotate the API key
 
 ```bash

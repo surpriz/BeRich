@@ -282,6 +282,17 @@ def _good_to_know_html(d: DailyDigest) -> str:
             f"⚠ Données possiblement périmées / possibly stale data: "
             f'<span style="font-family:{_MONO};">{", ".join(d.stale_tickers)}</span></div>'
         )
+    if d.concentrated_currencies:
+        ccy_txt = ", ".join(
+            f"{c['currency']} {float(c['pct_capital']) * 100:.0f}% ({int(c['n_positions'])} pos.)"
+            for c in d.concentrated_currencies
+        )
+        blocks.append(
+            f'<div style="font:600 13px/1.6 {_FONT};color:{_BEAR};margin-bottom:8px;">'
+            f"⚠ Concentration devise (plusieurs positions = un seul pari) / "
+            f"currency concentration (several positions = one bet): "
+            f'<span style="font-family:{_MONO};">{ccy_txt}</span></div>'
+        )
     blocks.append(
         f'<div style="font:400 13px/1.8 {_FONT};color:{_MUTED};">'
         f'<span style="color:{_INK};font-weight:600;">{d.n_promoted_models}</span> modèles promus '
@@ -376,6 +387,14 @@ def _render_digest_text(d: DailyDigest) -> str:
     ]
     if d.stale_tickers:
         lines.append(f"  ⚠ données périmées / stale data: {', '.join(d.stale_tickers)}")
+    if d.concentrated_currencies:
+        lines.append(
+            "  ⚠ concentration devise / currency concentration: "
+            + ", ".join(
+                f"{c['currency']} {float(c['pct_capital']) * 100:.0f}%"
+                for c in d.concentrated_currencies
+            )
+        )
     lines += [
         "",
         "Seuls les ordres ci-dessus ont été exécutés ; le Brief est une prévision.",

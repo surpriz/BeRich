@@ -1,0 +1,13 @@
+[Unit]
+Description=BeRich watchdog: verify the 22:30 daily run happened (alert email otherwise)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/BeRich
+EnvironmentFile=/etc/berich/env
+ExecStart=/root/.local/bin/uv run python scripts/check_daily_run.py
+StandardOutput=journal
+StandardError=journal

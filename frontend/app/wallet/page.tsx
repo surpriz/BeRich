@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
   api,
+  type CurrencyConcentration,
   type PaperClosedTrade,
   type PaperEquity,
   type PaperPositions,
@@ -31,6 +32,7 @@ export default function WalletPage() {
   const [positions, setPositions] = useState<PaperPositions | null>(null);
   const [closed, setClosed] = useState<PaperClosedTrade[] | null>(null);
   const [cfg, setCfg] = useState<SignalConfig | null>(null);
+  const [conc, setConc] = useState<CurrencyConcentration | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,7 +41,11 @@ export default function WalletPage() {
     api.paperPositions(undefined, tier).then(setPositions).catch(() => {});
     api.paperClosed(50, undefined, tier).then(setClosed).catch(() => {});
     api.signalConfig().then(setCfg).catch(() => {});
+    api.paperConcentration(tier).then(setConc).catch(() => {});
   }, [tier]);
+
+  const concentrated =
+    conc?.currencies.filter((c) => c.pct_capital >= (conc?.warn_pct ?? 0.5)) ?? [];
 
   const L = {
     title: fr ? "Mon portefeuille (papier)" : "My paper portfolio",
@@ -74,6 +80,25 @@ export default function WalletPage() {
       </div>
 
       {err && <p className="mt-6 text-[var(--color-bear)]">{err}</p>}
+
+      {concentrated.length > 0 && (
+        <div className="card mt-6 border-l-4 border-[var(--color-bear)] p-4 text-sm">
+          <span className="font-semibold text-[var(--color-bear)]">
+            {fr ? "⚠ Concentration devise" : "⚠ Currency concentration"}
+          </span>{" "}
+          <span className="text-[var(--color-muted)]">
+            {fr
+              ? "Plusieurs positions partagent la même devise — c'est un seul pari corrélé : "
+              : "Several positions share the same currency — that is one correlated bet: "}
+            {concentrated
+              .map(
+                (c) =>
+                  `${c.currency} ${(c.pct_capital * 100).toFixed(0)}% (${c.n_positions} pos.)`,
+              )
+              .join(", ")}
+          </span>
+        </div>
+      )}
 
       {m && (
         <div className="mt-8 grid gap-4 sm:grid-cols-3">

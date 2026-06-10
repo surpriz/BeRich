@@ -132,7 +132,8 @@ def run_backtest(
 
     strat_daily = _equal_weight(strat_returns)
     bench_daily = _equal_weight(bench_returns)
-    trade_rets = [t.gross_return - 2 * (fee + slip) for t in all_trades]
+    # Fill prices already carry each ticker's slippage; only the per-side commission is missing.
+    trade_rets = [t.gross_return - 2 * fee for t in all_trades]
 
     return BacktestResult(
         strategy=compute_metrics(
@@ -151,6 +152,16 @@ def _equal_weight(per_ticker: dict[str, pd.Series]) -> pd.Series:
         return pd.Series(dtype=float)
     frame = pd.DataFrame(per_ticker).sort_index()
     return frame.mean(axis=1)
+
+
+def estimated_cost_bps(df: pd.DataFrame, config: BacktestConfig | None = None) -> float:
+    """Round-trip friction estimate in bps for one ticker: two commissions + two slipped sides.
+
+    The same cost model the simulation charges, exposed so the paper book and the
+    user-facing brief can quote the frictions the promotion gate assumed.
+    """
+    cfg = config or BacktestConfig()
+    return 2.0 * (cfg.fee_bps + _slippage_for_ticker(df, cfg) * 1e4)
 
 
 def _slippage_for_ticker(df: pd.DataFrame, config: BacktestConfig) -> float:

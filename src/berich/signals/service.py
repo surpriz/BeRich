@@ -104,6 +104,9 @@ class Signal:
     exp_return_gross: float | None = None
     exp_return_net: float | None = None
     cost_bps_roundtrip: float | None = None
+    # Label horizon of the served model — how many bars the trade plan stays valid before the
+    # time exit would have kicked in; the Brief shows it as the order's shelf life.
+    horizon_days: int | None = None
 
     def as_row(self) -> dict[str, object]:
         row = asdict(self)
@@ -716,6 +719,7 @@ def _signal_for_ticker(  # noqa: C901, PLR0912, PLR0915
         exp_return_gross=None if exp_gross is None else round(exp_gross, 5),
         exp_return_net=None if exp_net is None else round(exp_net, 5),
         cost_bps_roundtrip=None if exp_gross is None else cost_bps,
+        horizon_days=int(label_cfg.horizon_days),
     )
 
 

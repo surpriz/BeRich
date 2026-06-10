@@ -139,6 +139,10 @@ export default function BriefPage({ embedded = false }: { embedded?: boolean }) 
     stop: "Stop-loss",
     target: "Take-profit",
     exp: fr ? "Gain attendu (net)" : "Expected return (net)",
+    valid: fr ? "Ordre valable" : "Order valid",
+    validDays: fr ? "jours de bourse" : "trading days",
+    cost: fr ? "Coût estimé" : "Est. cost",
+    pwin: fr ? "P(gain) calibrée" : "Calibrated P(win)",
     empty: fr ? "Aucun ordre aujourd'hui." : "No orders today.",
     emptyHint: fr
       ? "La discipline dit : reste à plat. Aucun signal validé ne franchit la barre — ne force pas de trade."
@@ -470,6 +474,33 @@ function PlanCard({
         <Field label={L.stop} value={fmtPx(o.stop)} color="var(--color-bear)" />
         <Field label={L.target} value={fmtPx(o.target)} color="var(--color-bull)" />
       </div>
+      {(o.horizon_days != null ||
+        o.proba_calibrated != null ||
+        o.exp_return_net != null ||
+        o.cost_bps != null) && (
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-faint)]">
+          {o.horizon_days != null && (
+            <span>
+              {L.valid} ~{o.horizon_days} {L.validDays}
+            </span>
+          )}
+          {o.proba_calibrated != null && (
+            <span>
+              {L.pwin} {(o.proba_calibrated * 100).toFixed(0)}%
+            </span>
+          )}
+          {o.exp_return_net != null && (
+            <span>
+              {L.exp} {(o.exp_return_net * 100).toFixed(2)}%
+            </span>
+          )}
+          {o.cost_bps != null && (
+            <span>
+              {L.cost} {o.cost_bps.toFixed(0)} bps
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

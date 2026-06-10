@@ -18,6 +18,7 @@ from apscheduler.triggers.cron import CronTrigger
 from berich.scheduler.jobs import (
     backup_job,
     check_drift_job,
+    cross_check_data_job,
     daily_paper_job,
     intraday_paper_job,
     longshort_signals_job,
@@ -154,6 +155,17 @@ def build_scheduler(config: Config) -> BlockingScheduler:
         CronTrigger(day_of_week="sat", hour=8, minute=30, timezone="Europe/Paris"),
         args=[config],
         id="ticker_drift_monitor",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # Weekly second-source sanity check, Saturday 8:45 — recent yfinance closes vs Stooq on a
+    # liquid sample, because the single OHLCV source failing silently is a poisoned-book risk.
+    scheduler.add_job(
+        cross_check_data_job,
+        CronTrigger(day_of_week="sat", hour=8, minute=45, timezone="Europe/Paris"),
+        args=[config],
+        id="cross_check_data",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

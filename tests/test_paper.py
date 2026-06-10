@@ -170,7 +170,85 @@ def test_short_downtrend_closes_at_target(config, ohlcv_store):
     assert trade["status"] == CLOSED_TARGET
     assert trade["exit_price"] == pytest.approx(90.0)
     assert trade["pnl_pct"] > 0  # short profits when price falls
-    assert trade["pnl_eur"] == pytest.approx((100.0 - 90.0) * 10)
+    # Realized P&L is net of the round-trip friction frozen at open.
+    cost_eur = 100.0 * 10 * float(trade["cost_bps"]) / 1e4
+    assert trade["pnl_eur"] == pytest.approx((100.0 - 90.0) * 10 - cost_eur)
+
+
+def test_close_charges_cost_frozen_at_open(config, ohlcv_store):
+    # The book must pay the same frictions the promotion gate's backtest assumed:
+    # cost_bps is stamped when the trade opens and deducted from the realized P&L.
+    df = _ramp(start=100.0, end=120.0, n=20, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    sigstore = _seed_signal_table(config, df.index[0], entry=100.0, stop=95.0, target=110.0)
+
+    open_new_trades(config, ohlcv_store, sigstore)
+    open_trade = PaperStore(config.db_path).all_trades().iloc[0]
+    assert open_trade["cost_bps"] > 0
+
+    update_open_trades(config, ohlcv_store)
+    trade = PaperStore(config.db_path).all_trades().iloc[0]
+    assert trade["status"] == CLOSED_TARGET
+    gross_eur = (110.0 - 100.0) * 10
+    cost_frac = float(trade["cost_bps"]) / 1e4
+    assert trade["pnl_eur"] == pytest.approx(gross_eur - 100.0 * 10 * cost_frac)
+    assert trade["pnl_pct"] == pytest.approx((110.0 - 100.0) / 100.0 - cost_frac)
+
+
+def test_currency_concentration_groups_shared_leg(config):
+    # Three JPY crosses look diversified to the per-class caps but are one JPY bet:
+    # the concentration read must aggregate them under JPY.
+    rows = pd.DataFrame(
+        [
+            {
+                "date_open": pd.Timestamp("2024-01-02"),
+                "ticker": t,
+                "signal": "SHORT",
+                "entry": 100.0,
+                "stop": 105.0,
+                "target": 90.0,
+                "size_shares": 20,
+                "status": OPEN,
+            }
+            for t in ("EURJPY=X", "GBPJPY=X", "AUDJPY=X")
+        ]
+    )
+    PaperStore(config.db_path).insert_new(rows)
+    conc = paper_mod.currency_concentration(config)
+    by_ccy = {c["currency"]: c for c in conc}
+    assert by_ccy["JPY"]["n_positions"] == 3
+    assert by_ccy["JPY"]["notional"] == pytest.approx(3 * 100.0 * 20)
+    # 6000 € on 10k capital = 60% — above the 50% warning bar.
+    assert by_ccy["JPY"]["pct_capital"] >= paper_mod.CURRENCY_CONCENTRATION_WARN_PCT
+    assert by_ccy["EUR"]["n_positions"] == 1
+    # Non-forex tickers are ignored entirely.
+    assert "AAA" not in by_ccy
+
+
+def test_legacy_trade_without_cost_closes_at_gross(config, ohlcv_store):
+    # Rows that pre-date the cost column (cost_bps NULL) keep closing at gross P&L —
+    # history is never rewritten.
+    df = _ramp(start=100.0, end=120.0, n=20, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    legacy = pd.DataFrame(
+        [
+            {
+                "date_open": df.index[0],
+                "ticker": "AAA",
+                "signal": "BUY",
+                "entry": 100.0,
+                "stop": 95.0,
+                "target": 110.0,
+                "size_shares": 10,
+                "status": OPEN,
+            }
+        ]
+    )
+    PaperStore(config.db_path).insert_new(legacy)
+    update_open_trades(config, ohlcv_store)
+    trade = PaperStore(config.db_path).all_trades().iloc[0]
+    assert trade["status"] == CLOSED_TARGET
+    assert trade["pnl_eur"] == pytest.approx((110.0 - 100.0) * 10)
 
 
 def test_short_uptrend_closes_at_stop(config, ohlcv_store):

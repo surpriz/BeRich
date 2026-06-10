@@ -402,6 +402,11 @@ export type PlannedOrder = {
   size_shares: number;
   notional: number;
   exit_strategy?: string | null;
+  // Order shelf life (label horizon, trading days) + frictions/edge behind the call.
+  horizon_days?: number | null;
+  cost_bps?: number | null;
+  proba_calibrated?: number | null;
+  exp_return_net?: number | null;
 };
 
 // HPO sweep coverage at the (ticker × side × strategy) grain — feeds the /training & /ops bars.
@@ -509,6 +514,17 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Open forex exposure aggregated per currency — several crosses sharing a leg are one bet.
+export type CurrencyConcentration = {
+  warn_pct: number;
+  currencies: {
+    currency: string;
+    notional: number;
+    pct_capital: number;
+    n_positions: number;
+  }[];
+};
+
 // Risk profile: a one-click posture (prudent / balanced / offensive) over the live sizing knobs.
 export type RiskProfileInfo = {
   active: string;
@@ -532,6 +548,8 @@ export const api = {
   paperClosed: (limit = 25, strategy?: string, tier?: string) =>
     get<PaperClosedTrade[]>(`/paper/closed-trades${qs({ limit, strategy, tier })}`),
   paperCalibration: () => get<PaperCalibration>("/paper/calibration"),
+  paperConcentration: (tier?: string) =>
+    get<CurrencyConcentration>(`/paper/concentration${qs({ tier })}`),
   universes: () => get<Universes>("/universes"),
   signalConfig: () => get<SignalConfig>("/config"),
   training: () => get<TrainingStatus[]>("/training"),

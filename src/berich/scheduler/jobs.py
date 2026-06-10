@@ -8,10 +8,12 @@ idempotent: re-running a day's refresh/signals overwrites rather than duplicates
 from __future__ import annotations
 
 import fcntl
+import json
 import logging
 import os
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from berich.data import (
     NewsStore,
@@ -112,7 +114,7 @@ def daily_paper_job(config: Config) -> dict[str, int]:
         closed,
         notified,
     )
-    return {
+    result = {
         "news_rows": max(news_rows, 0),
         "finbert_scored": finbert_scored,
         "signals_saved": saved,
@@ -120,6 +122,23 @@ def daily_paper_job(config: Config) -> dict[str, int]:
         "trades_closed": closed,
         "email_sent": int(notified),
     }
+    _write_daily_heartbeat(config, result)
+    return result
+
+
+def _write_daily_heartbeat(config: Config, result: dict[str, int]) -> None:
+    """Stamp ``data/last_daily_run.json`` so an external watchdog can verify the run happened.
+
+    The scheduler is a single process: if it dies before 22:30 nobody emails anything. The
+    systemd watchdog timer (see ``scripts/check_daily_run.py``) reads this file at 23:15 and
+    alerts when the evening run is missing. Best-effort — never aborts the daily chain.
+    """
+    try:
+        payload = {"at": datetime.now(UTC).isoformat(), **result}
+        path = config.data_dir / "last_daily_run.json"
+        path.write_text(json.dumps(payload, indent=2))
+    except OSError:
+        logger.warning("daily_paper: heartbeat write failed", exc_info=True)
 
 
 def intraday_paper_job(config: Config) -> dict[str, int]:
@@ -369,11 +388,65 @@ def retrain_asset_models_job(config: Config) -> dict[str, object]:
     return results
 
 
-def backup_job(config: Config) -> dict[str, object]:
-    """Archive the training state (Optuna studies, models, signals DB) with rotation."""
-    from berich.backup import create_backup  # noqa: PLC0415
+def cross_check_data_job(config: Config, *, sample_size: int = 6) -> dict[str, object]:
+    """Weekly sanity check: compare recent yfinance closes to Stooq on a liquid sample.
 
-    return create_backup(config, timestamp=datetime.now(UTC).isoformat())
+    yfinance is the only OHLCV source — a silent upstream regression would poison labels and
+    the paper book with no error raised anywhere. Mismatches beyond the tolerance email an
+    alert (same channel as data-health); an unreachable Stooq just logs.
+    """
+    from berich.data.crosscheck import cross_check_ticker, stooq_symbol  # noqa: PLC0415
+
+    store = OhlcvStore(config.ohlcv_dir)
+    held = {
+        str(t)
+        for t in config.watchlist
+        if stooq_symbol(str(t)) is not None  # mappable US names first
+    }
+    universe = [t for t in config.all_runtime_tickers() if stooq_symbol(t) is not None]
+    sample = sorted(held.union(universe[: max(0, sample_size - len(held))]))[:sample_size]
+
+    findings: list[dict[str, object]] = []
+    for ticker in sample:
+        findings.extend(cross_check_ticker(store, ticker))
+
+    if findings:
+        from berich.notifications import send_alert_email  # noqa: PLC0415
+
+        lines = "\n".join(
+            f"  {f['ticker']} {f['date']}: ours={f['ours']:.4f} stooq={f['stooq']:.4f} "
+            f"(écart {cast('float', f['rel_diff']) * 100:.2f}%)"
+            for f in findings
+        )
+        send_alert_email(
+            subject="BeRich ALERTE : écart yfinance vs Stooq sur des clôtures récentes",
+            body=(
+                "Les clôtures yfinance en cache divergent de Stooq (source indépendante) :\n"
+                f"{lines}\n\n"
+                "Vérifier un éventuel problème de splits/ajustements côté yfinance avant le "
+                "prochain run quotidien. / Cached yfinance closes disagree with Stooq — check "
+                "for an upstream adjustment problem before the next daily run."
+            ),
+        )
+    logger.info("cross_check_data: %d tickers checked, %d mismatches", len(sample), len(findings))
+    return {"checked": sample, "mismatches": findings}
+
+
+def backup_job(config: Config) -> dict[str, object]:
+    """Archive the training state (Optuna studies, models, signals DB) with rotation.
+
+    When ``BERICH_BACKUP_REMOTE`` is set (an rclone remote like ``gdrive:berich-backups``),
+    the fresh archive is also copied off-site; a failed sync raises so the scheduler's
+    EVENT_JOB_ERROR listener emails the alert — a silent local-only backup is exactly the
+    failure mode this guards against.
+    """
+    from berich.backup import create_backup, sync_offsite  # noqa: PLC0415
+
+    summary = create_backup(config, timestamp=datetime.now(UTC).isoformat())
+    path = summary.get("path")
+    if path is not None:
+        summary["offsite_remote"] = sync_offsite(Path(str(path)))
+    return summary
 
 
 def _ticker_hpo_task(

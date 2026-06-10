@@ -26,6 +26,8 @@ import duckdb
 import numpy as np
 import pandas as pd
 
+from berich.backtest.engine import BacktestConfig as _BacktestConfig
+from berich.backtest.engine import estimated_cost_bps
 from berich.backtest.metrics import max_drawdown
 from berich.features.build import MARKET_TICKER
 from berich.features.indicators import atr
@@ -113,6 +115,7 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     pnl_eur       DOUBLE,
     exit_strategy VARCHAR NOT NULL DEFAULT 'fixed',
     tier          VARCHAR NOT NULL DEFAULT 'promoted',
+    cost_bps      DOUBLE,
     created_at    TIMESTAMP DEFAULT now(),
     updated_at    TIMESTAMP DEFAULT now(),
     PRIMARY KEY (date_open, ticker, exit_strategy)
@@ -144,6 +147,12 @@ _MIGRATION_TIER_COLUMN = (
     "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS tier VARCHAR DEFAULT 'promoted';"
 )
 
+# Estimated round-trip friction (commissions + volume-proportional slippage, bps) frozen at open.
+# Charged against the realized P&L when the trade closes so the forward test pays the same costs
+# the promotion gate's backtest assumed. NULL on legacy rows = closed at zero cost (history is
+# never rewritten).
+_MIGRATION_COST_COLUMN = "ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS cost_bps DOUBLE;"
+
 PROMOTED_TIER = "promoted"
 OBSERVE_TIER = "observe"
 
@@ -162,6 +171,7 @@ _TRADE_COLUMNS = (
     "pnl_eur",
     "exit_strategy",
     "tier",
+    "cost_bps",
 )
 
 
@@ -183,6 +193,7 @@ def _upgrade_paper_pk(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(_MIGRATION_SOURCE_COLUMN)
     con.execute(_MIGRATION_EXIT_STRATEGY_COLUMN)
     con.execute(_MIGRATION_TIER_COLUMN)
+    con.execute(_MIGRATION_COST_COLUMN)
     new_cols = {r[0] for r in con.execute("DESCRIBE paper_trades").fetchall()}
     common = ", ".join(c for c in old_cols if c in new_cols)
     con.execute(
@@ -249,6 +260,7 @@ class PaperStore:
             con.execute(_MIGRATION_SOURCE_COLUMN)
             con.execute(_MIGRATION_EXIT_STRATEGY_COLUMN)
             con.execute(_MIGRATION_TIER_COLUMN)
+            con.execute(_MIGRATION_COST_COLUMN)
             _upgrade_paper_pk(con)
 
     def _connect(self) -> duckdb.DuckDBPyConnection:
@@ -734,7 +746,7 @@ def _plan_book(
     rows = _cap_open_positions(rows, paper.open_trades(tier=book_tier), sig.max_open_positions)
     if rows.empty:
         return rows
-    return _apply_exposure_caps(
+    rows = _apply_exposure_caps(
         rows,
         paper.open_trades(tier=book_tier),
         capital=float(sig.capital),
@@ -743,6 +755,12 @@ def _plan_book(
         max_class_pct=float(sig.max_class_exposure_pct),
         class_of=config.asset_class_for,
     )
+    if not rows.empty:
+        # Freeze the gate's round-trip friction estimate at open; the close charges it
+        # against realized P&L so the forward test isn't cheaper than the backtest was.
+        rows = rows.copy()
+        rows["cost_bps"] = [_ticker_cost_bps(store, str(t)) for t in rows["ticker"]]
+    return rows
 
 
 def plan_committed_opens(
@@ -764,6 +782,56 @@ def plan_committed_opens(
     tier = _signal_tiers(actionable)
     paper = PaperStore(config.db_path)
     return _plan_book(config, store, paper, actionable[tier == PROMOTED_TIER], PROMOTED_TIER)
+
+
+# A single currency carrying more than this share of the book's capital is one correlated bet
+# (e.g. three open JPY crosses) that the per-class caps can't see — surfaced, never blocked.
+CURRENCY_CONCENTRATION_WARN_PCT = 0.5
+
+
+def currency_concentration(config: Config, *, tier: str = PROMOTED_TIER) -> list[dict[str, object]]:
+    """Aggregate open forex exposure per currency (cost basis) — observability only.
+
+    The exposure caps are per asset CLASS, so several crosses sharing a leg (EURJPY + GBPJPY +
+    AUDJPY) look diversified to them while being one JPY bet. Each open ``XXXYYY=X`` pair
+    contributes its notional to BOTH legs' buckets; the dashboard and the daily digest flag any
+    currency above ``CURRENCY_CONCENTRATION_WARN_PCT`` of capital. No sizing is changed here
+    (the forward test is frozen).
+    """
+    open_df = PaperStore(config.db_path).open_trades(tier=tier)
+    if open_df.empty:
+        return []
+    capital = float(config.signals.capital)
+    buckets: dict[str, dict[str, float]] = {}
+    for _, row in open_df.iterrows():
+        ticker = str(row["ticker"]).upper()
+        if not (ticker.endswith("=X") and len(ticker) == 8):  # noqa: PLR2004 — XXXYYY=X
+            continue
+        notional = float(row["entry"]) * float(row["size_shares"])
+        for ccy in (ticker[:3], ticker[3:6]):
+            bucket = buckets.setdefault(ccy, {"notional": 0.0, "n": 0.0})
+            bucket["notional"] += notional
+            bucket["n"] += 1
+    out: list[dict[str, object]] = [
+        {
+            "currency": ccy,
+            "notional": round(bucket["notional"], 2),
+            "pct_capital": round(bucket["notional"] / capital, 4) if capital else 0.0,
+            "n_positions": int(bucket["n"]),
+        }
+        for ccy, bucket in buckets.items()
+    ]
+    out.sort(key=lambda r: -float(r["notional"]))  # type: ignore[arg-type]
+    return out
+
+
+def _ticker_cost_bps(store: OhlcvStore, ticker: str) -> float:
+    """Round-trip friction (bps) for one ticker, on the same cost model as the gate's backtest."""
+    cfg = _BacktestConfig()
+    df = store.load(ticker)
+    if df is None or df.empty or "volume" not in df.columns:
+        return 2.0 * (cfg.fee_bps + cfg.slippage_bps)
+    return float(estimated_cost_bps(df, cfg))
 
 
 def _book_drawdown(config: Config, store: OhlcvStore, tier: str = PROMOTED_TIER) -> float:
@@ -855,10 +923,19 @@ def _signal_tiers(actionable: pd.DataFrame) -> pd.Series:
 
 
 def _candidate_rows(book: pd.DataFrame, tier: str) -> pd.DataFrame:
-    """Project signal rows into the paper_trades insert shape, stamping the book ``tier``."""
+    """Project signal rows into the paper_trades insert shape, stamping the book ``tier``.
+
+    Display-only signal fields (horizon, calibrated proba, net expectancy) ride along for the
+    Brief's order sheet; ``insert_new`` persists only ``_TRADE_COLUMNS`` so they never hit the DB.
+    """
     exit_strategy = (
         book["exit_strategy"].fillna("fixed") if "exit_strategy" in book.columns else "fixed"
     )
+    extras = {
+        col: book[col]
+        for col in ("horizon_days", "proba_calibrated", "exp_return_net")
+        if col in book.columns
+    }
     return pd.DataFrame(
         {
             "date_open": book["date"],
@@ -871,6 +948,7 @@ def _candidate_rows(book: pd.DataFrame, tier: str) -> pd.DataFrame:
             "status": OPEN,
             "exit_strategy": exit_strategy,
             "tier": tier,
+            **extras,
         }
     )
 
@@ -917,6 +995,12 @@ def update_open_trades(
         entry = float(row["entry"])
         shares = int(row["size_shares"])
         pnl_pct, pnl_eur = _direction_pnl(entry, float(exit_price), shares, short=short)
+        # Charge the friction frozen at open (NULL on legacy rows = zero, history untouched).
+        cost_bps = row.get("cost_bps") if "cost_bps" in row.index else None
+        if cost_bps is not None and pd.notna(cost_bps):
+            cost_frac = float(cost_bps) / 1e4
+            pnl_pct -= cost_frac
+            pnl_eur -= entry * shares * cost_frac
         paper.close_trade(
             date_open=date_open,
             ticker=ticker,

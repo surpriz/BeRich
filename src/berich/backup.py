@@ -13,6 +13,9 @@ durability, sync ``data/backups/`` elsewhere (rsync/rclone) separately.
 from __future__ import annotations
 
 import logging
+import os
+import shutil
+import subprocess
 import tarfile
 from typing import TYPE_CHECKING
 
@@ -64,10 +67,17 @@ def create_backup(config: Config, *, timestamp: str, keep: int = DEFAULT_KEEP) -
     safe_stamp = timestamp.replace(":", "-")
     out_path = backup_dir / f"{_PREFIX}{safe_stamp}{_SUFFIX}"
 
-    with tarfile.open(out_path, "w:gz") as tar:
-        for member in members:
-            # arcname relative to data_dir so the archive restores cleanly into data/.
-            tar.add(member, arcname=member.relative_to(config.data_dir))
+    # Write to a .tmp sibling then rename: a crash mid-archive must never leave a
+    # truncated tar.gz that looks like a valid backup (rename is atomic on POSIX).
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    try:
+        with tarfile.open(tmp_path, "w:gz") as tar:
+            for member in members:
+                # arcname relative to data_dir so the archive restores cleanly into data/.
+                tar.add(member, arcname=member.relative_to(config.data_dir))
+        tmp_path.rename(out_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
     removed = _rotate(backup_dir, keep)
     summary: dict[str, object] = {
@@ -82,4 +92,29 @@ def create_backup(config: Config, *, timestamp: str, keep: int = DEFAULT_KEEP) -
     return summary
 
 
-__all__ = ["DEFAULT_KEEP", "create_backup"]
+def sync_offsite(archive: Path, *, timeout: float = 1800.0) -> str | None:
+    """Copy ``archive`` to the rclone remote named in ``BERICH_BACKUP_REMOTE``.
+
+    Opt-in: returns ``None`` (a logged no-op) when the env var is unset, so boxes without an
+    off-site remote keep working. Raises when rclone is missing or the copy fails — the
+    scheduler's error listener turns that into an email, because a backup that silently stays
+    local-only is the exact failure this protects against.
+    """
+    remote = os.environ.get("BERICH_BACKUP_REMOTE", "").strip()
+    if not remote:
+        logger.info("backup: BERICH_BACKUP_REMOTE unset, skipping off-site sync")
+        return None
+    rclone = shutil.which("rclone")
+    if rclone is None:
+        msg = "BERICH_BACKUP_REMOTE is set but rclone is not installed"
+        raise RuntimeError(msg)
+    subprocess.run(  # noqa: S603 — fixed binary, args from config/env, no shell
+        [rclone, "copy", str(archive), remote, "--quiet"],
+        check=True,
+        timeout=timeout,
+    )
+    logger.info("backup: synced %s to %s", archive.name, remote)
+    return remote
+
+
+__all__ = ["DEFAULT_KEEP", "create_backup", "sync_offsite"]
