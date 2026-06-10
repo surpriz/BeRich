@@ -1,5 +1,6 @@
 import type { PaperClosedTrade, PaperEquity, PaperPosition, SignalConfig } from "@/app/lib/api";
 import { useI18n, useTranslate } from "@/app/lib/i18n";
+import { fmtPrice } from "@/app/lib/format";
 import { PaperEquityChart } from "./PaperEquityChart";
 import { BudgetBar, RangeBar } from "./bars";
 import { Info } from "./Term";
@@ -223,10 +224,10 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
                   </span>
                 </td>
                 <td className="tabular px-3 py-2 text-xs text-[var(--color-muted)]">{p.date_open.slice(0, 10)}</td>
-                <td className="tabular px-3 py-2 text-right">{fmt(p.entry)}</td>
-                <td className="tabular px-3 py-2 text-right">{fmt(p.current_price)}</td>
+                <td className="tabular px-3 py-2 text-right">{fmtPrice(p.entry)}</td>
+                <td className="tabular px-3 py-2 text-right">{fmtPrice(p.current_price)}</td>
                 <td className="tabular px-3 py-2 text-right text-[var(--color-muted)]">
-                  {fmt(p.trail_stop ?? p.stop)}
+                  {fmtPrice(p.trail_stop ?? p.stop)}
                 </td>
                 <td className="px-3 py-2">
                   {p.target > 0 && p.current_price != null ? (
@@ -293,8 +294,8 @@ function ClosedTable({ trades }: { trades: PaperClosedTrade[] }) {
                 <td className="tabular px-3 py-2 text-xs text-[var(--color-muted)]">{t.date_open.slice(0, 10)}</td>
                 <td className="tabular px-3 py-2 text-xs text-[var(--color-muted)]">{t.date_close}</td>
                 <td className="px-3 py-2 text-xs text-[var(--color-muted)]">{statusLabel(t.status)}</td>
-                <td className="tabular px-3 py-2 text-right">{fmt(t.entry)}</td>
-                <td className="tabular px-3 py-2 text-right">{fmt(t.exit_price)}</td>
+                <td className="tabular px-3 py-2 text-right">{fmtPrice(t.entry)}</td>
+                <td className="tabular px-3 py-2 text-right">{fmtPrice(t.exit_price)}</td>
                 <td className={`tabular px-5 py-2 text-right ${pnlColor(t.pnl_pct)}`}>{pct(t.pnl_pct)}</td>
               </tr>
             ))}

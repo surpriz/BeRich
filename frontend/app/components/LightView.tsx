@@ -1,8 +1,7 @@
 import Link from "next/link";
 import type { PaperEquity, Signal } from "@/app/lib/api";
 import { useTranslate } from "../lib/i18n";
-
-const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+import { fmtPrice as fmt } from "../lib/format";
 
 function verdict(signal: Signal["signal"]): { key: string; color: string } {
   if (signal === "BUY" || signal === "LONG") return { key: "light.buy", color: "var(--color-bull)" };

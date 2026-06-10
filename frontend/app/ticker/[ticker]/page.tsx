@@ -19,6 +19,7 @@ import { Show } from "@/app/components/Show";
 import { Info } from "@/app/components/Term";
 import { PageIntro } from "@/app/components/PageIntro";
 import { useTranslate } from "@/app/lib/i18n";
+import { fmtPrice } from "@/app/lib/format";
 import { useStrategy } from "@/app/lib/strategy";
 
 const ASSET_CLASS_LABEL: Record<AssetClass, string> = {
@@ -171,9 +172,9 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
 
       {latest && (latest.signal === "LONG" || latest.signal === "SHORT" || latest.signal === "BUY") && (
         <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Stat label={latest.direction === "short" ? t("shortEntry") : t("col.entry")} value={latest.entry.toFixed(2)} />
-          <Stat label={latest.direction === "short" ? t("shortStop") : t("col.stop")} value={latest.stop_loss.toFixed(2)} tone="bear" />
-          <Stat label={latest.direction === "short" ? t("shortTarget") : t("col.target")} value={latest.take_profit.toFixed(2)} tone="bull" />
+          <Stat label={latest.direction === "short" ? t("shortEntry") : t("col.entry")} value={fmtPrice(latest.entry)} />
+          <Stat label={latest.direction === "short" ? t("shortStop") : t("col.stop")} value={fmtPrice(latest.stop_loss)} tone="bear" />
+          <Stat label={latest.direction === "short" ? t("shortTarget") : t("col.target")} value={fmtPrice(latest.take_profit)} tone="bull" />
           <Stat label={t("size")} value={`${latest.size_shares}`} />
         </div>
       )}
@@ -356,12 +357,12 @@ export default function TickerPage({ params }: { params: Promise<{ ticker: strin
                   <Show min="standard">
                     <td className="tabular px-2 py-2">{s.proba.toFixed(3)}</td>
                   </Show>
-                  <td className="tabular px-2 py-2 text-right">{s.entry.toFixed(2)}</td>
+                  <td className="tabular px-2 py-2 text-right">{fmtPrice(s.entry)}</td>
                   <td className="tabular px-2 py-2 text-right text-[var(--color-bear)]/80">
-                    {s.stop_loss.toFixed(2)}
+                    {fmtPrice(s.stop_loss)}
                   </td>
                   <td className="tabular px-2 py-2 text-right text-[var(--color-bull)]/80">
-                    {s.take_profit.toFixed(2)}
+                    {fmtPrice(s.take_profit)}
                   </td>
                 </tr>
               ))}

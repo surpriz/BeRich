@@ -10,6 +10,7 @@ import {
   type SignalConfig,
 } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
+import { fmtPrice } from "@/app/lib/format";
 import { PageIntro } from "@/app/components/PageIntro";
 import { KeyTerms } from "@/app/components/KeyTerms";
 import { ReplicationView } from "@/app/copy/page";
@@ -29,8 +30,7 @@ const ACTIONABLE = new Set(["LONG", "SHORT", "BUY"]);
 // Null-safe: a position may lack market data (failed mark-to-market on a fresh trade) — show a dash.
 const fmtEur = (n: number | null | undefined) =>
   n == null ? "—" : n.toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + " €";
-const fmtPx = (n: number | null | undefined) =>
-  n == null ? "—" : n.toLocaleString("en-US", { maximumFractionDigits: 4 });
+const fmtPx = fmtPrice;
 
 function dirOf(s: Signal): "long" | "short" {
   if (s.direction) return s.direction;

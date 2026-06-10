@@ -12,6 +12,7 @@ import {
   type Signal,
 } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
+import { fmtPrice } from "@/app/lib/format";
 import { useLevel } from "@/app/lib/level";
 
 /**
@@ -130,7 +131,7 @@ export default function IntradayPage() {
                   {o.ticker} · {o.direction} · {o.exit_strategy ?? "fixed"}
                 </span>
                 <span className="tabular text-[var(--color-muted)]">
-                  {o.size_shares} @ {o.entry.toFixed(2)} · {eur(o.notional)}
+                  {o.size_shares} @ {fmtPrice(o.entry)} · {eur(o.notional)}
                 </span>
               </li>
             ))}
@@ -153,7 +154,7 @@ export default function IntradayPage() {
                     {fr ? "OUVERT" : "OPEN"} {o.ticker} · {o.direction}
                   </span>
                   <span className="tabular text-[var(--color-muted)]">
-                    {o.size_shares} @ {o.entry.toFixed(2)}
+                    {o.size_shares} @ {fmtPrice(o.entry)}
                   </span>
                 </li>
               ))}
@@ -233,8 +234,8 @@ export default function IntradayPage() {
                   <tr key={i} className="border-t border-[var(--color-line)]">
                     <td className="py-1">{p.ticker}</td>
                     <td>{p.direction}</td>
-                    <td>{p.entry.toFixed(2)}</td>
-                    <td>{p.current_price != null ? p.current_price.toFixed(2) : "—"}</td>
+                    <td>{fmtPrice(p.entry)}</td>
+                    <td>{fmtPrice(p.current_price)}</td>
                     <td style={{ color: (p.mtm_pct ?? 0) >= 0 ? "var(--color-bull)" : "var(--color-bear)" }}>
                       {pct(p.mtm_pct)}
                     </td>
@@ -265,7 +266,7 @@ export default function IntradayPage() {
                   <tr key={i} className="border-t border-[var(--color-line)]">
                     <td className="py-1">{c.ticker}</td>
                     <td>{c.status}</td>
-                    <td>{c.exit_price?.toFixed?.(2) ?? "—"}</td>
+                    <td>{fmtPrice(c.exit_price)}</td>
                     <td style={{ color: c.pnl_pct >= 0 ? "var(--color-bull)" : "var(--color-bear)" }}>
                       {pct(c.pnl_pct)}
                     </td>

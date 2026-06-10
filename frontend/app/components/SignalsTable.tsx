@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import type { Signal, SignalConfig } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
+import { fmtPrice } from "@/app/lib/format";
 import { useLevel } from "@/app/lib/level";
 import { SignalBadge } from "./SignalBadge";
 import { Show } from "./Show";
@@ -60,7 +61,7 @@ function ExpReturn({ s, costBps }: { s: Signal; costBps: number }) {
   );
 }
 
-const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = fmtPrice;
 
 function SideProbas({ s }: { s: Signal }) {
   const { t } = useI18n();

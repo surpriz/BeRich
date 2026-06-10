@@ -36,6 +36,28 @@ const ENTRIES: Entry[] = [
     date: "2026-06-10",
     tone: "infra",
     title: {
+      fr: "Prix affichés avec la bonne précision (fini les « 0,16 » illisibles)",
+      en: "Prices shown at the right precision (no more unreadable '0.16')",
+    },
+    points: [
+      {
+        fr: "Symptôme : sur un actif à bas prix comme ADA-USD (~0,16 $), l'entrée, le prix courant et le stop s'affichaient tous arrondis à 2 décimales — « 0,16 / 0,16 / 0,17 » — donc impossible de distinguer les niveaux. Le même problème touchait toutes les paires forex (EURUSD 1,08) et les cryptos à faible valeur.",
+        en: "Symptom: on a low-priced asset like ADA-USD (~$0.16), entry, current price and stop all rendered rounded to 2 decimals — '0.16 / 0.16 / 0.17' — making the levels indistinguishable. The same hit every forex pair (EURUSD 1.08) and low-value crypto.",
+      },
+      {
+        fr: "Correctif : un formateur de prix unique et adaptatif choisit le nombre de décimales selon l'ordre de grandeur (≥ 10 → 2 décimales, 1–10 → 4, < 1 → ~4 chiffres significatifs). ADA affiche désormais 0,1623 / 0,1689 / 0,1700. Appliqué partout où un prix apparaît : positions ouvertes et clôturées (wallet/panel), Brief, Réplication, fiche par actif, tableaux de signaux. Les montants en euros et les pourcentages sont inchangés.",
+        en: "Fix: a single adaptive price formatter picks the decimal count from the magnitude (≥ 10 → 2 decimals, 1–10 → 4, < 1 → ~4 significant figures). ADA now reads 0.1623 / 0.1689 / 0.1700. Applied everywhere a price appears: open and closed positions (wallet/panel), Brief, Replication, per-asset page, signal tables. Euro amounts and percentages are unchanged.",
+      },
+    ],
+    verdict: {
+      fr: "Affichage uniquement — aucun modèle, gate, sizing, seuil ni donnée de trading touché ; le gel du forward test est respecté. Les niveaux d'entrée, de stop et d'objectif sont désormais lisibles sur tous les actifs, quel que soit leur prix.",
+      en: "Display only — no model, gate, sizing, threshold or trading data touched; the forward-test freeze is respected. Entry, stop and target levels are now legible on every asset, whatever its price.",
+    },
+  },
+  {
+    date: "2026-06-10",
+    tone: "infra",
+    title: {
       fr: "/ops affiche l'espace disque restant",
       en: "/ops shows remaining disk space",
     },

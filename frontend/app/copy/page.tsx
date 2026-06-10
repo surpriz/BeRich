@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type Replication } from "@/app/lib/api";
 import { useI18n } from "@/app/lib/i18n";
+import { fmtPrice } from "@/app/lib/format";
 import { PageIntro } from "@/app/components/PageIntro";
 
 /**
@@ -28,7 +29,7 @@ function bookLabel(strategy: string | null | undefined, fr: boolean): string {
   return fr ? "Fixe" : "Fixed";
 }
 
-const fmtPx = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 4 });
+const fmtPx = fmtPrice;
 
 export default function CopyPage() {
   const { locale } = useI18n();
