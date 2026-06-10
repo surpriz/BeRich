@@ -151,7 +151,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   10 k€ base) runs autonomously; the decision rule, archived in `docs/RESULTS.md`, is:
   at ~30 closed committed trades, concentrate on (class × side) segments with positive
   net expectancy and cut the rest. Until then: **no system modifications except bug
-  fixes**, no reacting to individual trades, no real money. Signals are served from each
+  fixes**, no reacting to individual trades, no real money.
+  **`docs/FORWARD_TEST.md` is the single reference for the milestone**: current state,
+  the trigger check (`scripts/apply_gate_reform.py`), the step-by-step procedure, the
+  money-management assessment, and the pre-registered gate reform (`docs/GATE_REFORM.md`)
+  to apply ONLY when the trigger is hit. Read it first when resuming after a gap. Signals are served from each
   asset's own optimized candidate — there is **no generic global-model fallback**
   anymore, and the committed book only opens `tier == promoted` trades, so the old
   "paper book trades advisory assets" wrinkle is gone (observe-tier trades live in a
