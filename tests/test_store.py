@@ -58,3 +58,16 @@ def test_missing_columns_raise(tmp_path):
     bad = pd.DataFrame({"open": [1.0]}, index=pd.to_datetime(["2024-01-02"]))
     with pytest.raises(ValueError, match="missing columns"):
         store.save("X", bad)
+
+
+def test_nan_close_bar_does_not_overwrite_good_close(tmp_path):
+    # A provisional yfinance bar (volume present, NaN OHLC) must not blank a previously-good close.
+    store = OhlcvStore(tmp_path / "ohlcv")
+    store.save("X", _frame(["2024-01-02", "2024-01-03"], close_start=100.0))
+    nan_bar = _frame(["2024-01-03"], close_start=200.0)
+    nan_bar.loc["2024-01-03", ["open", "high", "low", "close"]] = float("nan")
+    store.save("X", nan_bar)
+
+    merged = store.load("X")
+    assert len(merged) == 2  # the NaN bar was dropped, not merged as a third row
+    assert merged.loc["2024-01-03", "close"] == 101.0  # the good close survived

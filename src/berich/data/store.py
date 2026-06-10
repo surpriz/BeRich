@@ -71,6 +71,10 @@ class OhlcvStore:
         idx = pd.DatetimeIndex(df.index).tz_localize(None)
         out.index = idx if self._intraday else idx.normalize()
         out.index.name = INDEX_NAME
+        # Drop bars with no usable close. yfinance occasionally returns a provisional bar with
+        # volume but NaN OHLC; since _merge keeps the last row on a duplicate date, such a bar
+        # would otherwise OVERWRITE a previously-good close for that date and blank it on read.
+        out = out[out["close"].notna()]
         return out[~out.index.duplicated(keep="last")].sort_index()
 
     @staticmethod

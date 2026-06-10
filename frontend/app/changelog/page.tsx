@@ -36,6 +36,32 @@ const ENTRIES: Entry[] = [
     date: "2026-06-10",
     tone: "infra",
     title: {
+      fr: "Trades fermés : sens long/short visible + position « V » réparée (champs vides)",
+      en: "Closed trades: long/short direction shown + position 'V' fixed (empty fields)",
+    },
+    points: [
+      {
+        fr: "Les trades clôturés affichent désormais leur sens (badge long/short), comme les positions ouvertes — on voyait l'entrée et la sortie mais plus dans quel sens le pari avait été pris.",
+        en: "Closed trades now show their direction (long/short badge), like open positions did — you saw entry and exit but no longer which way the bet had been taken.",
+      },
+      {
+        fr: "Bug corrigé : sur /wallet, la position V (Visa) avait le prix courant et le P&L vides (« — »). Cause : yfinance avait renvoyé un bar provisoire pour V (volume présent, mais cours OHLC à NaN) qui avait écrasé le bon cours de clôture du jour en cache, propageant un « vide » jusqu'à l'affichage. Le cours réel a été restauré (V short, MTM recalculé).",
+        en: "Bug fixed: on /wallet the V (Visa) position had an empty current price and P&L ('—'). Cause: yfinance returned a provisional bar for V (volume present but NaN OHLC prices) that overwrote the day's good cached close, propagating a blank all the way to the display. The real price was restored (V short, MTM recomputed).",
+      },
+      {
+        fr: "Deux garde-fous ajoutés pour que ça ne revienne pas : (1) un bar sans cours de clôture utilisable est désormais rejeté à l'ingestion, donc il ne peut plus écraser un bon cours ; (2) le calcul du prix courant d'une position prend le dernier cours valide, jamais une valeur NaN.",
+        en: "Two guardrails added so it can't recur: (1) a bar with no usable close is now rejected at ingestion, so it can no longer overwrite a good close; (2) a position's current price is marked from the last valid close, never a NaN value.",
+      },
+    ],
+    verdict: {
+      fr: "Correctif d'affichage + robustesse des données — aucun modèle, gate, sizing, seuil ni règle de trading touché ; le gel du forward test est respecté. La donnée corrigée (cours de V) est un simple rafraîchissement, pas une réécriture de trade.",
+      en: "Display fix + data robustness — no model, gate, sizing, threshold or trading rule touched; the forward-test freeze is respected. The corrected data (V's close) is a plain refresh, not a trade rewrite.",
+    },
+  },
+  {
+    date: "2026-06-10",
+    tone: "infra",
+    title: {
       fr: "Prix affichés avec la bonne précision (fini les « 0,16 » illisibles)",
       en: "Prices shown at the right precision (no more unreadable '0.16')",
     },

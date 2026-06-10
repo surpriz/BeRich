@@ -39,6 +39,21 @@ function statusLabel(status: string): string {
   }[status] ?? status;
 }
 
+// Long/short pill — shared by the open and closed tables so a closed trade shows the same
+// direction badge as when it was open. Closed trades carry no `direction` field, only the raw
+// `signal` ("LONG" | "BUY" | "SHORT"); a SHORT signal is the only short side.
+function DirectionBadge({ short }: { short: boolean }) {
+  return short ? (
+    <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--color-bear)] ring-1 ring-[var(--color-bear)]/40">
+      short
+    </span>
+  ) : (
+    <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--color-bull)] ring-1 ring-[var(--color-bull)]/40">
+      long
+    </span>
+  );
+}
+
 export function PaperPanel({
   equity,
   positions,
@@ -209,15 +224,7 @@ function PositionsTable({ positions }: { positions: PaperPosition[] }) {
                 <td className="px-5 py-2 font-display text-sm font-bold">
                   <span className="flex items-center gap-2">
                     {p.ticker}
-                    {p.direction === "short" ? (
-                      <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--color-bear)] ring-1 ring-[var(--color-bear)]/40">
-                        short
-                      </span>
-                    ) : (
-                      <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--color-bull)] ring-1 ring-[var(--color-bull)]/40">
-                        long
-                      </span>
-                    )}
+                    <DirectionBadge short={p.direction === "short"} />
                     <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--color-muted)] ring-1 ring-[var(--color-line)]">
                       {bookLabel(p.exit_strategy, fr)}
                     </span>
@@ -286,6 +293,7 @@ function ClosedTable({ trades }: { trades: PaperClosedTrade[] }) {
                 <td className="px-5 py-2 font-display text-sm font-bold">
                   <span className="flex items-center gap-2">
                     {t.ticker}
+                    <DirectionBadge short={t.signal?.toUpperCase() === "SHORT"} />
                     <span className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--color-muted)] ring-1 ring-[var(--color-line)]">
                       {bookLabel(t.exit_strategy, fr)}
                     </span>

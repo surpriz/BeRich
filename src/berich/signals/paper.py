@@ -1041,7 +1041,13 @@ def get_open_positions(
         ohlcv = store.load(ticker)
         if ohlcv is None or ohlcv.empty:
             continue
-        current_price = float(ohlcv["close"].iloc[-1])
+        # Mark to the last VALID close, not iloc[-1]: a provisional/partial yfinance bar can carry
+        # volume but NaN OHLC, which would otherwise propagate NaN -> null into current_price / MTM
+        # and blank the position on /wallet. Skip the position only if no close is usable at all.
+        closes = ohlcv["close"].dropna()
+        if closes.empty:
+            continue
+        current_price = float(closes.iloc[-1])
         entry = float(row["entry"])
         shares = int(row["size_shares"])
         short = _is_short(row["signal"])
