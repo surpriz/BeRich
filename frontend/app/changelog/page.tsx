@@ -33,6 +33,32 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-06-10",
+    tone: "infra",
+    title: {
+      fr: "Entraînement entrelacé : les modèles existants ne vieillissent plus pendant l'ajout d'actifs",
+      en: "Interleaved training: existing models no longer go stale while new assets are onboarded",
+    },
+    points: [
+      {
+        fr: "Constat : après l'ajout de 30 actifs, le sweep traitait d'abord TOUS les nouveaux combos (198 premières optimisations profondes à la suite) avant de rafraîchir quoi que ce soit. Pendant ce backlog (~20h), les modèles existants restaient en pause et le « plus ancien » grimpait — d'où le 1j 22h observé sur /ops.",
+        en: "Symptom: after adding 30 assets, the sweep processed ALL new combos first (198 deep first-time optimizations back-to-back) before refreshing anything. During that backlog (~20h) existing models stayed paused and the 'oldest' climbed — hence the 1d 22h seen on /ops.",
+      },
+      {
+        fr: "Correctif : les nouveaux actifs (sans modèle) gardent la priorité, mais désormais un modèle existant est intercalé — rafraîchi du plus ancien d'abord — tous les 4 nouveaux. Le plus vieux modèle est donc re-touché en continu au lieu d'attendre la fin du backlog. Le ratio est réglable (`sweep_interleave_every`, défaut 4 ; 0 = désactivé).",
+        en: "Fix: new assets (no model) keep priority, but one existing model is now spliced in — refreshed oldest-first — after every 4 new ones. The oldest model is therefore touched continuously instead of waiting for the backlog to drain. The ratio is configurable (`sweep_interleave_every`, default 4; 0 = off).",
+      },
+      {
+        fr: "POC intraday mis en pause en parallèle (`enabled: false`) : les 2 GPU repassent à 100% sur le swing, donc le backlog de cold-start se vide plus vite. Le sous-système intraday est conservé intact et réactivable d'un seul réglage.",
+        en: "Intraday POC paused in parallel (`enabled: false`): both GPUs go back to 100% on swing, so the cold-start backlog drains faster. The intraday subsystem is kept intact and re-enablable with a single flag.",
+      },
+    ],
+    verdict: {
+      fr: "Ordre de la file d'entraînement uniquement — aucun label, gate, sizing, seuil ni modèle promu touché ; le gel du forward test est respecté. Objectif tenu : aucun actif n'est laissé trop longtemps sans ré-optimisation, même pendant l'onboarding d'un gros lot.",
+      en: "Training-queue order only — no label, gate, sizing, threshold or promoted model touched; the forward-test freeze is respected. Goal met: no asset is left un-reoptimized for too long, even while a large batch is onboarded.",
+    },
+  },
+  {
     date: "2026-06-09",
     tone: "infra",
     title: {

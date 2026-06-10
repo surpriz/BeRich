@@ -195,6 +195,37 @@ def hpo_combo_sort_key(
     return (searched, last)
 
 
+def sweep_refit_order(
+    combos: list[tuple[str, str, str, str]],
+    counts: dict[str, int],
+    times: dict[str, str],
+    interleave_every: int = 4,
+) -> list[tuple[str, str, str, str]]:
+    """Order one cycle's (ticker, side, strategy, interval) combos for the continuous sweep.
+
+    Un-searched combos (no model yet — an asset that can't serve at all) lead, but after every
+    ``interleave_every`` of them one already-trained combo is spliced in, refreshed oldest-first.
+    This keeps a large cold-start backlog (e.g. a freshly added batch of assets) from starving the
+    incumbents: the oldest existing model is re-fit periodically instead of only after the whole
+    backlog drains. With ``interleave_every <= 0``, or once either queue is empty, it degrades to
+    pure new-first-then-oldest-first (identical to the bare ``hpo_combo_sort_key`` sort).
+    """
+    keyed = sorted((hpo_combo_sort_key(counts, times, c[0], c[1], c[2], c[3]), c) for c in combos)
+    new_q = [c for (searched, _), c in keyed if not searched]
+    old_q = [c for (searched, _), c in keyed if searched]  # already oldest-first from the sort
+    if interleave_every <= 0 or not new_q or not old_q:
+        return new_q + old_q
+    out: list[tuple[str, str, str, str]] = []
+    oi = 0
+    for i, combo in enumerate(new_q):
+        out.append(combo)
+        if (i + 1) % interleave_every == 0 and oi < len(old_q):
+            out.append(old_q[oi])  # the current oldest incumbent
+            oi += 1
+    out.extend(old_q[oi:])  # remaining incumbents, still oldest-first
+    return out
+
+
 def _strategy_entry(
     config: Config,
     ticker: str,

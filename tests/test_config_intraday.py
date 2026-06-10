@@ -22,9 +22,11 @@ def test_intraday_paths_are_separate():
     assert cfg.ohlcv_intraday_dir == cfg.data_dir / "ohlcv_1h"
 
 
-def test_yaml_enables_intraday_with_8760():
+def test_yaml_intraday_block_paused_but_intact():
+    # The intraday POC is currently paused (enabled: false) to give 100% of the GPU back to swing,
+    # but the 1h block is kept intact so it can be re-enabled with a single flag + restart.
     cfg = Config.load(REPO_YAML)
-    assert cfg.intraday.enabled is True
+    assert cfg.intraday.enabled is False
     assert cfg.intraday.interval == "1h"
     assert cfg.intraday.bars_per_year == 8760
     assert cfg.intraday.horizon_bars == 24

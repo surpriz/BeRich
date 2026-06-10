@@ -200,6 +200,12 @@ class ZooConfig(BaseModel):
     # Triple-barrier horizons (trading days) the per-asset HPO searches over. The winning
     # horizon is recorded on the model and reused at serve time. Single value => fixed horizon.
     ticker_hpo_horizons: list[int] = Field(default_factory=lambda: [5, 10, 15, 20])
+    # Continuous-sweep fairness: while un-searched combos (newly added assets with no model yet)
+    # are processed first, splice in one already-trained combo — refreshed oldest-first — after
+    # every N un-searched ones, so a large cold-start backlog can't starve incumbents (the oldest
+    # existing model keeps getting touched instead of waiting for the whole backlog to drain).
+    # <= 0 disables interleaving (pure new-first, then oldest-first).
+    sweep_interleave_every: int = 4
 
 
 UNIVERSE_NAMES = ("mega", "mid", "small", "all")

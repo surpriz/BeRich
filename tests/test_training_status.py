@@ -198,6 +198,45 @@ def test_hpo_combo_sort_key_isolates_intraday_interval():
     assert intra == (False, "")  # intraday side has none -> un-searched, sorts first
 
 
+def test_sweep_refit_order_interleaves_incumbents():
+    """Un-searched lead, but one incumbent (oldest-first) is spliced in every N new combos."""
+    from berich.training.status import sweep_refit_order  # noqa: PLC0415
+
+    new = [(f"NEW{i}", "long", "fixed", "1d") for i in range(1, 7)]  # 6 un-searched
+    olda = ("OLDA", "long", "fixed", "1d")
+    oldb = ("OLDB", "long", "fixed", "1d")
+    counts = {"berich-hpo-OLDA-lgbm-long-auc": 100, "berich-hpo-OLDB-lgbm-long-auc": 100}
+    times = {
+        "berich-hpo-OLDA-lgbm-long-auc": "2026-06-01T00:00:00+00:00",  # oldest
+        "berich-hpo-OLDB-lgbm-long-auc": "2026-06-05T00:00:00+00:00",
+    }
+    out = sweep_refit_order([*new, olda, oldb], counts, times, interleave_every=2)
+    # N N <oldest> N N <next-oldest> N N
+    assert out == [new[0], new[1], olda, new[2], new[3], oldb, new[4], new[5]]
+
+
+def test_sweep_refit_order_degrades_to_new_then_oldest_first():
+    from berich.training.status import sweep_refit_order  # noqa: PLC0415
+
+    new = [("NEW1", "long", "fixed", "1d"), ("NEW2", "long", "fixed", "1d")]
+    olda = ("OLDA", "long", "fixed", "1d")
+    oldb = ("OLDB", "long", "fixed", "1d")
+    counts = {"berich-hpo-OLDA-lgbm-long-auc": 100, "berich-hpo-OLDB-lgbm-long-auc": 100}
+    times = {
+        "berich-hpo-OLDA-lgbm-long-auc": "2026-06-01T00:00:00+00:00",
+        "berich-hpo-OLDB-lgbm-long-auc": "2026-06-05T00:00:00+00:00",
+    }
+    # Disabled interleaving -> pure new-first, then oldest-first.
+    assert sweep_refit_order([oldb, *new, olda], counts, times, interleave_every=0) == [
+        *new,
+        olda,
+        oldb,
+    ]
+    # No incumbents -> just the un-searched; no un-searched -> incumbents oldest-first.
+    assert sweep_refit_order(new, {}, {}, interleave_every=3) == new
+    assert sweep_refit_order([oldb, olda], counts, times, interleave_every=3) == [olda, oldb]
+
+
 def test_last_hpo_at_surfaces_latest_trial_time(tmp_path):
     import optuna  # noqa: PLC0415
 

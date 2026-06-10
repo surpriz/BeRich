@@ -34,10 +34,11 @@ from berich.scheduler.jobs import (
 )
 from berich.training.promotion import reconcile_sweep_fdr
 from berich.training.status import (
+    _hpo_last_for,
     _hpo_last_trial_times,
     _hpo_trial_counts,
     _hpo_trials_for,
-    hpo_combo_sort_key,
+    sweep_refit_order,
 )
 
 # Run the sweep-level FDR reconcile this often (every N tournaments) so the anti-luck demotion
@@ -162,24 +163,33 @@ def _continuous(config: Config) -> int:
             log.info("cycle %d: OHLCV refreshed, %d combos", cycle, len(combos))
         except Exception:
             log.exception("cycle %d: data refresh failed (training on cached bars)", cycle)
-        # Priority: un-searched combos (new assets, no model yet) first, then re-fit the rest
-        # OLDEST-HPO-FIRST so no asset's model is left to rot while a fresher one is re-deepened.
-        # Reading the real last-trial time (not config order) bounds worst-case staleness and is
-        # restart-robust: after a restart the sweep resumes on the genuinely oldest combo instead
-        # of redoing the head of the list while the tail starves.
+        # Re-fit order: un-searched combos (new assets, no model yet) lead, but one already-trained
+        # combo is spliced in oldest-HPO-first after every ``sweep_interleave_every`` of them — so a
+        # large cold-start backlog (e.g. a freshly added batch of assets) can't starve the
+        # incumbents: the oldest existing model keeps getting refreshed instead of waiting for the
+        # whole backlog to drain. Reading the real last-trial time (not config order) bounds
+        # worst-case staleness and is restart-robust.
         counts = _hpo_trial_counts(config.optuna_db)
         times = _hpo_last_trial_times(config.optuna_db)
-        keyed = sorted(
-            (hpo_combo_sort_key(counts, times, t, s, st, iv), (t, s, st, iv))
-            for (t, s, st, iv) in combos
+        interleave = config.zoo.sweep_interleave_every
+        combos = sweep_refit_order(combos, counts, times, interleave)
+        n_new = sum(
+            1 for (t, s, st, iv) in combos if _hpo_trials_for(counts, t, None, s, st, iv) == 0
         )
-        combos = [c for _, c in keyed]
-        n_new = sum(1 for (searched, _), _ in keyed if not searched)
-        oldest = next((last for (searched, last), _ in keyed if searched), "")
+        oldest = min(
+            (
+                last
+                for (t, s, st, iv) in combos
+                if (last := _hpo_last_for(times, t, None, s, st, iv)) is not None
+            ),
+            default="",
+        )
         log.info(
-            "cycle %d: re-fit order — %d un-searched first, then oldest-first (oldest last-HPO=%s)",
+            "cycle %d: re-fit order — %d un-searched, interleave 1 incumbent / %d new "
+            "(oldest last-HPO=%s)",
             cycle,
             n_new,
+            interleave,
             oldest or "n/a",
         )
         promoted = 0
