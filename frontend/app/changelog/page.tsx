@@ -33,6 +33,28 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-06-13",
+    tone: "research",
+    title: {
+      fr: "Univers élargi à 190 actifs : 10 ETF diversifiants (indices régions, obligations, secteurs)",
+      en: "Universe widened to 190 assets: 10 diversifying ETFs (regional indices, bonds, sectors)",
+    },
+    points: [
+      {
+        fr: "Ajout de 10 ETF cotés aux US, tous validés sur la source de données (>1000 séances, données fraîches) : IWM (small caps US), EFA (marchés développés hors US), EEM (émergents), VGK (Europe), EWJ (Japon), XLE (énergie), XLF (financières), FXI (Chine), et deux expositions que la plateforme n'avait jamais eues — TLT (obligations d'État US 20 ans+) et HYG (crédit à haut rendement). Ils élargissent la couverture par régions et classes, avec des comportements de tendance souvent plus propres que les actions individuelles.",
+        en: "Added 10 US-listed ETFs, all validated on the data source (>1000 sessions, fresh data): IWM (US small caps), EFA (developed ex-US), EEM (emerging), VGK (Europe), EWJ (Japan), XLE (energy), XLF (financials), FXI (China), plus two exposures the platform never had — TLT (US 20y+ Treasuries) and HYG (high-yield credit). They broaden coverage across regions and classes, with trend behavior often cleaner than single stocks.",
+      },
+      {
+        fr: "Ils utilisent le même pipeline que les actions US (proxy de régime SPY, dollar, slippage proportionnel au volume) — comme le faisaient déjà SPY et QQQ. Le sweep continu les détecte et les entraîne en priorité (cold-start). Capacité machine : +10 actifs ne pèse quasiment rien (le disque est à 8 %, les GPU ont de la marge).",
+        en: "They use the same pipeline as US equities (SPY regime proxy, dollar, volume-proportional slippage) — as SPY and QQQ already did. The continuous sweep detects and trains them first (cold-start). Machine capacity: +10 assets is negligible (disk at 8%, GPUs have headroom).",
+      },
+    ],
+    verdict: {
+      fr: "Élargissement de couverture — aucun label, gate, sizing ni modèle promu touché. Le forward test en cours n'est pas affecté : ces nouveaux actifs ne seront tradés QUE s'ils passent la même validation que les autres. Polyvalence de l'architecture, droit de trader mérité au gate (cf. docs/VISION.md).",
+      en: "Coverage extension — no label, gate, sizing or promoted model touched. The running forward test is unaffected: these new assets will only be traded IF they clear the same validation as the rest. Polyvalent architecture, the right to trade earned at the gate (see docs/VISION.md).",
+    },
+  },
+  {
     date: "2026-06-10",
     tone: "infra",
     title: {

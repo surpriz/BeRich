@@ -403,6 +403,21 @@ universes:
     - LOW          # Lowe's
     - UNP          # Union Pacific
     - C            # Citigroup
+    # June 2026 expansion (180 -> 190) — diversifying US-listed ETFs (same bucket as the
+    # existing SPY/QQQ): regional equity indices, two NEW exposures the platform never had
+    # (long Treasuries, high-yield credit), and sector slices. All validated on yfinance
+    # (>1000 daily bars, fresh). They ride the same pipeline as US equities (SPY regime proxy,
+    # USD, volume-proportional slippage); a dedicated `etfs` class is a future option.
+    - IWM          # US small caps (Russell 2000)
+    - EFA          # Developed markets ex-US
+    - EEM          # Emerging markets equities
+    - VGK          # Europe equities
+    - EWJ          # Japan equities
+    - TLT          # US 20+ year Treasuries (bonds — new exposure)
+    - HYG          # US high-yield corporate credit (new exposure)
+    - XLE          # US energy sector
+    - XLF          # US financials sector
+    - FXI          # China large caps
   fr_stocks:
     - AIR.PA       # Airbus
     - MC.PA        # LVMH
