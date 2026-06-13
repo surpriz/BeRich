@@ -43,6 +43,38 @@ tête de personne.
 uv run python scripts/apply_gate_reform.py    # affiche N fermés / 30 et refuse tant que non atteint
 ```
 
+## Hypothèses pré-enregistrées issues du forward test (à trancher AU déclencheur, pas avant)
+
+Écrites *avant* d'avoir les 30 trades, pour qu'elles soient testées et non racontées après coup
+(même méthode que le bake-off de juin 2026 et GATE_REFORM.md). **Statut commun : n trop faible →
+ne RIEN faire maintenant. Ce sont des questions à poser à n=30, pas des décisions.**
+
+### H1 — Le côté *short*, en particulier *crypto-short*, a une espérance nette négative
+- **Origine** : observation du 2026-06-13. Les 5 premiers trades committed fermés sont tous
+  perdants (−262 €), et les 5 actifs shortés ont *monté* pendant la détention — crypto en rebond
+  (ADA +6,2 %, SOL +2,6 %), et JNJ (défensive) +1,8 % alors que le SPY baissait de 2,2 %. Le livre
+  est à ~90 % short, concentré forex/crypto.
+- **Statut** : n=5 → BRUIT. Des rebonds de court terme qui se lissent peut-être sur 30 trades.
+- **Test au déclencheur** : table espérance nette par (classe × sens) via `apply_gate_reform.py`.
+  Si `crypto/short` (ou `short` en général) ressort systématiquement négatif sur un nombre de
+  trades suffisant du segment → candidat à la coupe selon la règle de décision.
+
+### H2 — Le stop à 1 ATR est-il placé *à l'intérieur* du bruit quotidien de l'actif ?
+- **Origine** : les 5 shorts ont été sortis sur des rebonds de court terme, pas sur un vrai
+  retournement — symptôme possible d'un stop trop serré pour la volatilité de la classe.
+- **Statut** : n=5 → non concluant. `stop_loss_atr` est un paramètre de label/sizing **GELÉ** ;
+  ne PAS le changer ad hoc.
+- **Test au déclencheur** : mesurer, par classe, le ratio (distance stop)/(ATR récent) et la
+  répartition des sorties (stop vs objectif vs échéance). Si le stop est structurellement trop
+  serré pour le bruit d'une classe → candidat pour la réforme du gate (GATE_REFORM.md), jamais un
+  changement isolé avant.
+
+### Information déjà acquise (robuste même à n=5)
+- **La gestion du risque fonctionne.** Chaque perte coupée à son stop, pire perte = 1 % du capital
+  (le budget exact), drawdown −3 % (loin des seuils −10 %/−20 %). Conséquence utile : le verdict à
+  30 trades sera obtenu *sous une discipline de risque correcte*, donc fiable — pas faussé par une
+  perte qui aurait dérapé.
+
 ## Procédure au déclencheur (pré-enregistrée — ne pas improviser)
 
 1. `uv run python scripts/apply_gate_reform.py` → table de décision : **espérance nette par
