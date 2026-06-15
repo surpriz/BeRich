@@ -114,6 +114,12 @@ export type PaperPosition = {
   // Exit strategy of the trade; for a trailing trade ``trail_stop`` is the live ratcheting stop.
   exit_strategy?: string | null;
   trail_stop?: number | null;
+  // Set when the trade's barrier was already hit in the data but the daily close job hasn't run
+  // yet: the position is doomed to close at pending_exit_price (pending_exit_pct is the REAL,
+  // capped P&L — far smaller than the live mtm at the current price). null when still genuinely open.
+  pending_exit?: "closed_stop" | "closed_target" | "closed_time" | "closed_trail" | null;
+  pending_exit_price?: number | null;
+  pending_exit_pct?: number | null;
 };
 
 export type PaperPositions = {

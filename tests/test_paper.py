@@ -153,6 +153,38 @@ def _short_signal(
     )
 
 
+def test_open_positions_flags_pending_stop_before_daily_close(config, ohlcv_store):
+    # A short whose stop is breached in the cached bars but NOT yet booked (the daily close job
+    # hasn't run) must be flagged with the REAL capped exit, not left looking like the live MTM.
+    df = _ramp(start=100.0, end=120.0, n=20, start_date="2024-01-02")  # rises -> hits short stop
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    sigstore = SignalStore(config.db_path)
+    sigstore.save([_short_signal(df.index[0], "AAA", entry=100.0, stop=105.0, target=90.0)])
+    open_new_trades(config, ohlcv_store, sigstore)
+
+    # Deliberately do NOT call update_open_trades — simulate "breached, awaiting the 22:30 run".
+    positions = get_open_positions(config, ohlcv_store)
+    assert len(positions) == 1
+    p = positions[0]
+    assert p.pending_exit == CLOSED_STOP
+    assert p.pending_exit_price == pytest.approx(105.0)
+    # The real exit is the capped loss at the stop (-5%), far smaller than the live mark (~-20%).
+    assert p.pending_exit_pct == pytest.approx((100.0 - 105.0) / 100.0)
+    assert p.mtm_pct < p.pending_exit_pct
+
+
+def test_open_positions_no_pending_exit_when_barrier_untouched(config, ohlcv_store):
+    # A short that has gone nowhere near its stop/target must NOT be flagged.
+    df = _flat(level=100.0, n=5, start_date="2024-01-02")
+    _save_ohlcv(ohlcv_store, "AAA", df)
+    sigstore = SignalStore(config.db_path)
+    sigstore.save([_short_signal(df.index[0], "AAA", entry=100.0, stop=105.0, target=90.0)])
+    open_new_trades(config, ohlcv_store, sigstore)
+    p = get_open_positions(config, ohlcv_store)[0]
+    assert p.pending_exit is None
+    assert p.pending_exit_pct is None
+
+
 def test_short_downtrend_closes_at_target(config, ohlcv_store):
     # Short entry 100, target 90 (below), stop 105 (above). A slide to 80 hits the
     # target first and the short is profitable (price fell as predicted).

@@ -222,6 +222,15 @@ class OpenPosition:
     # Live ratcheting stop for an open trailing trade (the effective stop after the high-water
     # mark since entry); None for fixed trades, where ``stop`` is already the effective level.
     trail_stop: float | None = None
+    # Pending exit: the daily job closes positions only at 22:30 on weekdays, so a trade whose
+    # stop/target/time barrier was already breached in the cached bars sits OPEN (and its live
+    # MTM at the current price wildly overstates the outcome) until the next run. These fields
+    # carry that resolved-but-not-yet-booked exit so the UI can flag it and show the REAL P&L.
+    # "closed_stop" | "closed_target" | "closed_time" | "closed_trail" when already resolved.
+    pending_exit: str | None = None
+    pending_exit_price: float | None = None
+    # Realized P&L fraction at that exit (the capped/locked one — what the close will book).
+    pending_exit_pct: float | None = None
 
     def as_row(self) -> dict[str, object]:
         return {
@@ -238,6 +247,9 @@ class OpenPosition:
             "mtm_eur": self.mtm_eur,
             "exit_strategy": self.exit_strategy,
             "trail_stop": self.trail_stop,
+            "pending_exit": self.pending_exit,
+            "pending_exit_price": self.pending_exit_price,
+            "pending_exit_pct": self.pending_exit_pct,
         }
 
 
@@ -1058,6 +1070,21 @@ def get_open_positions(
         trail_stop = _open_trail_stop(
             ohlcv, date_open, float(row["stop"]), cfg, strategy, short=short
         )
+        # Has this trade ALREADY hit its barrier in the cached bars but not yet been booked?
+        # The daily close job runs only weekday 22:30, so between the breach and the next run the
+        # live MTM (at current_price) badly misstates the outcome. Resolve the would-be exit the
+        # exact same way ``update_open_trades`` will, so the UI shows the real, capped P&L.
+        pending_exit = pending_exit_price = pending_exit_pct = None
+        if date_open in ohlcv.index:
+            entry_idx = int(ohlcv.index.get_loc(date_open))
+            resolved = _resolve_trade_exit(
+                ohlcv, row, entry_idx, cfg, short=short, strategy=strategy
+            )
+            if resolved is not None:
+                _idx, pending_exit_price, pending_exit = resolved
+                pending_exit_pct = _direction_pnl(
+                    entry, float(pending_exit_price), shares, short=short
+                )[0]
         out.append(
             OpenPosition(
                 date_open=date_open,
@@ -1073,6 +1100,9 @@ def get_open_positions(
                 mtm_eur=mtm_eur,
                 exit_strategy=strategy,
                 trail_stop=trail_stop,
+                pending_exit=pending_exit,
+                pending_exit_price=pending_exit_price,
+                pending_exit_pct=pending_exit_pct,
             )
         )
     return out

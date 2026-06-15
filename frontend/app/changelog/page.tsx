@@ -33,6 +33,28 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-06-15",
+    tone: "infra",
+    title: {
+      fr: "Badge « Stop touché » : le portefeuille ne fait plus paniquer à tort",
+      en: "'Stop hit' badge: the wallet no longer scares you for nothing",
+    },
+    points: [
+      {
+        fr: "Constat : le robot ne ferme les positions qu'au run quotidien de 22h30 (jours ouvrés). Entre le moment où un stop est franchi (ex. un week-end sur la crypto) et la clôture effective, la position restait ouverte avec un P&L latent affiché au prix courant — qui pouvait montrer −12 % alors que la sortie au stop ne donnera que −3,6 %. Exemple réel : un short SOL-USD affichait −12,4 % alors qu'il se fermera à −3,56 % au stop.",
+        en: "Symptom: the robot only closes positions at the daily 22:30 run (weekdays). Between a stop being breached (e.g. over a crypto weekend) and the actual close, the position stayed open with an unrealized P&L marked at the current price — which could show −12% while the stop exit will only book −3.6%. Real example: a SOL-USD short displayed −12.4% while it will close at −3.56% at the stop.",
+      },
+      {
+        fr: "Correctif : chaque position dont la barrière (stop / objectif / échéance) est déjà atteinte dans les données affiche désormais un badge — « 🛑 Stop touché · sortie ≈ −3,6 % », « 🎯 Objectif atteint », « ⏱ Échéance » — qui porte le VRAI résultat plafonné, pas le mark trompeur. Au survol : « clôture au prochain run ».",
+        en: "Fix: every position whose barrier (stop / target / time) is already hit in the data now shows a badge — '🛑 Stop hit · exit ≈ −3.6%', '🎯 Target hit', '⏱ Time exit' — carrying the REAL capped outcome, not the misleading mark. On hover: 'closes at the next run'.",
+      },
+    ],
+    verdict: {
+      fr: "Correctif d'affichage uniquement — aucune logique de trading, de stop ou de clôture modifiée. Les stops fonctionnent et plafonnent bien les pertes ; c'est seulement l'écran qui surestimait les dégâts entre deux runs. Le gel du forward test est respecté.",
+      en: "Display fix only — no trading, stop or close logic changed. The stops work and do cap losses; only the screen was overstating the damage between runs. The forward-test freeze is respected.",
+    },
+  },
+  {
     date: "2026-06-13",
     tone: "research",
     title: {
