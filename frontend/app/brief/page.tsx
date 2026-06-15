@@ -13,6 +13,7 @@ import { useI18n } from "@/app/lib/i18n";
 import { fmtPrice } from "@/app/lib/format";
 import { PageIntro } from "@/app/components/PageIntro";
 import { KeyTerms } from "@/app/components/KeyTerms";
+import { PendingExitBadge } from "@/app/components/PendingExitBadge";
 import { ReplicationView } from "@/app/copy/page";
 
 /**
@@ -546,6 +547,9 @@ function HoldCard({
           <span className="text-xs text-[var(--color-faint)]">
             {p.days_held} {L.held} · {p.size_shares} ×
           </span>
+          {p.pending_exit && (
+            <PendingExitBadge exit={p.pending_exit} pct={p.pending_exit_pct} fr={fr} />
+          )}
         </div>
         <div className="text-right">
           <div className="font-semibold" style={{ color: pnlColor }}>

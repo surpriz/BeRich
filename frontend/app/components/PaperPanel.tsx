@@ -3,6 +3,7 @@ import { useI18n, useTranslate } from "@/app/lib/i18n";
 import { fmtPrice } from "@/app/lib/format";
 import { PaperEquityChart } from "./PaperEquityChart";
 import { BudgetBar, RangeBar } from "./bars";
+import { PendingExitBadge } from "./PendingExitBadge";
 import { Info } from "./Term";
 
 type PaperTier = "promoted" | "observe";
@@ -27,44 +28,6 @@ function pnlColor(n: number | null | undefined): string {
   if (n > 0) return "text-[var(--color-bull)]";
   if (n < 0) return "text-[var(--color-bear)]";
   return "text-[var(--color-muted)]";
-}
-
-// A trade whose barrier was already hit in the data but not yet booked (the daily close job runs
-// only weekday 22:30): flag it so the live MTM at the current price isn't mistaken for the outcome.
-// The badge carries the REAL, capped exit P&L (pending_exit_pct), e.g. SOL shows MTM -12% but the
-// badge says "Stop touché — sortie ≈ -3.6%".
-function PendingExitBadge({
-  exit,
-  pct: exitPct,
-  fr,
-}: {
-  exit: NonNullable<PaperPosition["pending_exit"]>;
-  pct: number | null | undefined;
-  fr: boolean;
-}) {
-  const isStop = exit === "closed_stop" || exit === "closed_trail";
-  const isTarget = exit === "closed_target";
-  const color = isStop ? "var(--color-bear)" : isTarget ? "var(--color-bull)" : "var(--color-muted)";
-  const icon = isStop ? "🛑" : isTarget ? "🎯" : "⏱";
-  const what = isStop
-    ? fr ? "Stop touché" : "Stop hit"
-    : isTarget
-      ? fr ? "Objectif atteint" : "Target hit"
-      : fr ? "Échéance" : "Time exit";
-  const outcome = exitPct == null ? "" : ` · ${fr ? "sortie" : "exit"} ≈ ${(exitPct * 100).toFixed(1)}%`;
-  const title = fr
-    ? "Barrière déjà franchie dans les données ; la position sera clôturée au prochain run quotidien (22h30). La perte/le gain réel est celui-ci, pas le MTM affiché."
-    : "Barrier already hit in the data; the position will close at the next daily run (22:30). The real outcome is this one, not the live MTM.";
-  return (
-    <span
-      title={title}
-      className="rounded px-1.5 py-0.5 text-[10px] font-semibold"
-      style={{ color, backgroundColor: `${color}1a` }}
-    >
-      {icon} {what}
-      {outcome}
-    </span>
-  );
 }
 
 function statusLabel(status: string): string {
