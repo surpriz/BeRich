@@ -53,11 +53,28 @@ def main() -> int:
     import pandas as pd
 
     from berich.config import Config
-    from berich.signals.paper import CLOSED_STATUSES, PROMOTED_TIER, PaperStore
+    from berich.signals.paper import (
+        CLOSED_STATUSES,
+        MIN_POSITION_NOTIONAL_PCT,
+        PROMOTED_TIER,
+        PaperStore,
+    )
 
     config = Config.load(args.config)
     trades = PaperStore(config.db_path).all_trades(tier=PROMOTED_TIER)
     closed = (trades[trades["status"].isin(CLOSED_STATUSES)] if not trades.empty else trades).copy()
+
+    # Exclude dust trades (a capped-down sub-floor sliver, e.g. a 0.57 € forex position): they
+    # engage no real capital but would bias a (class x side) segment's mean expectancy. The
+    # sizing fix prevents new ones; this keeps any legacy dust out of the decision. Logged, never
+    # silently dropped.
+    if not closed.empty:
+        notional = closed["entry"].astype(float) * closed["size_shares"].astype(float)
+        floor = float(config.signals.capital) * MIN_POSITION_NOTIONAL_PCT
+        n_dust = int((notional < floor).sum())
+        if n_dust:
+            print(f"(exclu {n_dust} trade(s) poussière < {floor:.0f} € de notional)")
+        closed = closed[notional >= floor].copy()
     n_closed = len(closed)
 
     print(f"Trades fermés (committed) : {n_closed} / déclencheur {args.min_trades}")

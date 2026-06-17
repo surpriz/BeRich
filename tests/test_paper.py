@@ -615,6 +615,26 @@ def test_exposure_caps_drop_when_name_full():
     assert out.empty
 
 
+def test_exposure_caps_drop_dust_below_floor():
+    """A candidate shrunk below 0.5% of capital (30 € < 50 €) is dropped, not opened as dust."""
+    open_df = pd.DataFrame([_open_row("BNP.PA", 10.0, 997)])  # 9_970 of 10_000 name cap -> 30 left
+    rows = pd.DataFrame([_candidate("BNP.PA", 10.0, 90)])
+    out = _apply_exposure_caps(
+        rows, open_df, capital=10_000.0, max_ticker_pct=1.0, max_book_pct=10.0
+    )
+    assert out.empty  # 3 shares * 10 = 30 € is dust, dropped
+
+
+def test_exposure_caps_keep_position_at_floor():
+    """A capped-down position at/above the floor (60 € >= 50 €) still opens."""
+    open_df = pd.DataFrame([_open_row("BNP.PA", 10.0, 994)])  # 9_940 of 10_000 -> 60 left
+    rows = pd.DataFrame([_candidate("BNP.PA", 10.0, 90)])
+    out = _apply_exposure_caps(
+        rows, open_df, capital=10_000.0, max_ticker_pct=1.0, max_book_pct=10.0
+    )
+    assert list(out["size_shares"]) == [6]  # 6 shares * 10 = 60 € survives
+
+
 def test_exposure_caps_book_budget_shared_across_names():
     """The total-book cap is consumed in row order; later names get only the remainder."""
     rows = pd.DataFrame(

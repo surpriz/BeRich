@@ -34,6 +34,14 @@ tête de personne.
   contest complet le week-end, `zoo.topup_winner_only`), pruning Optuna par fold des modèles
   profonds. Ordonnancement uniquement — gate inchangé (le comptage DSR couvre toujours le zoo
   complet).
+- Badge « stop touché » (2026-06-15) : /wallet + /brief affichent la sortie réelle plafonnée
+  d'une position dont la barrière est déjà franchie mais pas encore clôturée (le mark live
+  surestimait la perte). Affichage uniquement.
+- Bug « positions poussière » corrigé (2026-06-17, **approuvé explicitement**) : plancher de
+  notional (0,5 % du capital) dans `_apply_exposure_caps` — un candidat rétréci sous le plancher
+  est abandonné, plus jamais ouvert en position symbolique (ex. CADCHF 0,57 €). Touche le sizing
+  (gelé) mais protège l'intégrité du test : la poussière engageait ~0 € mais polluait n_closed,
+  le win rate et l'espérance par segment. `apply_gate_reform.py` exclut aussi la poussière héritée.
 
 ## Le déclencheur
 

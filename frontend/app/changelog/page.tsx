@@ -33,6 +33,28 @@ const TONE: Record<Tone, { label: { fr: string; en: string }; color: string }> =
 
 const ENTRIES: Entry[] = [
   {
+    date: "2026-06-17",
+    tone: "infra",
+    title: {
+      fr: "Bug corrigé : fini les positions « poussière » qui faussaient les statistiques",
+      en: "Bug fixed: no more 'dust' positions that skewed the stats",
+    },
+    points: [
+      {
+        fr: "Constat (à 12 trades fermés) : une position CADCHF apparaissait comme un trade gagnant… avec un montant de 0,57 € et un « gain » de 0,003 €. Cause : quand le plafond d'exposition d'une classe était presque épuisé, le système rétrécissait le dernier candidat à ce qui restait (quelques centimes) au lieu de l'abandonner. Cette poussière comptait comme un vrai trade : elle gonflait le taux de réussite affiché (25 % au lieu de 18 % réels) et biaisait l'espérance du segment qui sert à décider à 30 trades.",
+        en: "Symptom (at 12 closed trades): a CADCHF position showed up as a winning trade… worth €0.57 with a €0.003 'gain'. Cause: when a class exposure cap was nearly exhausted, the system shrank the last candidate to whatever was left (a few cents) instead of dropping it. That dust counted as a real trade: it inflated the displayed win rate (25% vs the real 18%) and biased the segment expectancy used for the 30-trade decision.",
+      },
+      {
+        fr: "Correctif : un plancher de taille (0,5 % du capital) — un candidat qui ne tient pas au-dessus est abandonné, jamais ouvert en position symbolique. Le script de décision des 30 trades ignore aussi désormais toute poussière héritée. Résultat : des statistiques honnêtes.",
+        en: "Fix: a size floor (0.5% of capital) — a candidate that can't fit above it is dropped, never opened as a token position. The 30-trade decision script now also ignores any legacy dust. Result: honest statistics.",
+      },
+    ],
+    verdict: {
+      fr: "Correctif de défaut approuvé explicitement (il touche la couche de sizing, gelée) : il protège l'intégrité du forward test plutôt que de le perturber, puisque la poussière engageait ~0 € mais polluait les chiffres de décision. Pyramidage dans les perdants (Visa shorté 3×) noté pour la réforme du gate, sans agir maintenant.",
+      en: "Defect fix, explicitly approved (it touches the frozen sizing layer): it protects the forward test's integrity rather than disrupting it, since the dust engaged ~€0 but polluted the decision numbers. Pyramiding into losers (Visa shorted 3×) noted for the gate reform, no action now.",
+    },
+  },
+  {
     date: "2026-06-15",
     tone: "infra",
     title: {

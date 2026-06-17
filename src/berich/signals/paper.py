@@ -613,6 +613,13 @@ def _resolve_trade_exit(
 # --------------------------------------------------------- top-level operations ----
 
 
+# A candidate shrunk by the caps to below this fraction of capital is dropped, not opened: a
+# sub-floor sliver of leftover budget (e.g. a 0.57 € / 1-share forex position) is not a real trade
+# — it pollutes the trade count, the win rate and the per-segment expectancy the forward-test
+# decision reads, while engaging no meaningful capital.
+MIN_POSITION_NOTIONAL_PCT = 0.005
+
+
 def _apply_exposure_caps(
     rows: pd.DataFrame,
     open_df: pd.DataFrame,
@@ -631,9 +638,9 @@ def _apply_exposure_caps(
     (``capital * max_class_pct``), so the book can't pile into one correlated bucket (e.g. several
     USD pairs, or all tech) when many signals fire at once. Caps are enforced PER exit-strategy
     book — each book gets its own budget, consumed first by already-open trades, then by new
-    candidates in row order. A candidate that breaches a cap is shrunk to the remaining budget; one
-    that can't fit a single share is dropped. Returns the surviving rows with ``size_shares``
-    adjusted.
+    candidates in row order. A candidate that breaches a cap is shrunk to the remaining budget;
+    one that can't fit at least ``MIN_POSITION_NOTIONAL_PCT`` of capital is dropped (no dust
+    positions). Returns the surviving rows with ``size_shares`` adjusted.
     """
     if rows.empty:
         return rows
@@ -678,9 +685,12 @@ def _apply_exposure_caps(
             cap_class - class_used.get((strat, cls), 0.0),
         )
         fit = min(want, math.floor(budget / entry)) if budget > 0 else 0
-        if fit <= 0:
-            continue
         added = fit * entry
+        # Drop dust: when only a sliver of budget is left, a 1-share / sub-floor position is not a
+        # real trade. The cap is doing its job — this name simply doesn't fit — so skip it rather
+        # than open a token position that pollutes the stats.
+        if fit <= 0 or added < capital * MIN_POSITION_NOTIONAL_PCT:
+            continue
         ticker_used[(strat, tkr)] = ticker_used.get((strat, tkr), 0.0) + added
         book_used[strat] = book_used.get(strat, 0.0) + added
         class_used[(strat, cls)] = class_used.get((strat, cls), 0.0) + added

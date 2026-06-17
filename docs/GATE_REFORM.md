@@ -79,7 +79,22 @@ Changement : transformer l'alerte en cap dur — exposition par devise ≤
 `max_class_exposure_pct` (même budget qu'une classe), appliquée dans
 `_apply_exposure_caps` via un `class_of` enrichi (devise pour le forex).
 
-### 8. Mineurs
+### 8. Pyramidage borné (ne pas renforcer une position en perte)
+
+Constat (forward test, 2026-06-16, à 12 trades) : le livre a ouvert **3 shorts Visa, 2 ADA,
+2 SOL** — il a empilé dans le même sens sur le même actif, et ces ajouts portaient sur les
+segments perdants (crypto-short, us-short). Le pyramidage est autorisé et borné par les caps
+d'exposition, mais ajouter à une position **déjà dans le rouge** a concentré les dégâts au lieu
+de les diluer. Aucun cap actuel ne distingue « première entrée » de « renforcement d'un perdant ».
+Changement pré-enregistré (espace figé, décision finale à l'application) :
+- interdire l'ouverture d'un nouveau lot sur un (ticker, sens) dont une position ouverte est
+  actuellement sous l'eau (MTM < 0), **ou** plafond par actif plus serré pour les renforts ;
+- à appliquer dans `signals/paper._plan_book` / `_apply_exposure_caps` (lecture du MTM des
+  positions ouvertes du même (ticker, sens) avant d'autoriser un nouveau lot).
+À cadrer avec l'item 7 (caps corrélation-aware) : même famille de problème — la concentration
+non vue par les caps par classe.
+
+### 9. Mineurs
 
 - Embargo `horizon + 2` pour les exit modes trailing (l'activation du ratchet décale
   l'information de sortie au-delà de l'horizon nominal).
